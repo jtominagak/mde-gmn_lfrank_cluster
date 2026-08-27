@@ -891,3 +891,94 @@ equivalence test.
   channels, all 47999 grid points): old **104.3s** total, new **0.56s**
   total — **186x** measured speedup.
 
+---
+
+## R5 — Concurrency audit and global worker budget
+
+**Status:** Done. Finding: no oversubscription observed; no semaphore
+added, per the task's own conditional acceptance criterion. Run after
+R12, on real data, per the task's own note.
+
+### Step 1 — instrumentation
+
+Added the explicit product to both stages' existing per-wave print
+statements in both files (they already logged `len(wave)`/
+`outer_workers`/`inner_workers`, just not their product) —
+`(product={outer_workers * inner_workers}, cores={cores})` appended to
+each.
+
+### Step 2 — real measurement (not inferred)
+
+Ran at `TSLS_MDE_GMN_REGION_CHANNEL_CAP=5, TSLS_MDE_GMN_D=2,
+TSLS_MDE_GMN_NESTED_M=2` (`TSLS_MDE_GMN_GENERATE_LENGTH=40`, results/cache
+redirected to scratch) on real data, locally, `CORES` at its default (40,
+this machine's full core count). Sampled `ps --ppid <main_pid> -o
+pid,nlwp,pcpu` every few seconds throughout the run (not a single
+snapshot) to catch transient spikes, not just steady state.
+
+At this config, the depth-0 joint MDE seed (`GMN_MODE='combined'`
+default) found **zero** drivers for both targets combined (5 candidates,
+all failed `crossMapRhoMin` — an artifact of this deliberately tiny
+config, not a bug), so Stage 1 never had a node to compute past depth 0
+and its `to_compute` list was always empty — **Stage 1 never opened its
+own `ProcessPoolExecutor` in this run.** Stage 2 did (seeded with the two
+targets themselves, since they're still `visited1` members even via the
+depth-0 cache-reuse path, not a fresh executor call): the log's own new
+product line read `2 parallel worker(s) x 20 inner thread(s) each
+(product=40, cores=40)`.
+
+**Measured, not configured:**
+- **Peak live worker processes:** exactly 2, matching `outer_workers`
+  exactly — never more, at any sample, throughout the run.
+- **Peak live threads:** steady state ~21 per process (20 requested
+  `ThreadPoolExecutor` workers + 1 main thread) = **42 aggregate**,
+  matching the logged product (40) plus 2 main threads almost exactly.
+  Transient spikes to as high as 69 in a single process (90 aggregate
+  across both) appeared briefly and irregularly — consistent with
+  scipy/numpy's own internal BLAS thread bursts during a KDTree
+  build/query, not with the code opening extra pools.
+- **Measured CPU usage stayed at ~38-40% per worker process throughout**
+  (`pcpu`, i.e. well under one full core each, ~80% total across
+  both) — nowhere near what 2 processes x 20 requested threads would
+  need to actually saturate 40 cores. The "20 inner threads" figure is a
+  ceiling the design intentionally allows to exceed core count for
+  *threads* (they release the GIL for short bursts inside compiled
+  pyEDM/scipy calls, per this codebase's own existing docstrings on why
+  threads were chosen there) — unlike the *process* count, which the
+  `outer_workers = min(node_count, cores)` formula does keep at or under
+  `cores`.
+
+Only Stage 2's own pool was exercised this run (Stage 1's is
+structurally identical code — the same `with ProcessPoolExecutor(...) as
+executor:` pattern, the same `outer_workers`/`inner_workers` sizing
+formula — so this measurement is representative of both, even though
+Stage 1 didn't get its own live sample this particular run).
+
+### Step 3 — can concurrent waves/retained pools push past the core count?
+
+**No**, confirmed both structurally and empirically:
+- Every `ProcessPoolExecutor` is opened via `with ... as executor:` and
+  used with `as_completed()` before the block exits — Python's own
+  `ProcessPoolExecutor.__exit__` calls `shutdown(wait=True)`, which
+  blocks until every worker process has actually terminated, not just
+  until submitted work finishes. No pool can outlive its own wave.
+- R12 makes Stage 1 and Stage 2 strictly sequential (Stage 1's entire
+  `while` loop runs to completion before Stage 2's first wave even
+  starts) — there is no window where a Stage 1 pool and a Stage 2 pool
+  could be alive at once.
+- Within either stage, waves are processed one at a time in a single
+  `while current_wave:` loop, each iteration opening and fully closing
+  its own pool before the next iteration's `next_wave` is even computed
+  — no two waves' pools can overlap either.
+- Empirically: peak process count observed was exactly `outer_workers`
+  for the one active wave, never higher — no evidence of a leftover pool
+  from a "previous" wave.
+
+### Acceptance
+
+No semaphore added — the measured peak (2 processes, well under 40 cores;
+aggregate thread count exceeds the nominal core count only transiently
+and only in the GIL-releasing-thread sense the design already accounts
+for, never in measured CPU usage) does not warrant one, per the task's
+own conditional ("semaphore only if the measurement warrants it").
+

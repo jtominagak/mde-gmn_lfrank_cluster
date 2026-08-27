@@ -2103,9 +2103,13 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         if to_compute:
             outer_workers = min(len(to_compute), max(1, cores))
             inner_cores = max(1, cores // outer_workers)
+            # R5 (docs/review-actions-v1.md): product logged explicitly so
+            # a run's own log can be checked for outer*inner <= cores
+            # without re-deriving it by hand.
             print(f'nested MDE (Stage 1): wave of {len(to_compute)} node(s) at depth '
                   f'{to_compute[0][1]} -- {outer_workers} parallel worker(s) '
-                  f'x {inner_cores} core(s) each', flush=True)
+                  f'x {inner_cores} core(s) each '
+                  f'(product={outer_workers * inner_cores}, cores={cores})', flush=True)
 
             with ProcessPoolExecutor(max_workers=outer_workers,
                                       mp_context=mp.get_context('fork'),
@@ -2189,9 +2193,11 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         wave_depths = sorted({d for _, d in wave_nodes})
         outer_workers2 = min(len(wave_nodes), max(1, cores))
         inner_cores2 = max(1, cores // outer_workers2)
+        # R5: product logged explicitly, same reasoning as Stage 1's own print above.
         print(f'nested MDE (Stage 2): wave of {len(wave_nodes)} node(s) at depth(s) '
               f'{wave_depths} -- {outer_workers2} parallel worker(s) '
-              f'x {inner_cores2} core(s) each, candidate pool size '
+              f'x {inner_cores2} core(s) each '
+              f'(product={outer_workers2 * inner_cores2}, cores={cores}), candidate pool size '
               f'{len(stage2_candidate_universe)} (lag_set={lag_set}, '
               f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
 
