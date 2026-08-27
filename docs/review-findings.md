@@ -611,3 +611,49 @@ Captures the log line via `contextlib.redirect_stdout` and asserts exactly
 Ported identically to both files. `python3 -m py_compile` and `bash -n`
 both pass.
 
+---
+
+## R2 — Audit: does the CCM pre-filter see only real observables?
+
+**Status:** Done. Finding: confirmed clean in both pipelines. Added the
+acceptance criterion's own defensive assertion anyway (see below).
+
+### A1 verification / finding
+
+Traced `main()`'s call site in both files back to the source of the
+candidate list `ccm_prefilter_observables()` receives:
+
+- **tsls-mde-gmn.py:** `obs_cols` comes from `convert_to_tsls()`
+  (`observable_columns = [f'{n}_tsls' for n in neuron_columns]`) — real
+  channel names from the raw CSV header, never containing `DELAY_MARKER`
+  (`'::delay'`).
+- **simple-mde-gmn.py:** `obs_cols` comes from `observable_columns()` →
+  `region_columns()` (`f'{prefix}{i}'` for `i in range(cap)`, filtered to
+  columns actually present in the raw input `df`) — synthetic
+  prefix+index names, same guarantee.
+
+**`expand_delay_columns()` cannot run "earlier than expected."** It is
+called from exactly one place in each file —
+`build_nested_mde_network()` — which is only ever called from
+`build_network()`, which `main()` calls strictly *after* every
+`ccm_prefilter_observables()` call for that target group (confirmed by
+reading `main()`'s own call order, not assumed from the surrounding
+comments).
+
+**No cached `mde_results` entry can reach the pre-filter either.** The
+pre-filter's candidate list is always `main()`'s own `obs_cols`/
+`filtered_pools` value, never derived from or mixed with `mde_results` (a
+separate dict, populated *after* the pre-filter runs, and only read by
+`build_nested_mde_network()`'s depth-0 reuse check downstream).
+
+**Acceptance note:** the task's fix/assertion instruction was
+conditional ("if lagged columns can reach the pre-filter..."), and they
+cannot — so strictly, no code change was required. Added the assertion
+anyway (`assert not [c for c in candidate_columns if DELAY_MARKER in c]`
+at the top of `ccm_prefilter_observables()` in both files) as a cheap,
+permanent guard against a future change reopening this path, consistent
+with this codebase's existing style of defensive assertions for
+structural invariants (e.g. `_accept_mde_result_edges()`'s own
+belt-and-suspenders self-loop guard). `tests/test_r2_prefilter_guard.py`
+confirms it fires, both pipelines.
+

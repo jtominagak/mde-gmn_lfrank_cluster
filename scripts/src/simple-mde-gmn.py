@@ -2370,7 +2370,25 @@ def ccm_prefilter_observables(df, candidate_columns, targets, prediction_start,
     Returns (kept_columns, scores) -- `kept_columns` is `candidate_columns`
     (with `targets` excluded) filtered down to those scoring >= `rho_min`,
     in original order; `scores` is {candidate: mean_rho} for every
-    candidate considered (including dropped ones), for diagnostics.'''
+    candidate considered (including dropped ones), for diagnostics.
+
+    R2 (docs/review-actions-v1.md): audited main()'s call site and traced
+    every column this function ever sees back to observable_columns()'s
+    own `region_columns()` construction (`f'{prefix}{i}'`) -- synthetic
+    prefix+index names, never containing DELAY_MARKER, and
+    expand_delay_columns() (the only place a DELAY_MARKER-suffixed name is
+    ever created) is never called before this point in main() (it only
+    runs inside build_nested_mde_network(), called from build_network(),
+    which runs strictly after every call to this function). No cached
+    mde_results entry feeds this function's candidate list either -- it
+    always comes straight from main()'s own `obs_cols`. Confirmed clean;
+    this assertion is kept as a cheap, permanent guard against a future
+    change reopening that path, not a fix for a live issue.'''
+    bad = [c for c in candidate_columns if DELAY_MARKER in c]
+    assert not bad, (
+        f'ccm_prefilter_observables() received DELAY_MARKER-suffixed column(s): {bad} -- '
+        f'candidate_columns must be real (delay-0) observables only'
+    )
     candidates = [c for c in candidate_columns if c not in targets]
     if not candidates:
         return [], {}
