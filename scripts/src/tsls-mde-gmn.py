@@ -31,12 +31,13 @@ the TSLS front end and scoring):
      in place of dimx.MDE -- see run_mde_for_target()'s docstring.
   2. Network construction -- two unrelated methods depending on MODE,
      identical branching to simple-mde-gmn.py's own build_network():
-       - MODE='MDE-GMN': build_nested_mde_network(), a single unified BFS
-         that runs both stages per wave (Stage 1, real-observable-only;
-         Stage 2, per-node lagged-embedding attachment from the CCM-pre-
-         filtered observable universe) so a Stage 2 real-observable
-         selection recurses into its own further nested-MDE round exactly
-         like a Stage 1 one, instead of terminating as a leaf -- both
+       - MODE='MDE-GMN': build_nested_mde_network(), two serial phases --
+         Stage 1 (real-observable-only BFS, run to full completion) then
+         Stage 2 (per-node lagged-embedding attachment from the CCM-pre-
+         filtered observable universe, seeded with every Stage 1 node) --
+         so a Stage 2 real-observable selection recurses into its own
+         further Stage 2 round exactly like a Stage 1 one recurses into
+         further Stage 1 rounds, instead of terminating as a leaf -- both
          stages call the TSLS-flavored run_mde_for_target() below instead
          of dimx.MDE. No CCM interaction matrix, no apps.InteractionMatrix,
          no apps.CreateNetwork -- the resulting MultiDiGraph IS the network
@@ -840,10 +841,10 @@ def load_config():
     cfg['REGION_CHANNEL_CAP'] = int(os.environ.get('TSLS_MDE_GMN_REGION_CHANNEL_CAP', 999))
 
     # ---- Two-stage nested-MDE network construction (MODE='MDE-GMN' only) --
-    # Ported unchanged from simple-mde-gmn.py -- see build_nested_mde_network()
-    # for the full unified two-stage-per-wave algorithm (Stage 1 real-
-    # observable-only, Stage 2 lagged-embedding attachment, both per wave),
-    # and that file's own load_config() docstrings for STAGE2_ALLOW_REAL_
+    # Ported from simple-mde-gmn.py -- see build_nested_mde_network() for the
+    # full serial two-stage algorithm (Stage 1 real-observable-only BFS run
+    # to completion, then Stage 2 lagged-embedding attachment, itself
+    # recursive), and that file's own load_config() docstrings for STAGE2_ALLOW_REAL_
     # OBSERVABLES/DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP/DELAY_SET's full
     # rationale (identical here -- this is all pure column-name/DataFrame
     # machinery with no TSLS-specific behavior).
@@ -1781,16 +1782,63 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                               lag_set, stage2_allow_real_observables,
                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                               data_file=None, data_file_sha256=None, code_fingerprint=None):
-    '''Two-stage nested-MDE network construction, unified into ONE BFS --
-    MODE='MDE-GMN' only. Ported from simple-mde-gmn.py's own (also
-    unified, as of 2026-08-25) build_nested_mde_network(); see that
-    function's docstring for the full algorithm (BFS out from targets,
-    both a Stage-1-style real-observable-only call and a Stage-2-style
-    lagged-embedding call per node per wave, cycle/self-loop/NaN-gain
-    rejection, delay=0-only nesting continuation from EITHER stage --
-    revised so Stage 2's own real-observable selections now recurse
-    exactly like Stage 1's, instead of always being terminal) --
-    identical here, data-agnostic.
+    '''Two-stage nested-MDE network construction, MODE='MDE-GMN' only --
+    FULLY SERIAL between stages (R12, 2026-08-27: reverted from the
+    2026-08-25 unified-per-wave-BFS design -- see JOB_LOG.md for that
+    design and why it's being replaced here). Stage 1's own real-
+    observable BFS runs to completion, over every depth the shared
+    nested_m budget allows, before Stage 2 ever starts. Stage 2 then runs
+    its own separate BFS -- seeded with EVERY node Stage 1 discovered (so
+    every backbone node still gets a lagged/real embedding attached, the
+    same guarantee the old unified design gave one wave at a time) --
+    and Stage 2 selections are themselves recursive: a delay=0 (real-
+    observable) driver Stage 2 selects (only reachable when
+    stage2_allow_real_observables=True) is enqueued for its own further
+    Stage 2 round, exactly like Stage 1 nodes recurse into further Stage
+    1 rounds, NOT a Stage 1 round -- Stage 2 never triggers a fresh
+    Stage-1-style (real-observable-only) call on anything.
+
+    This is a deliberate, explicit un-doing of the 2026-08-25 unification,
+    per review action R12: that revision fixed a real bug (the historical
+    dead-end-leaf problem, Sec 5.3 -- attach_lag_embeddings() ran ONCE
+    over Stage 1's final node set, non-recursively, so a Stage-2-selected
+    real observable could never itself become a nested-MDE target) but
+    serialization and recursion are orthogonal properties, and the fix
+    conflated them. What had to be restored is the sequencing (Stage 1
+    complete, THEN Stage 2); what had to be kept is Stage 2's own
+    recursion (added 2026-08-25, not reverted here). Neither this
+    function's Stage 1 phase nor its Stage 2 phase flattens into a single
+    non-recursive sweep.
+
+    Depth accounting is joint across both phases -- a node's depth is its
+    distance from the target regardless of which phase discovered it (see
+    `node_depth` below), and the same nested_m budget check
+    (`nested_m == 0 or depth < nested_m`, depth = the discovering node's
+    OWN depth, unchanged arithmetic from the prior revision -- R13 does
+    not touch this) gates further recursion in EITHER phase. A
+    consequence documented in the review (R12/R15's own interaction
+    note, R15 itself out of scope here): because Stage 1 now runs to full
+    depth before Stage 2 ever sees a node, a real-observable Stage 2
+    selects on a branch Stage 1 already carried out to the depth cap is
+    beyond budget and terminates immediately -- correct budget-bound
+    termination, not a broken recursion. Distinguishing that from Stage 2
+    simply finding zero real-observable drivers on a branch (driver-
+    exhausted termination) in the run log is R15 step 4's own job, not
+    done by this revision.
+
+    Stage 2's initial wave seeds every node Stage 1 visited, at whatever
+    depth Stage 1 discovered it at -- these depths are NOT uniform within
+    that first Stage 2 wave (Stage 1's own BFS produced them one wave per
+    depth; Stage 2 processes them all at once for maximum parallelism, the
+    same "single sweep over Stage 1's final node set" shape the historical
+    §5.3 bug had -- the difference is this sweep recurses further whereas
+    that one didn't). Because a wave can therefore mix depths, a brand-new
+    driver proposed by more than one same-wave parent takes the SHALLOWEST
+    proposed depth (see the next_wave dict-of-mins pattern below), not an
+    arbitrary iteration-order-dependent one -- this is a strict
+    correctness improvement over the prior revision's plain-list next_wave
+    (harmless there, since every wave was single-depth by construction, so
+    plain-list and min-tracked next_wave picked the same result).
 
     Differences from simple-mde-gmn.py, both pre-existing (not new to
     this revision): (1) neither pool passes `initializer=` -- simple-
@@ -1798,8 +1846,8 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     monkeypatches inside every worker, which has no TSLS-side equivalent
     (no dimx.Run to monkeypatch at all); (2) the outer/inner split is
     computed the same way (outer_workers = min(node count, cores),
-    inner_workers = cores // outer_workers, recomputed fresh per stage
-    per wave from that stage's own real node count) but fed to a
+    inner_workers = cores // outer_workers, recomputed fresh per phase
+    per wave from that phase's own real node count) but fed to a
     different layer than simple-mde-gmn.py's dx.MDE(cores=...) -- here
     inner_workers becomes a ThreadPoolExecutor opened once per node
     inside run_mde_for_target() itself (see that function's own INNER
@@ -1819,13 +1867,19 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
 
     edges = []
     nested_mde_results = {}
-    visited = set()
+    node_depth = {t: 0 for t in targets}
+
+    # =====================================================================
+    # PHASE 1 -- Stage 1: real-observable-only BFS, run to full completion
+    # (every depth the nested_m budget allows) before Stage 2 starts at all.
+    # =====================================================================
+    visited1 = set()
     current_wave = [(t, 0) for t in targets]
 
     while current_wave:
         wave_nodes, seen = [], set()
         for node, depth in current_wave:
-            if node in visited or node in seen:
+            if node in visited1 or node in seen:
                 continue
             seen.add(node)
             wave_nodes.append((node, depth))
@@ -1833,7 +1887,6 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         if not wave_nodes:
             break
 
-        # ---- Stage 1 pass: real-observable-only ----
         to_compute = [(node, depth) for node, depth in wave_nodes
                       if not (depth == 0 and node in mde_results)]
         stage1_results = {
@@ -1881,13 +1934,49 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                               f'node)', flush=True)
                         stage1_results[node] = _failed_mde_result(node)
 
-        # ---- Stage 2 pass: lagged (+ optionally real) embedding -- every
-        # node in this wave, no depth-0 shortcut (Stage 2 was never
-        # precomputed for depth-0, before or after this restructuring) ----
+        next_wave = {}
+        for node, depth in wave_nodes:
+            visited1.add(node)
+            node_depth[node] = depth
+            result1 = stage1_results[node]
+            nested_mde_results[node] = result1
+
+            accepted1 = _accept_mde_result_edges(graph, edges, node, result1, raw_columns)
+            for driver, delay in accepted1:
+                if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited1:
+                    next_wave[driver] = min(next_wave.get(driver, depth + 1), depth + 1)
+
+        current_wave = list(next_wave.items())
+
+    print(f'nested MDE (Stage 1): completed -- {len(visited1)} node(s) in the real-observable '
+          f'backbone, Stage 2 starts now', flush=True)
+
+    # =====================================================================
+    # PHASE 2 -- Stage 2: lagged (+ optionally real) BFS. Seeded with EVERY
+    # node Stage 1 discovered (so every backbone node still gets a lagged
+    # embedding attached), then its own delay=0 (real-observable)
+    # selections recurse into further Stage 2 rounds -- never a Stage 1
+    # round -- subject to the same shared nested_m budget/depth.
+    # =====================================================================
+    visited2 = set()
+    current_wave = [(node, node_depth[node]) for node in visited1]
+
+    while current_wave:
+        wave_nodes, seen = [], set()
+        for node, depth in current_wave:
+            if node in visited2 or node in seen:
+                continue
+            seen.add(node)
+            wave_nodes.append((node, depth))
+
+        if not wave_nodes:
+            break
+
+        wave_depths = sorted({d for _, d in wave_nodes})
         outer_workers2 = min(len(wave_nodes), max(1, cores))
         inner_workers2 = max(1, cores // outer_workers2)
-        print(f'nested MDE (Stage 2): wave of {len(wave_nodes)} node(s) at depth '
-              f'{wave_nodes[0][1]} -- {outer_workers2} parallel worker(s) '
+        print(f'nested MDE (Stage 2): wave of {len(wave_nodes)} node(s) at depth(s) '
+              f'{wave_depths} -- {outer_workers2} parallel worker(s) '
               f'x {inner_workers2} inner thread(s) each, candidate pool size '
               f'{len(stage2_candidate_universe)} (lag_set={lag_set}, '
               f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
@@ -1921,27 +2010,25 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                           f'a dead-end (zero lagged drivers attached for this node)', flush=True)
                     stage2_results[node] = _failed_mde_result(node)
 
-        # ---- Edge acceptance: Stage 1's result first, then Stage 2's --
-        # either stage's delay=0 discoveries feed the next wave.
-        next_wave = []
+        next_wave = {}
         for node, depth in wave_nodes:
-            visited.add(node)
-            result1 = stage1_results[node]
-            nested_mde_results[node] = result1
-
-            accepted1 = _accept_mde_result_edges(graph, edges, node, result1, raw_columns)
-            for driver, delay in accepted1:
-                if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited:
-                    next_wave.append((driver, depth + 1))
-
+            visited2.add(node)
+            node_depth.setdefault(node, depth)
             result2 = stage2_results[node]
             accepted2 = _accept_mde_result_edges(graph, edges, node, result2, raw_columns)
+
             for driver, delay in accepted2:
-                if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited:
-                    next_wave.append((driver, depth + 1))
+                # A delay=0 (real-observable) pick here recurses into its
+                # own further Stage 2 round -- NOT a Stage 1 round -- same
+                # nested_m budget as Stage 1's own recursion above (see
+                # docstring: R13/R15 own the finer-grained accounting of
+                # *why* this stops on a given branch; this function only
+                # enforces the shared depth cap already established above).
+                if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited2:
+                    next_wave[driver] = min(next_wave.get(driver, depth + 1), depth + 1)
                 # delay != 0: leaf -- edge already added above.
 
-        current_wave = next_wave
+        current_wave = list(next_wave.items())
 
     edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
 
@@ -2118,10 +2205,12 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
             # called, so depth-0 itself only ever searches already-
             # filtered observables too (see main()'s own depth-0
             # docstring for why the pre-filter had to move there rather
-            # than staying here). Both stages, interleaved per BFS wave,
-            # in one call -- see build_nested_mde_network()'s own
-            # docstring (revised 2026-08-25: Stage 2's own real-observable
-            # selections now recurse exactly like Stage 1's).
+            # than staying here). Both stages, fully serial (Stage 1 runs
+            # to completion, then Stage 2), in one call -- see
+            # build_nested_mde_network()'s own docstring (revised
+            # 2026-08-27, R12: Stage 2's own real-observable selections
+            # still recurse exactly like Stage 1's, just after Stage 1
+            # completes rather than interleaved with it wave-by-wave).
             graph, _, _ = build_nested_mde_network(
                 targets, df, observable_columns, observable_columns,
                 prediction_start, prediction_length,
