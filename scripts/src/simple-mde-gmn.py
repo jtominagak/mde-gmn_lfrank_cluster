@@ -1179,7 +1179,7 @@ def load_config():
     # STAGE2_ALLOW_REAL_OBSERVABLES: whether Stage 2's candidate pool also
     # includes delay=0 (real-observable) columns -- i.e. whether Stage 2
     # can introduce a real observable Stage 1 never directly selected as
-    # one of its own drivers. Default False: Stage 2 stays lagged-only, so
+    # one of its own drivers. When False: Stage 2 stays lagged-only, so
     # every backbone node still traces back to a Stage-1 selection
     # somewhere in its ancestry. When True (REVISED 2026-08-25, kept under
     # R12's 2026-08-27 serialization): a Stage-2-selected delay=0 driver is
@@ -1191,8 +1191,14 @@ def load_config():
     # to the same nested_m budget a Stage-1 delay=0 selection would be
     # (previously it was always a terminal leaf regardless of this setting
     # -- that was the bug the 2026-08-25 revision fixed, and R12 preserves
-    # the fix while restoring Stage 1/Stage 2 sequencing).
-    cfg['STAGE2_ALLOW_REAL_OBSERVABLES'] = _env_bool('MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES', False)
+    # the fix while restoring Stage 1/Stage 2 sequencing). R15
+    # (docs/review-actions-v1.md): default flipped to True -- confirmed
+    # end-to-end (not inferred from this docstring's own claim) that the
+    # recursion genuinely happens (tests/test_r12_stage_serialization.py)
+    # and is bounded by the R13 shared depth budget
+    # (tests/test_r13_shared_depth_budget.py), so R15 step 1's condition
+    # for flipping the default holds.
+    cfg['STAGE2_ALLOW_REAL_OBSERVABLES'] = _env_bool('MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES', True)
 
     # R14 (docs/review-actions-v1.md): a zero-driver leaf is partitioned out
     # of the simulated network as an "external input" (partition_network())
@@ -2159,6 +2165,15 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # =====================================================================
     visited2 = set()
     current_wave = [(node, node_depth[node]) for node in visited1]
+    # R15: distinguishable termination causes for Stage 2's own real-
+    # observable recursion -- budget_bound counts an accepted delay=0 pick
+    # that would have recursed except the shared nested_m budget already
+    # stopped at this depth; driver_exhausted counts a node whose own
+    # depth was still within budget but whose Stage 2 call simply
+    # selected zero real-observable drivers, so there was nothing to
+    # recurse into regardless of budget.
+    stage2_budget_bound = 0
+    stage2_driver_exhausted = 0
 
     while current_wave:
         wave_nodes, seen = [], set()
@@ -2217,21 +2232,31 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
             node_depth.setdefault(node, depth)
             result2 = stage2_results[node]
             accepted2 = _accept_mde_result_edges(graph, edges, node, result2, raw_columns)
+            under_budget = nested_m == 0 or depth < nested_m
 
-            for driver, delay in accepted2:
+            real_picks = [(driver, delay) for driver, delay in accepted2 if delay == 0]
+            if under_budget and not real_picks:
+                # Budget wasn't the constraint here -- Stage 2 genuinely
+                # found no real-observable driver for this node at all.
+                stage2_driver_exhausted += 1
+
+            for driver, delay in real_picks:
                 # A delay=0 (real-observable) pick here recurses into its
                 # own further Stage 2 round -- NOT a Stage 1 round -- same
-                # nested_m budget as Stage 1's own recursion above (see
-                # docstring: R13/R15 own the finer-grained accounting of
-                # *why* this stops on a given branch; this function only
-                # enforces the shared depth cap already established above).
-                # nested_m == 0 is the "uncapped" sentinel -- see this
-                # function's docstring.
-                if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited2:
-                    next_wave[driver] = min(next_wave.get(driver, depth + 1), depth + 1)
+                # nested_m budget as Stage 1's own recursion above.
+                if under_budget:
+                    if driver not in visited2:
+                        next_wave[driver] = min(next_wave.get(driver, depth + 1), depth + 1)
+                else:
+                    stage2_budget_bound += 1
                 # delay != 0: leaf -- edge already added above.
 
         current_wave = list(next_wave.items())
+
+    if stage2_allow_real_observables:
+        print(f'nested MDE (Stage 2): real-observable recursion terminations -- '
+              f'{stage2_budget_bound} budget-bound, {stage2_driver_exhausted} driver-exhausted',
+              flush=True)
 
     edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
 

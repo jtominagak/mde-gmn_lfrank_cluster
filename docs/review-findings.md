@@ -540,3 +540,74 @@ conventions argue against. No code or test changes for this task; this
 section exists so R6 is marked closed against `docs/review-actions-v1.md`
 rather than silently skipped.
 
+---
+
+## R15 — Stage 2 recursion on real-observable drivers
+
+**Status:** Done.
+
+### A1 verification
+
+Re-read `build_nested_mde_network()`'s Phase 2 loop in both files
+(post-R12/R13/R14) end to end, as the task explicitly demands ("read the
+code path end to end; do not infer it from §5.3's claim").
+
+### Step 1 — does it actually recurse?
+
+**Yes, confirmed by test, not inferred.** This was already established as
+part of R12/R13's own work, not re-derived here:
+`tests/test_r12_stage_serialization.py` proves a Stage-2-selected real
+observable gets its own further Stage 2 MDE call (and is confirmed to
+fail against the pre-R12 code); `tests/test_r13_shared_depth_budget.py`
+proves that recursion is correctly bounded by the shared `nested_m`
+budget rather than unconditional. Both conditions R15 step 1 asks about
+hold.
+
+### Step 2 — flip the default
+
+Done in both files: `STAGE2_ALLOW_REAL_OBSERVABLES` (`TSLS_MDE_GMN_
+STAGE2_ALLOW_REAL_OBSERVABLES` / `MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES`)
+now defaults to `True`.
+
+### Step 3 — n/a
+
+Only reached if step 1 found the recursion didn't work; it does, so no
+flag-and-stop was needed.
+
+### Step 4 — distinguishable termination logging
+
+Added `stage2_budget_bound`/`stage2_driver_exhausted` counters to Phase
+2's edge-acceptance loop in both files, classifying every node's Stage 2
+result:
+- **driver-exhausted:** the node's own depth is still under the shared
+  budget, but its Stage 2 call selected zero real-observable (delay=0)
+  drivers at all — nothing to recurse into, unrelated to the budget.
+- **budget-bound:** the node's depth is already at or past `nested_m`, so
+  an accepted real-observable pick is added as a graph edge but never
+  enqueued for its own further round.
+
+Printed once per network, gated on `stage2_allow_real_observables` (the
+counts are meaningless when the feature is off): `nested MDE (Stage 2):
+real-observable recursion terminations -- N budget-bound, M
+driver-exhausted`.
+
+Per the task's own framing, this is reporting, not a defect to code
+around: if `budget_bound` dominates at the configured `NESTED_M`, that's a
+configuration observation (the feature is effectively inert at that
+depth) worth surfacing in a run's own log, not something to "fix" by
+letting Stage 2 exceed the budget.
+
+### Test
+
+`tests/test_r15_termination_causes.py` reuses R13's exact scenario
+(`NESTED_M=1`): `T`'s own Stage 2 call selects nothing (under budget, zero
+real picks → driver-exhausted); `A`'s Stage 2 call selects a brand-new
+real observable `D`, but `A` is already at the depth cap → budget-bound.
+Captures the log line via `contextlib.redirect_stdout` and asserts exactly
+1 of each. Passed on first run, both pipelines.
+
+### A3 / A4
+
+Ported identically to both files. `python3 -m py_compile` and `bash -n`
+both pass.
+
