@@ -152,3 +152,127 @@ alone took 4+ hours on a larger config per JOB_LOG history, though Run A's
 own smaller config progressed much further interactively per the tex doc).
 Wall-clock and topology comparison will be appended here once it completes
 or is checked again.
+
+**Progress note (checked mid-R13):** the background run's log shows Stage 1
+already completed (2 real-observable backbone nodes) and Stage 2 in
+progress — confirms the serial ordering holds end-to-end on real data, not
+just under the fake-executor test.
+
+---
+
+## R13 — Make `NESTED_M` a whole-network depth budget, shared by both stages
+
+**Status:** Done.
+
+### A1 verification
+
+Read the current (post-R12) `build_nested_mde_network()` in both files in
+full, specifically the depth-check lines in each phase:
+
+```python
+if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited1:
+    next_wave[driver] = min(next_wave.get(driver, depth + 1), depth + 1)   # Stage 1
+...
+if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited2:
+    next_wave[driver] = min(next_wave.get(driver, depth + 1), depth + 1)   # Stage 2
+```
+
+Both phases read from **one** `nested_m` parameter and **one** `node_depth`
+accounting scheme (a single dict, populated once per node — by whichever
+phase discovers it first, `node_depth[node] = depth` in Stage 1,
+`node_depth.setdefault(node, depth)` in Stage 2). Traced a concrete example
+by hand (`nested_m=1`): Stage 1 discovers `A` at depth 1 from target `T`
+at depth 0; Stage 1's own recursion correctly stops there
+(`1 < 1` is false). Stage 2 is seeded with `node_depth[A] = 1` (inherited
+from Stage 1, not reset to 0), so if `A`'s Stage 2 call selects a brand-new
+real observable, the *same* check (`1 < 1` is false) blocks it from
+recursing further too — exactly the joint budget the task describes.
+
+### Step 1 — is the cap already global?
+
+**Yes — confirmed already global/joint, and this was true even before
+R12.** Re-read the pre-R12 (2026-08-25 unified) code preserved in the
+baseline commit: it also used a single `nested_m` and a single `depth`/
+`visited` set shared by both stages' acceptance loops within each wave —
+its own docstring already said so explicitly ("Both stages share the same
+`nested_m` depth budget"). R12 changed *when* each stage runs (serial vs.
+interleaved), not the budget accounting, which was already joint. **No
+code change was needed for the core ask** — per the task's own step 1
+("If it is already global, report that and make no change — the task is
+then satisfied").
+
+### Step 2
+
+Not applicable — the cap was already global (step 1).
+
+### Step 3 — the `0` (uncapped) sentinel
+
+**Asked the user before proceeding, per the task's explicit instruction.**
+Traced whether `NESTED_M=0` is actually a non-termination risk: both
+phases' BFS use `visited1`/`visited2` sets over a *finite* real-observable
+pool (bounded by `REGION_CHANNEL_CAP` and the CCM pre-filter — the only
+things a delay=0 pick can ever name, per `observable_and_delay()`), and
+each while-loop only enqueues nodes not already in the respective visited
+set. So even uncapped, both phases are bounded fixed-point iterations over
+a finite vertex set — they terminate once every reachable real observable
+has been visited or every remaining branch dead-ends (zero drivers
+selected, or NaN marginal gain), never literally forever. This was already
+true before R12/R13 (the existing `MDE_D**(1+NESTED_M)`/"bounded only by
+the real observable pool size" comment in both files' `load_config()`
+already said as much for Stage 1 alone; R12/R13 extend the same guarantee
+to Stage 2's own recursion, which draws from the same finite pool).
+**User confirmed:** no hard safety bound added — documented the
+finite-pool termination proof instead (this section, plus a short note
+added to both files' `NESTED_M` comment in `load_config()`).
+
+### Step 4 — cache fingerprint
+
+No additional code change was made beyond R12's own restructuring plus
+this task's logging addition (see below), so there is no *new* cache-
+invalidation surface specific to R13. Re-confirmed (not re-assumed) that
+`build_code_fingerprint()`'s whole-file AST hash (`_pipeline_code_fingerprint()`)
+covers the logging line addition too — any prior cached network built
+under the old unified BFS or without the realized-depth log line will
+already fail to match on `code_fingerprint` before it ever reaches
+`nested_m`/`NESTED_M`-specific comparison in `build_network_fingerprint()`.
+
+### What changed
+
+No arithmetic, no re-indexing, no default change (all explicitly out of
+scope per the task). Two additive changes, both in `build_nested_mde_network()`
+in both files:
+
+1. **Logging:** the function's final summary print now reports
+   `realized max depth` (`max(node_depth.values())`) alongside the
+   configured `N`/`M`, so the *actual* depth reached is visible per run,
+   distinct from the configured cap — this is the task's own acceptance
+   criterion ("Log the realized maximum depth at the end of network
+   construction").
+2. **Documentation:** both files' `load_config()` `NESTED_M` comment now
+   states explicitly that the budget is whole-network/joint (previously
+   implied by the shared-variable structure but not stated outright).
+
+### Test
+
+`tests/test_r13_shared_depth_budget.py` — `NESTED_M=1`. Target `T`
+(depth 0) → Stage 1 selects real observable `A` (depth 1, exactly at the
+cap); `A`'s own Stage 1 call selects nothing further (2 Stage 1 rounds
+total, matching `1 + NESTED_M`). Stage 2 then runs on `{T, A}`: `A`'s Stage
+2 call (still at depth 1, the cap Stage 1 already reached on this branch)
+selects a brand-new real observable `D` — accepted as a graph edge
+(`A <- D`) but never recursed into, since depth 1 is already at
+`nested_m=1`.
+
+Asserts: (1) Stage 1 makes exactly `1 + NESTED_M = 2` calls; (2) `D` never
+gets its own MDE call in *either* stage (the joint-budget, budget-bound
+termination A2/R15 describe); (3) the longest root-to-leaf path
+(`D → A → T`, edges point driver→node) has `NESTED_M + 2 = 3` nodes — the
+`NESTED_M + 1` nodes that actually got their own MDE call, plus the one
+further leaf a depth-capped node's own selection still adds to the graph
+without exploring it. Passed on first run, both pipelines.
+
+### A4 verification
+
+`python3 -m py_compile` passed on both pipeline files. `bash -n` passed on
+both sbatch scripts.
+

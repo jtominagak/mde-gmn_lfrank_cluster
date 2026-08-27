@@ -831,7 +831,13 @@ def load_config():
     # separate parameter). NESTED_M is the number of *additional* nested-MDE
     # rounds beyond each target's own initial selection -- total graph depth
     # from each target is 1 + NESTED_M levels. NESTED_M=0 is a sentinel for
-    # "uncapped". Ported unchanged from simple-mde-gmn.py -- see
+    # "uncapped". R13 (docs/review-actions-v1.md): confirmed this is a
+    # WHOLE-NETWORK budget, shared jointly by Stage 1 and Stage 2 -- a
+    # node's depth is its distance from the target regardless of which
+    # stage discovered it (build_nested_mde_network()'s own `node_depth`),
+    # not two independent per-stage counters. This was already true before
+    # R13 (and before R12); R13 only confirmed and documented it, no
+    # arithmetic changed. Ported unchanged from simple-mde-gmn.py -- see
     # build_nested_mde_network()'s docstring for the full algorithm.
     cfg['NESTED_M'] = int(os.environ.get('TSLS_MDE_GMN_NESTED_M', 1))
     # First N *raw* channels per region (CA1_/mPFC_/OFC_), TSLS-converted
@@ -2032,9 +2038,17 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
 
     edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
 
+    # R13: nested_m is a whole-network depth budget shared by both stages
+    # (node_depth is one dict populated by whichever stage discovers a
+    # node first, checked against the same nested_m in both phases' own
+    # recursion above) -- realized_max_depth reports how deep that joint
+    # budget actually got used this run, distinct from the configured cap
+    # itself (nested_m_display below).
+    realized_max_depth = max(node_depth.values()) if node_depth else 0
     nested_m_display = 'unlimited' if nested_m == 0 else nested_m
     print(f'nested MDE: {len(graph.nodes)} nodes, {len(edges_df)} edges '
-          f'(N={nested_n}, M={nested_m_display})', flush=True)
+          f'(N={nested_n}, M={nested_m_display}, realized max depth={realized_max_depth})',
+          flush=True)
 
     return graph, edges_df, nested_mde_results
 

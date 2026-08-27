@@ -1010,7 +1010,12 @@ def load_config():
     # out on its own (every reachable real observable already visited, or
     # dimx.MDE/cycle-rejection naturally dead-ends every remaining
     # branch) instead of stopping at a fixed round count -- see
-    # build_nested_mde_network()'s docstring. Combinatorially expensive: a
+    # build_nested_mde_network()'s docstring. R13 (docs/review-actions-v1.md):
+    # confirmed this is a WHOLE-NETWORK budget, shared jointly by Stage 1
+    # and Stage 2 -- a node's depth is its distance from the target
+    # regardless of which stage discovered it (`node_depth`), not two
+    # independent per-stage counters, and was already true before R13 (and
+    # before R12); no arithmetic changed. Combinatorially expensive: a
     # naive upper bound on nodes is roughly MDE_D**(1+NESTED_M) (or, when
     # NESTED_M=0, bounded only by the real observable pool size) before
     # dedup/cycle-rejection collapses it back down to the real (capped)
@@ -2071,9 +2076,17 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
 
     edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
 
+    # R13: nested_m is a whole-network depth budget shared by both stages
+    # (node_depth is one dict populated by whichever stage discovers a
+    # node first, checked against the same nested_m in both phases' own
+    # recursion above) -- realized_max_depth reports how deep that joint
+    # budget actually got used this run, distinct from the configured cap
+    # itself (nested_m_display below).
+    realized_max_depth = max(node_depth.values()) if node_depth else 0
     nested_m_display = 'unlimited' if nested_m == 0 else nested_m
     print(f'nested MDE: {len(graph.nodes)} nodes, {len(edges_df)} edges '
-          f'(N={nested_n}, M={nested_m_display})', flush=True)
+          f'(N={nested_n}, M={nested_m_display}, realized max depth={realized_max_depth})',
+          flush=True)
 
     return graph, edges_df, nested_mde_results
 
