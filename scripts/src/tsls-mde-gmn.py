@@ -3820,7 +3820,16 @@ def run_tp_vs_rho_sweep(mde_results, targets, max_tp, target_colors, results_dir
     (continuous), never metric (see load_config()'s TARGET_METRIC
     docstring). Reads r['m'].args.lib/pred/tau -- the 'm' namespace shape
     every run_mde_for_target() result carries (see that function's own
-    docstring).'''
+    docstring).
+
+    R7 (docs/review-actions-v1.md): previously called fig.savefig()
+    unconditionally, even when every target hit the `if not cols`
+    skip below (all zero-driver, or all _failed_mde_result()'s own
+    mde_df=None case, which also carries SELECTED_COLUMNS=[] -- see
+    _failed_mde_result()'s own docstring) -- an empty axes with no data
+    and a legend with nothing to show, written to disk as if it were a
+    real result. Now skips the write entirely in that case (figure is
+    still closed either way, so no resource leak).'''
     fig, ax = plt.subplots(figsize=(8, 5))
     annotation_lines = []
     for target in targets:
@@ -3838,6 +3847,12 @@ def run_tp_vs_rho_sweep(mde_results, targets, max_tp, target_colors, results_dir
         ax.plot(pi['Tp'], pi[target_metric], marker='o', label=target, color=target_colors[target])
         annotation_lines.append(f'{target}: E={len(cols)}, vars={", ".join(cols)}')
 
+    if not annotation_lines:
+        print('Tp-vs-rho sweep: every target had zero MDE-selected columns -- '
+              'skipping the figure entirely (no data to plot).', flush=True)
+        plt.close(fig)
+        return
+
     ax.axvline(1, color='gray', ls=':', lw=1)
     ax.set_xlabel('Forecast interval Tp (steps)')
     ax.set_ylabel(f'Prediction skill ({target_metric})')
@@ -3851,10 +3866,28 @@ def run_tp_vs_rho_sweep(mde_results, targets, max_tp, target_colors, results_dir
 
 def run_univariate_e_tau_grid(mde_results, targets, e_range, tau_range, rho_threshold, results_dir,
                                target_metric, gamma_delta):
+    '''R7 (docs/review-actions-v1.md): unlike run_tp_vs_rho_sweep() above,
+    this is a UNIVARIATE self-predictability grid (columns=target,
+    target=target) -- it needs no MDE-selected drivers at all, so it
+    deliberately does NOT skip on SELECTED_COLUMNS being empty (a
+    legitimate zero-driver target, e.g. Run A's own head_position_y, still
+    gets a real, informative grid here). It DOES need `mde_df` to be a
+    real DataFrame, though: a target whose depth-0 MDE call itself raised
+    (not "selected zero drivers", a different case -- see
+    _failed_mde_result()'s own docstring) gets mde_df=None, which would
+    otherwise crash proper_simplex() below outright, and take down every
+    remaining target's own (unrelated, otherwise-computable) figure with
+    it, since the exception would propagate out of this whole function.
+    Guarded per-target instead, matching this codebase's own established
+    "one degenerate item dead-ends cleanly, it doesn't crash the batch"
+    convention (_failed_mde_result()'s own docstring).'''
     e_vals, tau_vals = list(e_range), list(tau_range)
 
     for target in targets:
         r = mde_results[target]
+        if r['mde_df'] is None:
+            print(f'{target}: MDE call failed (mde_df is None), skipping E/tau grid.', flush=True)
+            continue
         rho_grid = np.full((len(e_vals), len(tau_vals)), np.nan)
 
         for i, E in enumerate(e_vals):

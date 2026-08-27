@@ -982,3 +982,84 @@ and only in the GIL-releasing-thread sense the design already accounts
 for, never in measured CPU usage) does not warrant one, per the task's
 own conditional ("semaphore only if the measurement warrants it").
 
+---
+
+## R7 — Confirm Section 11 diagnostics produce figures
+
+**Status:** Done. Found real gaps in both pipelines, both worse than the
+task's own framing anticipated — fixed.
+
+### A1 verification / finding
+
+Read `run_tp_vs_rho_sweep()` and `run_univariate_e_tau_grid()` in both
+files, plus `_failed_mde_result()`/`_failed_multi_mde_result()` (the
+fallback a target's `mde_results` entry gets when its depth-0 MDE call
+*raises*, as opposed to legitimately selecting zero drivers).
+
+**`run_tp_vs_rho_sweep()`: confirmed the exact "empty figure" risk the
+task named.** One shared `fig`/`ax` is opened before the per-target loop;
+`fig.savefig()` ran *unconditionally* after the loop regardless of
+whether anything was ever plotted. If every target hit the zero-columns
+skip, this wrote a real PNG with empty axes and a legend with nothing to
+show. (tsls-mde-gmn.py already had the per-target `if not cols: continue`
+guard; **simple-mde-gmn.py had no such guard at all** — it called
+`PredictInterval(columns=[], E=0, ...)` unconditionally, a call that
+would itself fail or behave nonsensically for any zero-driver target, not
+just the "all targets skipped" case.)
+
+**`run_univariate_e_tau_grid()`: the real risk is a crash, not an empty
+file, and it's not about zero columns at all.** This function computes a
+*univariate* self-predictability grid (`columns=target, target=target`)
+— it needs no MDE-selected drivers, so (correctly) it never checked
+`SELECTED_COLUMNS`. But it unconditionally dereferenced `r['mde_df']` and
+`r['m'].args.lib/pred`, and a target whose depth-0 MDE call itself
+*raised* gets `mde_df=None` (`_failed_mde_result()`/
+`_failed_multi_mde_result()`, both confirmed reachable from `main()`'s
+own error handling in either `GMN_MODE`). Passing `dataFrame=None` into
+`proper_simplex()`/`Simplex()` raises immediately — and since the
+per-target loop has no `try`/`except`, the exception propagates out of
+the *whole function*, taking every remaining target's own (unrelated,
+otherwise perfectly computable) figure down with it. This call site has
+no surrounding `try`/`except` in `main()` either — a crash here is fatal
+to the whole run, occurring right before the final `'Pipeline complete.'`
+print. This is worse than "no figure": it's "no figure for *any* target
+from this point on, and the job appears to have failed," for a condition
+(`mde_df is None`) that has nothing to do with the "zero columns
+selected" framing the task named.
+
+**Reaches `OUTPUT_ARCHIVE_DIR` on clean exit:** confirmed this is a
+generic guarantee, not something specific to these two functions — both
+sbatch scripts' own `cleanup` EXIT trap does `cp -a "$OUT_DIR"/.
+"$OUTPUT_ARCHIVE_DIR"/`, copying everything either function writes to
+`results_dir` (`== $OUT_DIR`) automatically, for any file, on any exit
+the trap fires for. No code change needed for that part specifically —
+it already holds for any file written to `results_dir`.
+
+### What changed
+
+Both files, both functions:
+- `run_tp_vs_rho_sweep()`: added the missing per-target zero-columns
+  skip to simple-mde-gmn.py (tsls-mde-gmn.py already had it); added the
+  "skip `savefig()` entirely if nothing was ever plotted" guard to *both*
+  (figure is still `plt.close()`d either way, no resource leak).
+- `run_univariate_e_tau_grid()`: added a per-target `if r['mde_df'] is
+  None: continue` guard to both — deliberately *not* gated on
+  `SELECTED_COLUMNS`, since this function's own univariate grid is
+  meaningful (and wanted) even for a legitimate zero-driver target; only
+  the actual crash-causing condition is guarded. Matches this codebase's
+  own established "one degenerate item dead-ends cleanly, it doesn't
+  crash the batch" convention (`_failed_mde_result()`'s own docstring).
+
+### Test
+
+`tests/test_r7_diagnostics_figures.py`, both pipelines:
+- `run_tp_vs_rho_sweep()` with every target at zero selected columns →
+  asserts no figure file is written at all.
+- `run_univariate_e_tau_grid()` with one target's `mde_df=None`
+  (constructed to match `_failed_mde_result()`'s exact shape) alongside
+  one genuinely valid target → asserts the call does **not** raise, the
+  failed target produces no figure, and the valid target's figure is
+  still produced (proving one failure doesn't take the batch down).
+
+Both passed on first run, both pipelines.
+
