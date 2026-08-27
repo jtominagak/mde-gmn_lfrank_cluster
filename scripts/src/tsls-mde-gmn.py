@@ -1412,7 +1412,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
                         ccm_sample=20, ccm_slope=0.01,
                         reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                         data_file=None, data_file_sha256=None, code_fingerprint=None,
-                        cache_stage='stage1', max_e=None, inner_workers=1):
+                        cache_stage='stage1', max_e=None, inner_workers=1, raw_columns=None):
     '''Run cleaned_helper_functions.proper_mde's forward selection for a
     single target variable -- TSLS-flavored equivalent of
     simple-mde-gmn.py's own run_mde_for_target() (dimx.MDE), matching that
@@ -1493,7 +1493,19 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     pyEDM.CCM's nested pools caused once, before that fix. No TSLS-side
     equivalent of that bug ever existed here (proper_mde never had any
     multiprocessing at all until this parameter) -- this inner pool is
-    new, sized the same careful way from the start.'''
+    new, sized the same careful way from the start.
+
+    `raw_columns` (R21, docs/review-actions-v1.md): when given, builds a
+    `{column: delay}` lookup via `observable_and_delay()` for every column
+    in `observable_columns` and passes it to `proper_mde` as
+    `column_delay`, enabling that function's own dynamic per-dimension
+    exclusion radius (see its docstring). `None` (default, and what
+    main()'s own depth-0 seed call passes -- that pool is always
+    real-only, so there is no delay to look up) -> `column_delay=None` ->
+    proper_mde's own no-op default. `build_nested_mde_network()`'s Stage 1
+    and Stage 2 calls both pass `raw_columns=raw_columns` (their
+    `observable_columns`/`candidate_pool` can genuinely contain
+    delay-suffixed synthetic names, confirmed on real data this session).'''
     # Fallback only -- every real call site (main()'s depth-0 seed, and
     # both of build_nested_mde_network()'s per-wave passes) passes this
     # explicitly as the raw TSLS_MDE_GMN_MDE_D value. Falls back to mde_d
@@ -1559,6 +1571,19 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
         ThreadPoolExecutor(max_workers=inner_workers) if inner_workers > 1
         else nullcontext()
     )
+    # R21 (docs/review-actions-v1.md): column_delay lookup for proper_mde's
+    # own dynamic per-dimension exclusion radius -- only meaningful when
+    # `observable_columns` can contain delay-suffixed synthetic names
+    # (build_nested_mde_network()'s Stage 1/Stage 2 candidate pools; see
+    # that function's own call sites, which pass raw_columns=raw_columns).
+    # `raw_columns=None` (main()'s own depth-0 seed call, always a
+    # real-only pool) -> column_delay=None -> proper_mde's own no-op
+    # default, identical to before this parameter existed.
+    column_delay = (
+        {c: observable_and_delay(c, raw_columns)[1] for c in observable_columns}
+        if raw_columns is not None else None
+    )
+
     with inner_pool_ctx as inner_pool:
         result = tsls.proper_mde(
             ccm_df, target=target, columns=observable_columns, D=mde_d,
@@ -1567,7 +1592,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
             pLibSizes=ccm_lib_size_pcts, sample=ccm_sample, ccmSlope=ccm_slope,
             crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
             metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
-            verbose=True, pool=inner_pool,
+            verbose=True, pool=inner_pool, column_delay=column_delay,
         )
 
     mde_out = pd.DataFrame({'rho': result['MDErho']})
@@ -2126,7 +2151,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                         ccm_lib_size_pcts, ccm_sample, ccm_slope,
                         reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
                         code_fingerprint,
-                        max_e=nested_n, inner_workers=inner_workers,
+                        max_e=nested_n, inner_workers=inner_workers, raw_columns=raw_columns,
                     )
                     futures[fut] = node
                 for fut in as_completed(futures):
@@ -2219,7 +2244,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                     ccm_lib_size_pcts, ccm_sample, ccm_slope,
                     reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
                     code_fingerprint, 'stage2',
-                    max_e=nested_n, inner_workers=inner_workers2,
+                    max_e=nested_n, inner_workers=inner_workers2, raw_columns=raw_columns,
                 )
                 futures[fut] = node
             for fut in as_completed(futures):

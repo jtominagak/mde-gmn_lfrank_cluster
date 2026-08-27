@@ -1162,6 +1162,7 @@ def proper_mde(
     noTime=True,
     verbose=False,
     pool=None,
+    column_delay=None,
 ):
     """Forward-stepwise Manifold Dimensional Expansion.
 
@@ -1272,6 +1273,30 @@ def proper_mde(
         for sizing and the pool's lifetime -- see ``run_mde_for_target``
         in tsls-mde-gmn.py for the intended one-pool-per-node-call
         pattern (opened once for this whole call, not once per candidate).
+    column_delay : dict[str, int] or None
+        R21 (docs/review-actions-v1.md): dynamic per-dimension exclusion
+        radius. This function has no built-in notion of "delay" attached
+        to a column name -- a candidate here is just a string, and the
+        ranking stage's ``embedded=True`` Simplex call uses each selected
+        column exactly as given, with no internal per-column lagging.
+        Callers whose own column-naming convention *does* encode a delay
+        (e.g. tsls-mde-gmn.py's ``::delay``-suffixed Stage 2 candidates)
+        can pass a ``{column_name: delay}`` lookup here (any delay's sign
+        doesn't matter -- only its magnitude is used); columns not in the
+        mapping are treated as delay 0. At each dimension ``d``, before
+        scoring that dimension's own remaining candidates (step 4a/4b
+        below), the exclusion radius actually used is
+        ``max(exclusionRadius, max(abs(column_delay.get(c, 0)) for c in
+        MDEcolumns))`` -- i.e. never below the static ``exclusionRadius``
+        floor, and never below the deepest lag genuinely present among
+        the columns *already selected* for this node (the columns the
+        new candidate's own state-space neighbors will be found among).
+        ``None`` (default): every dimension uses the static
+        ``exclusionRadius`` unchanged -- an exact no-op, so no existing
+        caller is affected unless it opts in. Does not affect the ranking
+        stage (step 2 above), which has never taken an ``exclusionRadius``
+        argument at all (a separate, pre-existing limitation this task
+        does not address -- see docs/review-findings.md's R21 section).
 
     Returns
     -------
@@ -1430,6 +1455,25 @@ def proper_mde(
         # passes wins (not necessarily the single best-ranked one overall --
         # a higher-ranked candidate that fails CCM is skipped in favor of
         # the next-best one that passes).
+
+        # R21 (docs/review-actions-v1.md): dynamic exclusion radius -- the
+        # Theiler window used below must cover the deepest lag genuinely
+        # present among the columns *already selected* (MDEcolumns, as of
+        # the start of this dimension), not just the static floor. See
+        # this function's own `column_delay` docstring for why this can't
+        # be derived from MDEcolumns's own column-name strings without a
+        # caller-supplied lookup.
+        if column_delay:
+            deepest_selected_lag = max(
+                (abs(column_delay.get(c, 0)) for c in MDEcolumns), default=0,
+            )
+        else:
+            deepest_selected_lag = 0
+        exclusionRadius_d = max(exclusionRadius, deepest_selected_lag)
+        if verbose:
+            print(f'  {d}-D exclusionRadius={exclusionRadius_d} '
+                  f'(floor={exclusionRadius}, deepest_selected_lag={deepest_selected_lag})')
+
         maxCol_i = None
         for col_i in range(len(L_rhoD)):
             s_rank, cl = L_rhoD[col_i]
@@ -1449,7 +1493,7 @@ def proper_mde(
                 EDimDF = proper_embed_dimension(
                     dataFrame, columns=newColumn, target=target,
                     maxE=maxE, lib=lib, pred=pred,
-                    Tp=Tp, tau=tau, exclusionRadius=exclusionRadius,
+                    Tp=Tp, tau=tau, exclusionRadius=exclusionRadius_d,
                     metric=metric, gammaDelta=gammaDelta,
                     noTime=noTime, showPlot=False, pool=pool,
                 )
@@ -1490,7 +1534,7 @@ def proper_mde(
                     target_measurement=ccmMetric,
                     columns_measurement=ccmMetric,
                     embedded=False,
-                    exclusionRadius=exclusionRadius,
+                    exclusionRadius=exclusionRadius_d,
                     seed=ccmSeed,
                     gammaDelta=gammaDelta,
                     pool=pool,

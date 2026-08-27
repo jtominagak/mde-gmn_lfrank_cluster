@@ -1793,22 +1793,25 @@ untouched by this task, recompiled anyway as part of the standard check).
 `REGION_CHANNEL_CAP=3, MDE_D=2, NESTED_M=1` (`GENERATE_LENGTH=40`,
 results/cache redirected to scratch — same config-approximation
 convention as R12's own smoke run) in the background, per A4's own
-requirement. **Result pending at commit time** — Stage 1 completed (2
-real-observable backbone nodes), Stage 2 was still running its first wave
-(candidate pool size 205, 40-deep lag set) when this section was written;
-this is a real, possibly long-running stage (consistent with this
-session's own prior timing observations for nested-MDE at small
-`REGION_CHANNEL_CAP` but non-trivial `NESTED_M`/lag-set size), not a
-crash. The new code itself is exercised up through this point without
-error (imports, `main()`'s new call-site wiring, the full MDE/network
-pipeline ahead of `run_mde_evaluate()` all ran cleanly against real data).
-Will append the real `run_mde_evaluate()` output here once the run
-reaches that point, or report a failure if one occurs — the synthetic
-test above is what this task's own commit relies on for correctness,
-consistent with this session's own established practice (see R12/R14's
-own "background smoke run: status update" sections) of not blocking a
-commit on a long background job while still launching and reporting on
-it honestly.
+requirement. It progressed a long way on its own before this session
+checked on it again: Stage 1 (2 real-observable backbone nodes), Stage 2
+(both targets' own nested-MDE, real driver selections shown in the log --
+`head_position_x` <- `CA1_1_tsls`, `mPFC_2_tsls`; `head_position_y` <-
+`OFC_1_tsls`, `OFC_0_tsls`), network construction, and into theta
+retuning ("retuning theta for 4 node(s)") -- meaning this run also
+exercised R20's new `proper_predict_nonlinear()` on real data before it
+stopped. **Final status: inconclusive, not a pipeline error** -- by the
+time this session checked again the background process had ended with no
+further log output and no traceback/error anywhere in the ~10800-line
+log, the same "process tracking lost it" outcome R12's own background
+smoke run hit earlier this session (see that section above) rather than
+a crash in this task's own new code. Not re-launched, for the same reason
+R12 gave: the time already spent, and every step this run reached
+completed cleanly. Correctness for R19 rests on the synthetic test above
+(and the reference figure comparison), not on this run reaching
+`run_mde_evaluate()` -- consistent with this session's own established
+practice of reporting a long background job's real status honestly
+rather than blocking a commit on it or overclaiming what it proved.
 
 ---
 
@@ -1982,4 +1985,210 @@ doesn't introduce a new dimension of variation. A run whose cache
 predates this change is invalidated regardless by `code_fingerprint`'s
 whole-file AST hash (`retune_theta_for_all_nodes()`'s own logic changed),
 same mechanism confirmed in R12/R13/R14's own sections.
+
+---
+
+## R21 — Dynamic exclusion radius in `proper_mde`
+
+**Status:** Done.
+
+### A1 verification, and the premise gap found before implementing
+
+Read `proper_mde()` (`cleaned_helper_functions.py`) in full. **The
+task's own literal framing doesn't survive contact with the code as
+written**, for a reason the task text doesn't anticipate: `proper_mde`
+has *no* built-in concept of "delay" attached to a column name at all.
+Its ranking stage (`_rank_one`, every dimension) calls `_simplex_metric(
+..., embedded=True)` — a selected column is used exactly as given, with
+no internal per-column lag tracking; `_simplex_metric` doesn't even
+accept an `exclusionRadius` parameter. "Delay" in this pipeline is purely
+a naming convention (`DELAY_MARKER`/`observable_and_delay()`) that lives
+in `tsls-mde-gmn.py` — grepped `cleaned_helper_functions.py` for both,
+zero matches. So "set `exclusionRadius = max(|delay|)` across the
+columns currently selected" cannot be computed from information already
+inside `proper_mde` — it needs a way to look up each selected *column's*
+own delay, which only the pipeline caller knows.
+
+Confirmed this isn't a hypothetical edge case: `run_mde_for_target()`
+(the single function every one of main()'s depth-0 seed, Stage 1, and
+Stage 2 routes its `proper_mde()` call through — confirmed by grepping
+every call site, matching R4's own earlier finding) really can be handed
+a candidate pool containing delay-suffixed synthetic names for **both**
+Stage 1 and Stage 2 (re-read `build_nested_mde_network()`'s own candidate-
+pool construction for both phases: Stage 1's is built from
+`expanded_columns`, not a real-only subset — the "real observables only"
+in Stage 1's own name describes what gets recursed into via BFS, not
+what `proper_mde`'s own candidate pool for a single node is restricted
+to). This session's own live R19/A4 background smoke run (see that
+section above) independently confirmed it in practice: `MDE selected
+columns for head_position_x: ['CA1_1_tsls', 'CA1_1_tsls::delay-3', ...,
+'CA1_1_tsls::delay-25', ...]` — real delay-suffixed entries in a real
+`MDEcolumns` list.
+
+Stopped and asked before implementing, per Part A1. **User approved**
+the proposed fix: a new optional `column_delay` parameter on `proper_mde`
+(caller-supplied `{column: delay}` lookup, or `None` = exact no-op),
+keeping `cleaned_helper_functions.py` itself free of any hardcoded
+pipeline-specific naming assumption — the caller (which already
+understands its own naming convention) supplies the lookup.
+
+### What changed
+
+- **`cleaned_helper_functions.proper_mde()`:** new `column_delay=None`
+  parameter (dict or `None`). At each dimension `d`, before step 4's
+  E-select (`proper_embed_dimension`) and CCM-gate (`proper_ccm`) calls,
+  computes
+  `exclusionRadius_d = max(exclusionRadius, max(abs(column_delay.get(c, 0))
+  for c in MDEcolumns))` — `MDEcolumns` as of the *start* of dimension
+  `d` (the columns already selected in earlier dimensions; the current
+  dimension's own not-yet-accepted candidate is never included). Both
+  calls use `exclusionRadius_d` in place of the static `exclusionRadius`.
+  `column_delay=None` (default) → `exclusionRadius_d == exclusionRadius`
+  at every dimension, identical to before this parameter existed — a
+  literal no-op for every existing caller that doesn't opt in.
+  **Deliberately out of scope:** the ranking stage (step 2,
+  `_simplex_metric`) — it has never accepted an `exclusionRadius` at all
+  (a separate, pre-existing limitation this task's own text doesn't name
+  and doesn't ask to fix); and `multi_proper_mde` (a different function,
+  R21's own title says "in `proper_mde`" specifically — R22 is the task
+  about unifying the two call paths, not yet reached).
+- **Logging (the task's own explicit requirement):** `if verbose: print(
+  f'  {d}-D exclusionRadius={exclusionRadius_d} (floor={exclusionRadius},
+  deepest_selected_lag={deepest_selected_lag})')`. `run_mde_for_target()`'s
+  own call to `proper_mde` already passes `verbose=True`, so this reaches
+  every real run's log without any further change.
+- **`tsls-mde-gmn.py`'s `run_mde_for_target()`:** new `raw_columns=None`
+  parameter. Builds `column_delay = {c: observable_and_delay(c,
+  raw_columns)[1] for c in observable_columns}` when `raw_columns` is
+  given, and passes it to `proper_mde`. `None` (default — what main()'s
+  own depth-0 seed call leaves it at, since that pool is always
+  real-only) → `column_delay=None` → no-op.
+- **`build_nested_mde_network()`:** both `executor.submit(
+  run_mde_for_target, ...)` call sites (Stage 1 and Stage 2) now pass
+  `raw_columns=raw_columns` (already in scope as this function's own
+  parameter) — the two call sites whose candidate pools can genuinely
+  contain delay-suffixed names.
+
+### Test
+
+`tests/test_r21_dynamic_exclusion_radius.py`:
+- **`test_dynamic_exclusion_radius_matches_deepest_selected_lag`:**
+  synthetic target driven by three independent smooth signals A/B/C
+  (`target = 0.5A + 0.3B + 0.2C`), `column_delay={'A':5,'B':12,'C':2}`,
+  static floor `1`. `crossMapRhoMin`/`embedDimRhoMin`/`ccmSlope` set to
+  trivially-passing thresholds so this test isolates exclusion-radius
+  bookkeeping from the (separately tested elsewhere) CCM-gate/threshold
+  logic. Two checks on the same run, per the task's own acceptance
+  criterion: (1) direct — recomputes the expected floor at each dimension
+  from `proper_mde`'s own returned `MDEcolumns` order (no assumption about
+  which candidate wins), asserts it's never below the static floor nor
+  below the deepest lag among columns already selected; (2) parses the
+  `{d}-D exclusionRadius=...` lines the run actually printed (the log
+  auditability the task's own text asks for) and asserts they match the
+  same expectation exactly. Result: dimension 1 → 1 (floor, nothing
+  selected yet), dimension 2 → 5 (`A` selected, delay 5), dimension 3 → 12
+  (`A`,`B` selected, deepest is `B`'s 12) — matching by construction.
+- **`test_no_column_delay_is_a_no_op`:** same setup, `column_delay=None`
+  — every dimension logs exactly the static floor, confirming the default
+  path is unchanged.
+
+Both passed on first run (after two iterations to get the synthetic
+scenario itself right — see "Test-design notes" below). Ran the full
+existing test suite (`tests/test_r*.py`) after this change, including the
+regression this task's own signature changes caused (below) — all pass.
+
+### Regression found and fixed during testing (not anticipated by the
+task text)
+
+Adding `raw_columns` to `run_mde_for_target()`'s signature broke
+`tests/test_r12_stage_serialization.py`, `test_r13_shared_depth_budget.py`,
+and `test_r15_termination_causes.py`: their shared fake
+(`tests/_pipeline_test_utils.make_fake_run_mde_for_target_tsls()`, which
+`build_nested_mde_network()`'s real `executor.submit(run_mde_for_target,
+...)` calls resolve to under test) has a fixed signature matching the
+*real* function's — the real Stage 1/Stage 2 call sites now pass
+`raw_columns=raw_columns`, which the old fake's signature rejected
+(`TypeError: unexpected keyword argument 'raw_columns'`), silently caught
+by `build_nested_mde_network()`'s own per-node failure handling and
+reported as "MDE call FAILED" rather than crashing the test outright —
+still a real regression (every node became a dead end, both stages)."
+Fixed by adding `raw_columns=None` to the fake's own signature
+(`simple-mde-gmn.py`'s fake is untouched — it has no `raw_columns`
+concept, its own real function's signature is unaffected by this task).
+
+### Test-design notes (not part of the acceptance criterion, recorded for
+completeness)
+
+The first test draft used `noCCM=True` to make selection deterministic,
+which turned out to skip step 4 (and therefore the new exclusion-radius
+computation) entirely — `noCCM`'s own shortcut branch `continue`s before
+reaching it. Switched to `noCCM=False` (the CCM gate genuinely runs) with
+deliberately lenient `crossMapRhoMin`/`embedDimRhoMin`/`ccmSlope`
+thresholds instead, so the test still isolates exclusion-radius behavior
+without depending on the synthetic data's own CCM-convergence properties.
+
+### Effect on real selections (Run A's own exact configuration not
+reproduced here — see caveat below)
+
+Ran `run_mde_for_target()` twice on real data
+(`J1620210605_epoch_8_freq_40_Hz.csv`, `REGION_CHANNEL_CAP=15`,
+`target='head_position_x'`, a 20-delay `lag_set`, `MDE_D=3`) — once with
+`raw_columns=None` (old, static `exclusionRadius=0` throughout) and once
+with the real `observable_and_delay()`-derived `column_delay` (new,
+dynamic). **Selections were identical in this run**
+(`['mPFC_1_tsls', 'mPFC_1_tsls::delay-6', 'mPFC_1_tsls::delay-2']`, both
+cases) — but the mechanism is confirmed genuinely active and numerically
+different, not merely a no-op that happened to match by construction: at
+dimension 3 (`mPFC_1_tsls` and `mPFC_1_tsls::delay-6` already selected,
+deepest delay 6), the dynamic radius was `6` vs the old run's `0`, and
+several candidates' own `EmbedDimension`/CCM-slope numbers genuinely
+differed between the two runs at that dimension (e.g.
+`OFC_3_tsls::delay-1`: `E=1 rho=0.1998` old vs `E=1 rho=0.2725` new;
+`OFC_3_tsls::delay-2`: CCM slope `0.00621` old vs `-0.0034` new) — in this
+particular run, none of those differences happened to flip which
+candidate was the *first* to pass the CCM gate, so the final selection
+came out the same. **Caveat:** this is `REGION_CHANNEL_CAP=15`, not Run
+A's own literal documented configuration (`convert_to_tsls`/full-pipeline
+overhead makes reproducing Run A's exact config in this exploratory check
+materially more expensive than the smaller, still-real check performed
+here) — flagged as an approximation, same as R12's own smoke-run caveat,
+not a literal Run A reproduction.
+
+### A2 interactions checked
+
+None of R21's changes touch `_embedding_spec_for()`/`_generalized_embed()`
+(R14), the theta-retuning sweep (R20), or nested-MDE's own BFS/depth
+accounting (R12/R13) — scoped entirely to `proper_mde`'s own per-dimension
+E-select/CCM-gate calls and the one function (`run_mde_for_target()`)
+that threads a delay lookup into it.
+
+### A3 sibling parity
+
+**Not applicable.** `simple-mde-gmn.py` doesn't import
+`cleaned_helper_functions.py` at all (confirmed earlier this session, R16
+and R18's own sections) — it has no `proper_mde()` call path for this
+change to apply to. Nothing to port, no divergence to record.
+
+### A4 verification
+
+`python3 -m py_compile` passed for all three files touched
+(`cleaned_helper_functions.py`, `tsls-mde-gmn.py`,
+`tests/_pipeline_test_utils.py` is plain Python, not part of the pipeline
+files A4 names, but compiled cleanly too) and `simple-mde-gmn.py`
+(untouched, recompiled anyway). `bash -n` passed for both sbatch
+scripts. Full existing test suite passed, no regressions (after the
+fake-signature fix above).
+
+### A5 cache invalidation
+
+**No new fingerprint code needed.** `column_delay` is derived data (from
+`raw_columns`, itself derived from existing config), not a new
+independent tunable value — there is no new knob to add to
+`build_network_fingerprint()`/`build_search_fingerprint()`. Any change in
+`proper_mde`'s own selections is already covered by
+`_environment_fingerprint()`'s own direct content-hash of
+`cleaned_helper_functions.py` (`_hash_file(Path(tsls.__file__))`,
+confirmed by reading that function this task — folded into
+`build_code_fingerprint()`) — a cache built before this change will not
+be silently reused, since the helper file's own bytes changed.
 
