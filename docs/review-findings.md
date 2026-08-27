@@ -1468,3 +1468,84 @@ the selected theta and start row are bit-identical by construction — a
 fresh Run B re-run would only be re-confirming that no edit was made to
 the selection logic, which reading the diff already establishes directly.
 
+---
+
+## R16 — Sibling engine migration, behind a toggle
+
+**Status:** Done as a scoping report — **no code changed**, per the
+task's own hard-condition acceptance branch ("nothing changed and a
+scoping report explains why").
+
+### A1 verification
+
+Read every consumer of `run_mde_for_target()`'s return shape in
+`simple-mde-gmn.py` (`grep -n "\['m'\]\."` across the whole file) and the
+current `GMN_MODE='combined'` code path in `main()`'s own MDE block.
+
+**The bare single-target engine swap looks mechanically achievable
+without touching any consumer.** `run_mde_for_target()` currently returns
+`{'target', 'mde_df', 'm': <the raw dimx.MDE instance>, 'SELECTED_COLUMNS'}`
+— but *every* consumer in the file (`retune_theta_for_all_nodes()`,
+`_accept_mde_result_edges()`, `run_mde_evaluate()`, `run_tp_vs_rho_sweep()`,
+`run_univariate_e_tau_grid()`) only ever touches `m.MDEcolumns`,
+`m.MDErho`, `m.MDEOut`, or `m.args.lib`/`.pred`/`.Tp`/`.tau` — exactly
+the same normalized attribute set `tsls-mde-gmn.py`'s own
+`run_mde_for_target()` already builds (as a plain
+`types.SimpleNamespace`) from `proper_mde`'s own dict return. Nothing
+reaches into `dimx.MDE`-only internals (`m.rhoD`, `m.EDim`, `m.Plot()`,
+etc.) anywhere. Confirmed specifically for the two dependencies the task
+names by name: `run_mde_evaluate()`'s own `dx.Evaluate(...)` call is
+constructed from plain values (`dataFrame`, `columns_range`,
+`mde_columns`, `predictVar`, and `library`/`prediction`/`Tp`/`tau` pulled
+from `m.args.*`) — it never receives the `m` object itself, so it cannot
+depend on which engine produced it. The embedding path
+(`_embedding_spec_for()`) doesn't touch `mde_results`/`m` at all — it
+reads only the constructed graph.
+
+**But the task's own stated *purpose* — "so both pipelines can perform
+joint multi-target MDE" — is not just a toggle, and is where partial
+migration would actually happen.** `simple-mde-gmn.py` has no
+`multi_proper_mde`/`run_multi_mde_for_targets` equivalent at all today.
+Confirmed `GMN_MODE='combined'` (the default) does **not** currently
+perform joint MDE here, despite the name suggesting otherwise: `main()`'s
+own MDE block still calls `run_mde_for_target()` **once per target inside
+a plain `for target in group:` loop** — `GMN_MODE='combined'` only
+changes the *pre-filter's* own grouping (mean-across-targets scoring),
+never the actual selection call. This is because `dimx.MDE` itself has no
+joint multi-target mode to call — there is nothing for a same-shaped
+toggle to switch *to* on the `dimx` side. Giving this pipeline genuine
+joint MDE (matching `tsls-mde-gmn.py`'s own `run_multi_mde_for_targets()`
+→ `{**shared_result, 'target': target}` fan-out per target) would require,
+at minimum:
+- A new `run_multi_mde_for_targets()`-equivalent wrapping
+  `cleaned_helper_functions.multi_proper_mde` (this file doesn't even
+  import `cleaned_helper_functions` today — it's TSLS-specific tooling,
+  imported only by `tsls-mde-gmn.py`).
+- A real branch in `main()`'s `GMN_MODE='combined'` handling to call it,
+  replacing today's per-target loop for that mode.
+- New config knobs (`MULTI_MDE_E`, `MULTI_MDE_TARGET_AGGREGATE`
+  equivalents) with their own defaults for this pipeline's own 1 Hz data
+  regime — not simply reused from `tsls-mde-gmn.py`'s own values,
+  which are calibrated for 40 Hz TSLS data (same reasoning as R18's own
+  sibling-parity note).
+- Verification (not just an assumption by analogy) that this pipeline's
+  own `_accept_mde_result_edges()`/BFS correctly handles a fanned-out
+  joint result the same way `tsls-mde-gmn.py`'s does — untested here.
+
+This is real, multi-part, non-trivial work — not "add a toggle" — and
+implementing only the narrower, consumer-safe half (a `dimx`/`proper_mde`
+switch for the existing per-target-only call, with `GMN_MODE='combined'`
+still never actually joint) would deliver a toggle that exists but does
+not achieve the task's own stated purpose. That is precisely the "partial
+migration" the task says is not acceptable.
+
+### Decision
+
+**No code changed.** Per the task's own hard condition, achieving the
+stated goal (genuine joint multi-target MDE, not just an engine label
+swap) requires refactoring beyond a same-shape toggle — a new selection
+function, a new `main()` branch, new config knobs, and unverified BFS
+compatibility. Reporting this scope and stopping, rather than shipping a
+toggle that reproduces today's dimx behavior exactly but leaves
+`GMN_MODE='combined'` exactly as un-joint as it is today.
+
