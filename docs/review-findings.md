@@ -853,3 +853,41 @@ small extension of `_crossmap_predict()` or any other existing function
 in this file. This is the concrete input R20 needs for its own
 "implement vs. propose" decision.
 
+---
+
+## R1 — Vectorize `compute_time_since_previous_spike`
+
+**Status:** Done.
+
+### A1 verification
+
+Read `compute_time_since_previous_spike()` in full
+(`cleaned_helper_functions.py:49-100`). Premise confirmed true: it was
+exactly the described O(N x S) per-grid-point boolean mask (`spike_times[
+spike_times <= t]` recomputed fresh inside a Python loop over every
+`time_grid` entry).
+
+### What changed
+
+Replaced the loop body with
+`np.searchsorted(spike_times, time_grid, side='right') - 1` (the index of
+the most recent spike at or before each grid point, all at once), clipped
+to a valid index for the lookup, then `np.where(idx < 0, np.nan, ...)` to
+mark grid points before the channel's first spike — matching the old
+per-point `len(s_prev) == 0` branch exactly. Kept the old implementation
+as `_compute_time_since_previous_spike_reference`, used only by the
+equivalence test.
+
+### Test and measured speedup
+
+`tests/test_r1_tsls_vectorized.py`:
+- **Equivalence:** three real channels from
+  `J1620210605_epoch_8_freq_40_Hz.csv`, chosen to span the firing-rate
+  distribution rather than picked arbitrarily — lowest (`CA1_15`, 83
+  spikes), median (`CA1_34`, 1025 spikes), and highest (`CA1_41`, 44976
+  spikes) spike counts among all 468 real channels.
+  `np.allclose(old, new, equal_nan=True)` passes for all three.
+- **Speedup at full `REGION_CHANNEL_CAP`** (every one of the 468 real
+  channels, all 47999 grid points): old **104.3s** total, new **0.56s**
+  total — **186x** measured speedup.
+

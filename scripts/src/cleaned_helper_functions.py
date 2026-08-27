@@ -85,7 +85,38 @@ def compute_time_since_previous_spike(spike_times, time_grid):
     ----------
     >>> tsls = compute_time_since_previous_spike(spike_times, df['time_bin_center'].to_numpy())
     >>> df['neuron_0_tsls'] = tsls   # now usable as a proper_simplex/proper_ccm/proper_mde column
+
+    R1 (docs/review-actions-v1.md): vectorized -- the old implementation
+    boolean-masked every spike at or before `t`, for every grid point `t`
+    (O(N x S), N = len(time_grid), S = len(spike_times)); this version
+    uses np.searchsorted (O(N log S) with a sorted `spike_times`, and
+    `spike_times` is already assumed sorted per this docstring's own INPUT
+    section above) to find each grid point's most recent spike directly.
+    Kept as `_compute_time_since_previous_spike_reference`, used only by
+    `tests/test_r1_tsls_vectorized.py`'s equivalence check -- see
+    docs/review-findings.md's R1 section for the elementwise-identical
+    confirmation and the measured speedup.
     """
+    spike_times = np.asarray(spike_times)
+    time_grid = np.asarray(time_grid)
+
+    # searchsorted(..., side='right') - 1: the index of the last
+    # spike_times entry <= t, for every t in time_grid at once. -1 means
+    # every spike is strictly after t (before this channel's first spike)
+    # -- clip to 0 for the lookup below, then overwrite those positions
+    # with NaN, matching the old per-point "no s_prev" branch exactly.
+    idx = np.searchsorted(spike_times, time_grid, side='right') - 1
+    safe_idx = np.clip(idx, 0, len(spike_times) - 1)
+    isi_values = time_grid - spike_times[safe_idx]
+    isi_values = np.where(idx < 0, np.nan, isi_values)
+    return isi_values
+
+
+def _compute_time_since_previous_spike_reference(spike_times, time_grid):
+    """Pre-R1 reference implementation of compute_time_since_previous_spike()
+    -- kept only for tests/test_r1_tsls_vectorized.py's elementwise
+    equivalence check against the vectorized version above. Not part of
+    the public API; do not call this from pipeline code."""
     isi_values = np.zeros_like(time_grid)
     for i, t in enumerate(time_grid):
         # Boolean-mask every spike at or before the current grid time t;
