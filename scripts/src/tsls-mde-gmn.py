@@ -3638,7 +3638,22 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
     run_theta_search(), and the winning start row found by
     sweep_generate_start(). Ported from simple-mde-gmn.py -- try/except-
     guarded per network: a failure here is logged and that network is
-    skipped (run['G'] stays unset) rather than crashing the whole job.'''
+    skipped (run['G'] stays unset) rather than crashing the whole job.
+
+    R11 (docs/review-actions-v1.md): the search OBJECTIVE stays
+    target-only -- confirmed evaluate_smap_candidate()'s own `score` (what
+    both run_theta_search() and sweep_generate_start() actually optimize)
+    is already a mean over `net_result['targets']` only, via
+    `target_metric`, never scoring a driver node or mixing metrics into
+    that mean. This function's own per-node print loop below (every node,
+    its own `_metric_for`-resolved metric, tagged TARGET/driver) already
+    existed and is PURELY REPORTING on the one already-decided winning
+    configuration -- it does not feed back into any search. The only
+    thing this task adds is writing that same data to a CSV in
+    `results_dir` alongside the existing print, so it survives past the
+    log (metrics are not mutually comparable across rows -- correlation
+    for targets, f1 for neurons -- so the CSV labels each row's own metric
+    and is not meant to be summed down the score column).'''
     for network_id, run in gmn_runs.items():
         net_result = run['net_result']
         node_theta = theta_search_results[network_id]['best_node_theta']
@@ -3667,12 +3682,21 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
         nodes = [c for c in generated.columns if c != 'Time']
 
         print(f"{network_id} Generate() score, held-out window (start row {generate_start}):", flush=True)
+        per_node_rows = []
         for node in nodes:
             node_metric = _metric_for(node, net_result['targets'], metric, target_metric)
             a = actual_df[node].to_numpy()[generate_start:generate_start + len(generated)]
             r = tsls._score(a, generated[node].to_numpy(), node_metric, gammaDelta=gamma_delta)
             tag = 'TARGET' if node in net_result['targets'] else 'driver'
             print(f"  {node:20s} {tag:7s} {node_metric}={r:7.3f}", flush=True)
+            per_node_rows.append({'node': node, 'role': tag, 'metric': node_metric, 'score': r})
+
+        # R11: purely additive -- same data the print loop above already
+        # reports, written to a file so it survives past the log. Metrics
+        # differ per row (correlation for targets, f1 for neurons) -- do
+        # not sum/average the score column, it mixes incompatible scales.
+        pd.DataFrame(per_node_rows, columns=['node', 'role', 'metric', 'score']).to_csv(
+            results_dir / f'per_node_scores_{network_id}.csv', index=False)
 
 
 def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,

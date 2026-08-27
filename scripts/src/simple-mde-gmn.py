@@ -3956,6 +3956,7 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
         nodes = [c for c in generated.columns if c != 'Time']
 
         print(f"{network_id} Generate() rho, held-out window (start row {generate_start}):", flush=True)
+        per_node_rows = []
         for node in nodes:
             # Sliced to len(generated), not prediction_length: once
             # generate_length can be shorter than the full held-out window
@@ -3966,6 +3967,18 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
             r = ComputeError(a, generated[node].to_numpy())['rho']
             tag = 'TARGET' if node in net_result['targets'] else 'driver'
             print(f"  {node:20s} {tag:7s} rho={r:7.3f}", flush=True)
+            per_node_rows.append({'node': node, 'role': tag, 'metric': 'rho', 'score': r})
+
+        # R11 (docs/review-actions-v1.md): purely additive -- same data the
+        # print loop above already reports, written to a file so it
+        # survives past the log. The search objective itself
+        # (evaluate_smap_candidate()'s own score, what run_theta_search()/
+        # sweep_generate_start() actually optimize) is already target-only
+        # -- confirmed a mean over net_result['targets'] only, never a
+        # driver node; this per-node table is reporting on the already-
+        # decided winning configuration, not a second objective.
+        pd.DataFrame(per_node_rows, columns=['node', 'role', 'metric', 'score']).to_csv(
+            results_dir / f'per_node_scores_{network_id}.csv', index=False)
 
 
 def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,

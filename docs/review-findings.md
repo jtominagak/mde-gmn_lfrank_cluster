@@ -1399,3 +1399,72 @@ default rather than pointing at a better one, satisfying this task's own
 "left at 7 with an explicit statement that the sweep supports it"
 acceptance branch.
 
+---
+
+## R11 — Keep the target-only search objective; report per-node scores additively
+
+**Status:** Done.
+
+### A1 verification — step 1 (confirm target-only, no bug found)
+
+Read `evaluate_smap_candidate()`, `run_theta_search()`, and
+`sweep_generate_start()` in full, both files. **Confirmed target-only
+already, no bug:**
+
+- `evaluate_smap_candidate()`'s own `score` is `float(np.nanmean(list(
+  target_rhos.values())))`, where `target_rhos` is built by iterating
+  `net_result['targets']` only, scored via `target_metric` — never a
+  driver node, never `metric`.
+- `sweep_generate_start()` calls `evaluate_smap_candidate()` per
+  candidate start offset and picks `max(valid_offsets, key=lambda o:
+  scores[o])` — the comparison is over that same target-only `score`,
+  nothing else enters it.
+- `run_theta_search()` doesn't run a literal multi-candidate search of
+  its own at the top level — it retunes each node's own theta once
+  (`retune_theta_for_all_nodes()`, necessarily per-node, since *every*
+  node needs *some* theta to run SMap regardless of whether it's a
+  target) and then calls `evaluate_smap_candidate()` once to *report* the
+  resulting network's score. That one call is target-only, same as
+  above. No mixing, no driver-node scoring anywhere in the objective
+  path.
+
+Since nothing here needed fixing, step 1's own "if any of them scores
+driver nodes or mixes metrics, that is a bug — report it, then fix it"
+branch doesn't apply.
+
+### Step 2 — per-node table
+
+**Already half-done, found while reading.** `rebuild_at_best_params()`
+(both files) already computes and *prints* a per-node score for every
+node of the winning configuration, tagged `TARGET`/`driver`, using each
+node's own `_metric_for`-resolved metric (tsls) / plain rho (simple, no
+`_metric_for` there) — this exists prior to this task and is exactly the
+"compute and log" half of step 2. It was never written to a file. Added
+a `results_dir / f'per_node_scores_{network_id}.csv'` write immediately
+alongside the existing print, same data, same per-row metric label,
+purely additive — no change to what gets computed or printed, no change
+to any search decision.
+
+### Test
+
+`tests/test_r11_per_node_table.py` (both pipelines): builds a real, tiny,
+synthetic `gmn.GMN.Generate()` network (same pattern as
+`tests/test_r14_external_inputs.py`) through `rebuild_at_best_params()`,
+and asserts the CSV exists with the expected columns
+(`node`/`role`/`metric`/`score`), one row for the target (tagged
+`TARGET`) and one for the driver (tagged `driver`), both with finite
+scores. Passed on first run, both pipelines.
+
+### Acceptance: bit-identical selected theta/start row
+
+**Verified structurally, not by re-running Run B.** The CSV write is
+added inside `rebuild_at_best_params()`, which only *reruns* Generate()
+at whichever theta/start row `run_theta_search()`/`sweep_generate_start()`
+already decided — it runs strictly *after* both selections are final and
+never feeds back into them. Neither of those two functions, nor
+`evaluate_smap_candidate()`, was touched by this change. Since the
+selection code path is untouched and the new code runs downstream of it,
+the selected theta and start row are bit-identical by construction — a
+fresh Run B re-run would only be re-confirming that no edit was made to
+the selection logic, which reading the diff already establishes directly.
+
