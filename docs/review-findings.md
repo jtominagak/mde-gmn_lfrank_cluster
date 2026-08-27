@@ -1063,3 +1063,126 @@ Both files, both functions:
 
 Both passed on first run, both pipelines.
 
+---
+
+## R8 — Add resampling to the CCM pre-filter
+
+**Status:** Done. Finding only, per explicit user direction — the task's
+premise doesn't hold, so `CCM_PREFILTER_SAMPLE` was not added. Includes a
+follow-up sample-count sweep and a related redundant-computation
+investigation, both requested inline by the user during this task.
+
+### A1 verification — premise check failed, reported before proceeding
+
+R8's premise: "the pre-filter draws one library sample per library size
+while the main CCM path averages `CCM_SAMPLE` draws." **This is false in
+both pipelines as they stand:**
+
+- **tsls-mde-gmn.py:** `_ccm_prefilter_pair()` already calls
+  `tsls.proper_ccm(..., sample=ccm_sample, ...)` where `ccm_sample` is
+  `ccm_prefilter_observables()`'s own parameter, and `main()`'s call site
+  passes `cfg['CCM_SAMPLE']` — the *same* config value every other CCM
+  call in the pipeline uses (confirmed `sample`'s meaning directly from
+  `proper_ccm()`'s own docstring: "Number of random library subsamples
+  drawn at each library size").
+- **simple-mde-gmn.py:** `_ccm_prefilter_worker()` calls `pyEDM.CCM(...,
+  sample=20, ...)` — hardcoded, not a single draw either, just not
+  independently configurable.
+
+Stopped and asked before implementing anything, per Part A. **User
+confirmed:** the premise was a misreading of §3.1 Step 2 by the reviewer,
+not a defect in the code. No `CCM_PREFILTER_SAMPLE` knob added — there is
+nothing to fix per the task's own reasoning, since the seed-dependency
+concern it raises doesn't currently exist in either pipeline.
+
+**For the documentation rewrite pass (A6):** §3.1 Step 2's wording ("run
+one `proper_ccm` call and average its score across the swept library
+sizes") reads as one draw per library size and is what misled this
+review. It should instead say the pre-filter averages `CCM_SAMPLE` draws
+per library size (tsls) / a hardcoded 20 draws per library size
+(simple), then averages across sizes.
+
+### Follow-up: is 20 draws more than this screen needs?
+
+Per user direction, the useful question flips from "is one draw too few"
+to "is `CCM_SAMPLE`'s usual value (20) more than the pre-filter needs."
+Ran `ccm_prefilter_observables()` on real data
+(`J1620210605_epoch_8_freq_40_Hz.csv`, `REGION_CHANNEL_CAP=15`, 45
+real candidates, `GMN_MODE='combined'` default, both targets) at
+`sample=20`, `10`, and `5` (single run each, not repeated seeds — the
+question here is cost-vs-stability across draw counts, not seed
+variance, since seed variance is no longer the open question):
+
+| `sample` | wall-clock | kept candidates |
+|---|---|---|
+| 20 | 94.9s | 17/45 |
+| 10 | 49.4s | 17/45 (identical set) |
+| 5  | 24.1s | 17/45 (identical set) |
+
+**The kept-candidate set was identical, member-for-member, at all three
+draw counts.** Per-candidate scores drifted only in the 3rd-4th decimal
+place (e.g. `CA1_10_tsls`: 0.2391 -> 0.2370 -> 0.2293) — negligible next
+to the 0.2 `CCM_PREFILTER_RHO_MIN` cutoff, and no candidate sat close
+enough to that boundary for the drift to matter. Wall-clock scaled
+linearly with `sample`, as expected (~2x per 2x draws). **No default
+changed** — this is evidence for a future decision, not an action taken
+now, per the task's own scope boundary.
+
+**If `CCM_PREFILTER_SAMPLE` is ever added on this evidence, its default
+must be 20, not 5** (or any other reduced value) — shipping a reduced
+default would silently drop the pre-filter from today's 20 draws to
+fewer and change kept-candidate sets under cover of what looks like a
+pure refactor (introducing the knob itself must be behavior-preserving;
+lowering the value is a separate, explicit decision for whoever reviews
+this evidence). This mirrors R22's own "numerical regression disguised
+as a refactor" concern.
+
+### Related investigation: can the CCM pre-filter's own value be reused to
+skip the MDE gate's CCM check for a real observable's own first
+selection?
+
+The user asked me to check this directly, since the pre-filter already
+computes `CCM(candidate -> target)` for every real observable against
+the target, and depth-0/Stage 1's own MDE forward-selection re-runs a
+`CCM(newColumn -> target)` gate for the very same pairs. **Confirmed no
+such reuse exists today, and confirmed it would NOT be safe to add as a
+literal "skip and reuse" optimization** — the two values are not computed
+under the same parameters, so reusing one in place of the other would
+silently change MDE's actual selection criterion, not just skip redundant
+work:
+
+- **`E` differs in kind, not just value.** The pre-filter uses a static
+  `E=CCM_PREFILTER_E` (default 7) for every candidate. The MDE gate
+  (`cleaned_helper_functions.py:1484-1497`) uses `E=maxEDim`, auto-selected
+  *per candidate* via `proper_embed_dimension()` (confirmed via R4) — a
+  different value for nearly every candidate, and never equal to the
+  pre-filter's static value except by coincidence.
+- **`libSizes` come from different ratio lists over different windows.**
+  The pre-filter converts `LIBSIZE_RATIOS` against a `_ccm_window(...,
+  0.5, CCM_WINDOW_ROWS)` window (a fixed 50%-centered slice). The MDE
+  gate converts `CCM_LIB_SIZE_PCTS` against `_ccm_window(..., lib_ratio,
+  CCM_WINDOW_ROWS)` where `lib_ratio = (prediction_start - warmup) /
+  (usable_end - warmup)` — a data-driven ratio with no reason to equal
+  0.5 (typically closer to `LIB_RATIO`, e.g. 0.7, minus warmup/Tp
+  trimming). Two different ratio lists over two differently-centered
+  windows of the same row count produce different actual library sizes.
+- **The CCM gate itself is univariate at every dimension** (`columns=
+  newColumn`, confirmed by reading `cleaned_helper_functions.py:1484` —
+  not `[newColumn] + already_selected` as might be assumed), so the
+  *kind* of test the two functions run is the same (univariate candidate
+  -> target CCM) — only the parameters it's run under differ. This is
+  what makes the two numbers look interchangeable at a glance, and why
+  they aren't.
+
+Given these are real, structural parameter differences (not incidental),
+implementing a literal "reuse the pre-filter's score, skip the MDE gate"
+optimization would be a silent numerical regression — the same class of
+mistake R22 already flags for a different pair of call paths. **Not
+implemented.** A narrower version that genuinely would be safe — making
+the pre-filter numerically consistent with the real gate (same `E`
+resolution, same window/libSize convention) so its value becomes
+legitimately reusable — is a materially larger change than "skip a
+redundant call," is not something either R8 or this investigation asked
+for, and is left as a separate, explicit decision if the user wants to
+pursue it.
+
