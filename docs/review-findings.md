@@ -657,3 +657,61 @@ structural invariants (e.g. `_accept_mde_result_edges()`'s own
 belt-and-suspenders self-loop guard). `tests/test_r2_prefilter_guard.py`
 confirms it fires, both pipelines.
 
+---
+
+## R3 — Audit: candidate-pool exclusion semantics
+
+**Status:** Done. Finding only — no code change, per the task's own
+acceptance criterion.
+
+### Finding
+
+The answer **differs across the three scopes** the task asks about —
+flagging this explicitly, as instructed.
+
+1. **Within the same `proper_mde`/`dimx.MDE` call, across dimensions:
+   YES, excluded.** Read `proper_mde()`
+   (`cleaned_helper_functions.py:1150-1152`): "Candidates = `columns -
+   selected`" — at each forward-selection dimension `d`, the candidate
+   list explicitly excludes every column already added to `selected` in
+   an earlier dimension of *this same call*. Confirmed the identical
+   convention holds in `dimx.MDE`'s own `Run()`
+   (`dimx/Run.py:48`: `columns = list(set(dataColumns) -
+   set(self.MDEcolumns))`) — both engines implement the same standard
+   forward-stepwise-selection exclusion, so this holds identically for
+   both pipelines regardless of which engine `GMN_MODE`/`MODE` selects.
+
+2. **Across later BFS depths: NO, not excluded.** Read
+   `build_nested_mde_network()`'s candidate-pool construction in both
+   phases: `candidate_pool = [c for c in expanded_columns /
+   stage2_candidate_universe if observable_and_delay(c, raw_columns)[0]
+   != node]`. The *only* exclusion is the current node's own identity —
+   there is no tracking of "already selected by some earlier-processed
+   node at a shallower depth" anywhere in the BFS. An observable selected
+   as a driver for a depth-0 target is fully eligible to be independently
+   re-selected as a driver for a depth-1 (or deeper) node's own MDE call.
+
+3. **Across other nodes at the same depth: NO, not excluded**, for the
+   identical reason — the same `candidate_pool` construction (self-
+   exclusion only) is used for every node in a wave, computed
+   independently per node from the same shared pool. Two different nodes
+   processed in the same wave can, and do, both select the same
+   observable as their own driver (each becoming its own edge, since a
+   MultiDiGraph allows multiple in-edges from the same driver into
+   different nodes).
+
+4. **Stage 2's pool: the same filtered universe, not rebuilt.**
+   `stage2_candidate_universe` (and `stage2_df`, via
+   `expand_delay_columns()`) is computed exactly once per
+   `build_nested_mde_network()` call, before either phase's while-loop
+   starts. Every node's Stage 2 candidate pool is this same fixed
+   universe, self-excluded — never recomputed per node or per depth.
+
+**Net effect:** "once selected, it disappears from the pool" (the
+reviewer's own stated expectation) is true only *within* a single node's
+own forward-selection call (scope 1); it is false at the network-
+construction level (scopes 2 and 3) and Stage 2's universe is a fixed,
+shared pool rather than something that shrinks as the network grows
+(scope 4). No change made — this is a written finding only, feeding a
+decision not yet made, per the task's own acceptance criterion.
+
