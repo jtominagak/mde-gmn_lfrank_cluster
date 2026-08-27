@@ -1342,3 +1342,60 @@ this is a scientific calibration change backed by R9's own evidence
 (stated here and in the commit message), not an arbitrary tuning
 adjustment.
 
+---
+
+## R18 — `CCM_PREFILTER_E`, after R9
+
+**Status:** Done. Finding only — left at `7`, with the sweep's own
+evidence recorded, per the task's own acceptance criterion's second
+branch.
+
+### A1 verification / decision, gated on R9
+
+R9's E sweep (54 real pairs, `CCM_WINDOW_ROWS=800`) is exactly the
+empirical calibration this task asks for. Results (from R9's own
+section, repeated here for this task's own record):
+
+| `E` | kept | Jaccard vs. `E=7` |
+|---|---|---|
+| 3  | 30 | 0.91 |
+| 5  | 31 | 0.94 |
+| **7**  | **33** | **1.00 (baseline)** |
+| 9  | 35 | 0.94 |
+| 11 | 35 | 0.94 |
+
+`E=7` shows no special problem and no clearly-superior alternative:
+Jaccard stays >= 0.91 across the entire tested range (no cliff at any
+point), and `E=7` sits in the middle of that range rather than at either
+extreme — consistent with the *existing* `CCM_PREFILTER_E` docstring's
+own account of how `7` was originally chosen ("the middle value of this
+pipeline's own already-team-vetted `E_RANGE` search... not an untested
+extrapolation," `load_config()`'s own comment). Moving to `9`/`11` only
+gains 2 more candidates out of 54; moving to `3`/`5` loses 2-3 — neither
+direction corrects an evident error, both are within the same broad
+stability band R9 measured.
+
+**Kept mean aggregation** — unaffected by this task, per its own scope
+note; `ccm_prefilter_observables()` already aggregates by mean across
+library sizes (confirmed during R8's own reading), and slope-based gating
+correctly stays exclusive to `proper_mde`'s own real CCM gate.
+
+**Sibling-parity scoping note:** `simple-mde-gmn.py`'s own
+`CCM_PREFILTER_E` default is **`3`**, not `7` — a different value,
+calibrated separately for that pipeline's own 1 Hz-binned data regime
+(confirmed via its own `load_config()`; unrelated to the 40 Hz TSLS
+data R9's own sweep used). `docs/review-actions-v1.md` is explicitly
+scoped to the tsls pipeline (its own header: "Source: 62 highlights / 44
+notes on `tsls-mde-gmn-pipeline_v1_annotated_export.pdf`"), and R9's
+sweep only ever exercised `tsls-mde-gmn.py`'s own `convert_to_tsls`/
+`proper_ccm` machinery — so this decision applies to `tsls-mde-gmn.py`'s
+`CCM_PREFILTER_E` only. `simple-mde-gmn.py`'s own `3` default is out of
+scope here, not touched.
+
+### Decision
+
+**Left at `7`.** No code change — R9's sweep supports the existing
+default rather than pointing at a better one, satisfying this task's own
+"left at 7 with an explicit statement that the sweep supports it"
+acceptance branch.
+
