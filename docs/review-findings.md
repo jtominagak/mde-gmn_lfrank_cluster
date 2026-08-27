@@ -1278,3 +1278,67 @@ the empirical calibration R18 needs; R18 itself decides whether to keep
 **No pipeline default was changed** — per the task's own acceptance
 criterion, this harness only measures and reports.
 
+---
+
+## R17 — `CCM_LIB_SIZE_PCTS` grid, after R9
+
+**Status:** Done (tsls-mde-gmn.py only — see below).
+
+### A1 verification / decision, gated on R9
+
+`CCM_LIB_SIZE_PCTS` default was `(2, 3, 5, 8, 12, 20, 30, 50)` — these
+are *percentages* of the `CCM_WINDOW_ROWS`-bounded row count (confirmed
+via the existing `load_config()` comment: "sweeps library sizes as
+PERCENTAGES of however many rows it's handed"), so at the current
+`CCM_WINDOW_ROWS=800` default these resolve to {16, 24, 40, 64, 96, 160,
+240, 400} rows. R9's own window=800 measurement is the direct answer to
+this task's decision question: 35% of the 54 sampled pairs were still
+rising at 40 rows (the 5% point) — a real fraction, but **not** "most
+sampled pairs" (would need >50%). Per the task's own decision rule, this
+means: **coarsen only the upper end**, not adopt the reviewer's coarser
+`[5, 20, 40, 60, 80]` grid (which would drop the 2%/3% points — 16/24
+rows — entirely, losing exactly the region R9 shows still carries real
+signal for over a third of pairs).
+
+**Sibling parity note:** `simple-mde-gmn.py` has no equivalent knob at
+all — it relies on `dimx.MDE`'s own internal default (`pLibSizes=(10, 15,
+85, 90)`, a much coarser, hardcoded, unrelated convention) with no
+pipeline-level override surface. This is a pre-existing architectural
+difference, not something this task introduces — nothing to port there.
+
+### What changed
+
+`CCM_LIB_SIZE_PCTS` default: `(2, 3, 5, 8, 12, 20, 30, 50)` ->
+**`(2, 3, 5, 8, 20, 50)`** — drops `12` and `30` (both already in R9's
+"flat" region at `CCM_WINDOW_ROWS=800`: 96 and 240 rows respectively, well
+past the 40-row point where rising curves were still common), keeps
+every percentage at or below the 5%/40-row point R9 flagged as still
+informative.
+
+A5: `ccm_lib_size_pcts` is already threaded into `build_search_fingerprint()`
+as `list(cfg['CCM_LIB_SIZE_PCTS'])` — the fingerprint captures whatever
+value the config resolves to, whether from the (changed) default or an
+explicit override, so no fingerprint code change was needed for this
+default change specifically.
+
+### Measured effect (real data, `REGION_CHANNEL_CAP=15`, depth-0 MDE for
+both real `TARGETS`)
+
+Ran `run_mde_for_target()` for both `head_position_x`/`head_position_y`
+under the old (8-percentage) and new (6-percentage) grids, otherwise
+identical config:
+
+| target | old grid (8 pcts) | new grid (6 pcts) | selections |
+|---|---|---|---|
+| `head_position_x` | 2.3s | 1.7s | identical: `['mPFC_1_tsls']` |
+| `head_position_y` | 17.5s | 12.7s | identical: `['CA1_1_tsls']` |
+| **total** | **19.8s** | **14.4s** | **no change** |
+
+**~27% wall-clock reduction, zero change in kept-candidate set** on this
+real-data run — consistent with R9's own finding that the dropped
+percentages (12%, 30%) sit in the already-converged tail where they add
+compute without adding new information. Per the task's own instruction,
+this is a scientific calibration change backed by R9's own evidence
+(stated here and in the commit message), not an arbitrary tuning
+adjustment.
+

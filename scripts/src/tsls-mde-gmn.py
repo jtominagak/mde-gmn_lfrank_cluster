@@ -1129,8 +1129,21 @@ def load_config():
     # real small-libSize data from this dataset. Keep CCM_WINDOW_ROWS's
     # smallest resulting libSize >= (max E in E_RANGE)+2.
     cfg['CCM_WINDOW_ROWS'] = int(os.environ.get('TSLS_MDE_GMN_CCM_WINDOW_ROWS', 800))
+    # R17 (docs/review-actions-v1.md), gated on R9's own calibration: R9's
+    # window sweep measured, at this pipeline's CCM_WINDOW_ROWS=800 default
+    # (whose own smallest percentage below, 2%, is 16 rows), that 35% of a
+    # 54-pair stratified sample were still rising at 40 rows (the 5%
+    # point) -- a real but NOT majority fraction (R9's own decision rule:
+    # "most sampled pairs" would mean adopting the reviewer's coarser
+    # [5,20,40,60,80] grid outright, which drops everything below 40 rows
+    # entirely; 35% doesn't clear that bar). So: coarsen only the upper
+    # end, keeping the small (16/24/40/64-row) percentages that still
+    # carry real rising-curve signal for a meaningful minority of pairs,
+    # and only dropping percentages from the already-converged tail
+    # (12%, 30% removed; 20%/50% kept) -- see docs/review-findings.md's
+    # R17 section for the measured compute/selection effect on real data.
     cfg['CCM_LIB_SIZE_PCTS'] = tuple(
-        _env_float_list('TSLS_MDE_GMN_CCM_LIB_SIZE_PCTS', (2, 3, 5, 8, 12, 20, 30, 50))
+        _env_float_list('TSLS_MDE_GMN_CCM_LIB_SIZE_PCTS', (2, 3, 5, 8, 20, 50))
     )
     cfg['CCM_SAMPLE'] = int(os.environ.get('TSLS_MDE_GMN_CCM_SAMPLE', 20))
     cfg['CCM_SLOPE'] = float(os.environ.get('TSLS_MDE_GMN_CCM_SLOPE', 0.01))
