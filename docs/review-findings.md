@@ -1186,3 +1186,95 @@ redundant call," is not something either R8 or this investigation asked
 for, and is left as a separate, explicit decision if the user wants to
 pursue it.
 
+---
+
+## R9 — `CCM_WINDOW_ROWS` and `CCM_PREFILTER_E` calibration harness
+
+**Status:** Done. Standalone script + real output + finding, no pipeline
+default changed, per the task's own acceptance criterion. Feeds R17/R18.
+
+### What was built
+
+`scripts/calibration/r9_ccm_window_e_calibration.py` — a standalone,
+read-only script (imports `cleaned_helper_functions`/`tsls-mde-gmn.py`'s
+own `proper_ccm`/`_ccm_window`/`convert_to_tsls`/`burn_in_trim`, changes
+no pipeline config or code):
+
+1. Stratified-samples 3 observables from each of 3 regions x 3
+   firing-rate terciles (low/medium/high spike count within that
+   region) = 27 observables, paired with both real `TARGETS` = **54
+   (observable, target) pairs** (>= 40 required).
+2. Window sweep: at each `CCM_WINDOW_ROWS in {200, 400, 800, 1600,
+   3200}`, computes every pair's CCM skill-vs-library-size curve
+   (`proper_ccm`, the pipeline's current `CCM_PREFILTER_E=7`) and reports
+   the fraction still rising vs. flat at the smallest tested library
+   size for that window.
+3. E sweep: at the pipeline's current `CCM_WINDOW_ROWS=800`, computes
+   the pre-filter-style mean-rho score at each `CCM_PREFILTER_E in {3, 5,
+   7, 9, 11}` for the same 54 pairs, and reports the kept-candidate set
+   (score >= `CCM_PREFILTER_RHO_MIN=0.2`) and its Jaccard stability
+   against the current default `E=7`.
+4. Writes `r9_summary.csv` (one row per window/E setting) and
+   `r9_raw_curves.csv` (one row per pair per window per library size, the
+   full raw curves) into `scripts/calibration/` — both committed
+   alongside the script, per the task's own "its output" acceptance
+   criterion.
+
+The harness's own CCM calls use `sample=10` (not the pipeline's own
+`CCM_SAMPLE`/`CCM_PREFILTER_SAMPLE`-adjacent default of 20) purely to keep
+this exploratory sweep's own wall-clock down — justified by R8's own
+finding (immediately above) that sample counts well below 20 already
+reproduce a stable kept-candidate set at this same real-data scale. This
+is this harness's own internal choice, not a pipeline default.
+
+### Results (real data, `J1620210605_epoch_8_freq_40_Hz.csv`)
+
+**Window sweep** (fraction of the 54 pairs still rising at that window's
+own smallest tested library size):
+
+| `CCM_WINDOW_ROWS` | smallest tested libsize | still rising | flat |
+|---|---|---|---|
+| 200  | 10  | 44/54 (81%) | 10/54 |
+| 400  | 20  | 29/54 (54%) | 25/54 |
+| **800**  | **40**  | **19/54 (35%)** | 35/54 |
+| 1600 | 80  | 0/54 (0%)   | 54/54 |
+| 3200 | 160 | 4/54 (7%)   | 50/54 |
+
+**The pipeline's current default (`CCM_WINDOW_ROWS=800`) leaves a real,
+non-trivial fraction of pairs (35%) still improving at the smallest
+library size tested there** — not converged. Convergence is essentially
+complete by `1600` (0% still rising) with a small amount of measurement
+noise reappearing at `3200` (7% — plausibly `sample=10` noise near the
+0.01 rising/flat threshold, not a genuine reversal; flagged as a caveat,
+not a finding to over-read). **This is directly relevant to R17's own
+"still rising above 40 rows" question**: `CCM_WINDOW_ROWS=800`'s own
+smallest tested library size *is* 40 rows (`0.05 x 800`), so this
+harness's window=800 row above answers R17's specific question directly:
+35% of pairs still rising at 40 rows is a real, substantial fraction —
+not "most pairs" (which would argue for R17's coarser
+`[5,20,40,60,80]` grid), but not negligible either (which would argue
+against dropping every library size below 40 outright). Leaning toward
+R17's own "coarsen only the upper end" alternative, though the final call
+is R17's own to make from this evidence.
+
+**E sweep** (kept-candidate count and stability vs. the current default
+`E=7`, at `CCM_WINDOW_ROWS=800`):
+
+| `CCM_PREFILTER_E` | kept | vs. `E=7` (Jaccard) | changed pairs |
+|---|---|---|---|
+| 3  | 30 | 0.91 | lost 3 |
+| 5  | 31 | 0.94 | lost 2 |
+| **7**  | **33** | **1.00** | (baseline) |
+| 9  | 35 | 0.94 | gained 2 |
+| 11 | 35 | 0.94 | gained 2 |
+
+**The kept-candidate set is reasonably stable across `E in {3,...,11}`**
+(Jaccard >= 0.91 throughout, monotonically more inclusive as `E`
+increases) — no dramatic swing, and the current default `E=7` sits in
+the middle of the tested range rather than at either extreme. This is
+the empirical calibration R18 needs; R18 itself decides whether to keep
+`E=7` or move it.
+
+**No pipeline default was changed** — per the task's own acceptance
+criterion, this harness only measures and reports.
+
