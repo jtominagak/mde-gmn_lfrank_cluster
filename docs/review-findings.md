@@ -774,3 +774,82 @@ pipelines reach the identical auto-select behavior on the single-target
 path, just via an explicit override (tsls) vs. an unoverridden default
 (simple).
 
+---
+
+## R10 — Inventory the S-map surface in `cleaned_helper_functions.py`
+
+**Status:** Done. Finding only, no code, per the task's own acceptance
+criterion. Precursor to R20.
+
+### Finding
+
+**No native S-map exists in this module.** The file's own top-of-file
+public-API comment (`cleaned_helper_functions.py:34-39`) enumerates every
+exposed function: `proper_simplex`, `proper_ccm`, `proper_mde`,
+`proper_embed_dimension`, `proper_predict_interval`, `top_neurons`,
+`multi_simplex`, `multi_proper_ccm`, `multi_proper_mde`,
+`rolling_simplex`, plus the TSLS event-metric helpers and
+`compute_time_since_previous_spike`. There is no `theta` parameter and no
+`smap`/`SMap`-named function anywhere in the file (grepped for both,
+zero matches outside this docstring's own mention of the gap).
+
+**The engine is exclusively simplex-style, KDTree-based weighted-average
+prediction.** Every one of `proper_simplex`/`proper_ccm`/
+`proper_predict_interval` (and `multi_simplex`/`multi_proper_ccm`)
+ultimately calls the shared private workhorse `_crossmap_predict()`
+(`cleaned_helper_functions.py:568`): builds a `scipy.spatial.KDTree` over
+the library embedding, queries k nearest neighbors per point, and predicts
+via an exponentially-distance-weighted average of those neighbors' target
+values ("simplex projection" — the function's own docstring names it as
+such). This is structurally incapable of expressing S-map's locality
+parameter: there is no `theta`, no local weighting kernel over *all*
+library points scaled by a locality parameter, and no linear-regression
+solve anywhere in the prediction path — only a k-NN average.
+
+### Scope estimate: what a theta sweep with an `_score`-compatible metric
+would require
+
+This is genuinely new work, not a small patch on existing machinery — a
+new prediction primitive, not a variant of one that already exists:
+
+1. **A new S-map prediction engine**, analogous in role to
+   `_crossmap_predict()` but structurally different in kind: for every
+   query point, weight *every* library point by
+   `exp(-theta * dist / mean_dist)` (not just the k nearest), then solve a
+   weighted linear regression (embedding coordinates → target) using
+   those weights, and predict from the fitted local linear model at the
+   query point. Needs its own vectorized distance computation (KDTree
+   doesn't help here, since S-map needs distances/weights to the *whole*
+   library, not just k neighbors) and a batched weighted-least-squares
+   solve per query point (`np.linalg.lstsq` or a normal-equations
+   formulation, one solve per point, with the same NaN/degenerate-window
+   handling `_crossmap_predict()` already has to fend off — a library
+   window too small or rank-deficient for the local regression is a real
+   failure mode a k-NN average never has to consider).
+2. **A `metric`-aware wrapper** analogous to `proper_ccm`/
+   `proper_predict_interval`, exposing `theta` as a real parameter and
+   scoring through `_score(metric=...)` (the same dispatch point every
+   other function in this file already routes through), so `f1`/`gamma`
+   (neuron nodes) and `correlation` (targets) both work, not just Pearson
+   rho.
+3. **A theta-sweep entry point** — the pipeline-side counterpart of what
+   `pyEDM.PredictNonlinear` currently does, but calling the new engine at
+   each candidate `theta` and scoring via `_score` instead of pyEDM's own
+   internal rho. `retune_theta_for_all_nodes()`/`run_theta_search()`
+   (both pipelines) already have the surrounding per-node sweep structure
+   this would slot into — the change is which engine gets called
+   underneath, not the sweep loop itself.
+4. **Validation against pyEDM's own S-map** on a known series — R20's own
+   explicit acceptance criterion, not this task's, but worth flagging
+   here as the natural first correctness gate before any pipeline
+   integration: pyEDM's compiled S-map is the reference implementation,
+   and a from-scratch reimplementation needs to reproduce it exactly on
+   Pearson-rho settings before it can be trusted on the metrics pyEDM
+   can't compute at all.
+
+**Net scope:** a genuinely new, non-trivial EDM primitive (item 1) plus
+a thin metric-aware wrapper and sweep integration (items 2-3) — not a
+small extension of `_crossmap_predict()` or any other existing function
+in this file. This is the concrete input R20 needs for its own
+"implement vs. propose" decision.
+
