@@ -13,5 +13,5 @@ wheels/
 data/
 results/
 
-# Scratch output from tests/test_r14_external_inputs.py's real gmn.GMN runs
-tests/_scratch_r14/
+# Scratch output from tests/test_rN_*.py's real gmn.GMN / real-dataframe runs
+tests/_scratch_r*/

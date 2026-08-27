@@ -1549,3 +1549,264 @@ compatibility. Reporting this scope and stopping, rather than shipping a
 toggle that reproduces today's dimx behavior exactly but leaves
 `GMN_MODE='combined'` exactly as un-joint as it is today.
 
+---
+
+## R19 — TSLS-aware `run_mde_evaluate`
+
+**Status:** Done. `tsls-mde-gmn.py` only — `simple-mde-gmn.py` already has
+its own working `run_mde_evaluate()` (`dx.Evaluate`-based), unchanged by
+this task; see the sibling-parity note below for why this is not a port.
+
+### A1 verification
+
+Confirmed `tsls-mde-gmn.py` had **no** `run_mde_evaluate()` at all before
+this task — the file's own pre-existing comment (now updated) said so
+explicitly: "the notebook cell 15 diagnostic... has no
+cleaned_helper_functions.py equivalent... stays dropped." Read
+`simple-mde-gmn.py`'s own `run_mde_evaluate()` (its one existing call
+site, unmodified, used verbatim to generate the reference figure below)
+and, per the task's own explicit instruction ("read `dimx.Evaluate`'s
+source directly to recover the exact CAE definition... rather than
+reimplementing from the name"), read
+`.venv/lib/python3.11/site-packages/dimx/Evaluate.py` in full (704
+lines):
+
+- **`CAE(x, y)` (line 503-506): `delta = sum(abs(x - y)); return delta`**
+  — an unnormalized cumulative absolute error, not a mean or a fraction.
+  Ported verbatim as `_cae()`.
+- **`Run()` (line 207-320):** MDE via `Simplex(embedded=True)` on
+  `mde_columns`; PCA via `sklearn.PCA(n_components).fit(data_lib)` (where
+  `data_lib` is `FilterData()`'s own column subset — confirmed via
+  `FilterData()`, line 458-501: `columns_range` selects 0-offset column
+  indices from the **full** dataFrame, and `simple-mde-gmn.py`'s own call
+  passes `columns_range=[1, mde_df.shape[1]]` against
+  `mde_df = df[[target] + observable_columns]` — i.e. every candidate
+  column **except the target itself**, not the narrower MDE-selected
+  subset and not the full pre-CCM-prefilter universe either), then
+  `LinearRegression().fit(pca_lib, predictVar_lib)` to predict the target;
+  Diffusion Map identically, via
+  `pydiffmap.diffusion_map.DiffusionMap.from_sklearn(...).fit(data_lib)`.
+- **`Plot()` (line 323-401):** 4 stacked subplots (`sharex=True`) —
+  Predictions / MDE / Diffusion Map / PCA, in that order. Panel 1: D-Map,
+  PCA, MDE lines, then the black actual-target line, legend titled `'CAE'`
+  showing each method's CAE value (or `'R'` if `plotRho`, not used here).
+  Panel 2: one line per `mde_columns[:maxN_]` — the **raw** driver series
+  over the prediction window, not a prediction. Panels 3-4: one line per
+  component's own prediction-window projection.
+
+This is the exact structure `run_mde_evaluate()`'s docstring below
+reimplements against `proper_simplex`/`sklearn`/`pydiffmap` directly,
+never against `dx.Evaluate` itself (which has no `_metric_for()`/
+`_score()` awareness and depends on a `dimx.MDE` result object this
+pipeline no longer constructs — same reasoning R16 already established
+for why a bare engine swap doesn't reach this function either).
+
+### Reference figure
+
+Generated from `simple-mde-gmn.py`'s own unmodified `run_mde_evaluate()` /
+`dx.Evaluate()` call path on real data
+(`J1620210605_epoch_8_freq_4_Hz.csv`, target `head_position_x`,
+`REGION_CHANNEL_CAP=15`, `components=5`) — not fabricated. Measured values
+embedded in the figure: MDE CAE=13765.30/RMSE=24.618/R=0.56, PCA
+CAE=12955.82/RMSE=23.672/R=0.106, D-Map CAE=12538.01/RMSE=23.711/R=-0.014;
+selected MDE columns `['CA1_9', 'CA1_2', 'CA1_7', 'mPFC_12', 'mPFC_1']`.
+Committed at `docs/reference/mde-evaluate-reference-plot.png`.
+
+### Ask-before-implementing (the task's own explicit gate)
+
+R19's own text: "confirm whether panel 1 in `combined` mode should be a
+spatial x-y trajectory plot... or two stacked time series... The
+instruction reads as the former; the reference figure is single-target
+and does not settle it." Asked. **User confirmed: spatial x-y trajectory**
+(position in the plane).
+
+### Design decisions beyond the task's literal text (documented here since
+R19 only defines these for/from a single-target figure)
+
+1. **`D` for a >1-target group (`GMN_MODE='combined'`).** R19 defines `D`
+   as "the number of direct drivers of *the* target," singular. With two
+   targets in one figure, this pipeline's own reading is **the union of
+   each target's own direct-driver set** — `graph.predecessors(x) |
+   graph.predecessors(y)` — read directly from
+   `net_result['network']['Graph']` (the completed, both-stages network;
+   never a depth-0-only `SELECTED_COLUMNS` list). This is "how many
+   distinct driver nodes feed the target(s) this figure is about," the
+   natural generalization once there is more than one target to be a
+   direct driver of. Every target passed in is already guaranteed `>= 1`
+   driver by the time this runs — `build_network()` already calls
+   `partition_network()` on this same graph, which raises on a
+   zero-driver target (R14) — so there is no zero-driver-target case to
+   guard against here.
+2. **PCA/diffusion-map's own "full pool."** R19 says both baselines use
+   "their first `D` components" but doesn't say what universe those
+   components are extracted *from*. Read `FilterData()` (above) to answer
+   this from source rather than guessing: dimx's own convention is every
+   candidate column considered at depth-0, minus the target. The TSLS-side
+   analog used here is every **non-target** column in
+   `net_result['DATA_AFTER_MDE']` — i.e. every observable nested-MDE kept
+   *anywhere* in the whole network (a superset of the target's own direct
+   drivers whenever Stage 2 chains through an intermediate node), not the
+   full CCM-pre-filtered candidate pool nested-MDE searched over and
+   rejected most of. That broader pool isn't serialized anywhere after
+   `build_network()` returns (it lives only in `main()`'s own local
+   `filtered_pools` dict); re-threading it through every call site between
+   `main()` and here for one diagnostic would be a materially bigger
+   change than this task asks for, and `DATA_AFTER_MDE` is the same file
+   every *other* diagnostic in this file already reads for its own ground
+   truth (`gmn_fidelity_rho()`, `run_forecast_diagnostic()`, etc.) — using
+   a different, wider data source here would be the inconsistent choice.
+3. **Combined mode's joint regression.** R19: "PCA and diffusion-map
+   extract components of the multivariate target." Read `Run()` (above):
+   `LinearRegression().fit(...)` in dimx already receives a plain 1-D
+   `predictVar_lib` array — but `sklearn.linear_model.LinearRegression`
+   natively accepts a 2-column `y` and fits a genuine multi-output linear
+   model (confirmed against sklearn's own documented behavior, not
+   assumed). So in combined mode, PCA/diffusion-map fit **one** shared
+   component basis on the pool and regress it onto **both** target
+   columns at once (`target_lib` is `(N, 2)`), producing a 2-column
+   prediction directly — not two independent single-target `Evaluate`
+   runs. MDE has no equivalent multivariate call (`proper_simplex`
+   predicts one target column at a time), so it still reconstructs each
+   target separately from its own direct-driver embedding; the two
+   resulting 1-D reconstructions are combined into one `(x, y)` trajectory
+   for the spatial panel — the only place a "joint MDE prediction" is
+   synthesized rather than computed directly.
+4. **Combined-mode MDE CAE in panel 1's legend.** Since `_cae()` on a
+   2-column array already sums the absolute error over *both* columns at
+   once (`numpy`'s own `abs`/`sum` broadcast this way with no axis given —
+   confirmed by construction, not assumed), MDE's own combined-mode CAE is
+   reported as the **sum** of its two per-target CAEs
+   (`mde_cae[x] + mde_cae[y]`) for the same reason — an apples-to-apples
+   additive combination, not an average.
+
+### What changed (`scripts/src/tsls-mde-gmn.py` only)
+
+- **New imports:** `sklearn.decomposition.PCA`, `sklearn.linear_model.LinearRegression`,
+  `pydiffmap.diffusion_map` — not a `dimx` dependency; these are the same
+  underlying libraries `dimx.Evaluate` itself wraps, imported directly
+  since this pipeline has no `dimx` import to route through at all.
+- **`_cae(x, y)`** (new): `sum(abs(x - y))`, recovered verbatim from
+  `dimx.Evaluate.CAE()`.
+- **`run_mde_evaluate(net_result, prediction_start, prediction_length,
+  results_dir, target_metric, gamma_delta, exclusion_radius=0, ...)`**
+  (new): computes `D` and `direct_drivers` from
+  `net_result['network']['Graph']`; runs MDE (`proper_simplex`,
+  `embedded=True`, one call per target on its own direct-driver columns),
+  PCA, and diffusion-map (both on the network-wide driver pool, jointly
+  regressed onto the target(s)) over the held-out window
+  `[prediction_start, prediction_start+prediction_length)` — the same MDE
+  validation segment (B) `evaluate_smap_candidate()` and every other
+  MDE-side diagnostic in this file already uses, fit on
+  `[0, prediction_start)`; never touches the Generate/Forecast validation
+  segment `[B, end)`. Scores every method via `tsls._score(...,
+  target_metric, ...)` alongside CAE (R19's own "scoring routes through
+  `_metric_for`" — `_metric_for()` always resolves to `target_metric` here
+  since every scored quantity is a `TARGETS` column, never a driver node).
+  Produces the 4-panel figure (`mde_evaluate_{network_id}.png`) — standard
+  stacked time series for a 1-target group, spatial panel 1 (matplotlib
+  `GridSpec`, panel 1 not sharing the time x-axis with panels 2-4) for a
+  2-target group. Returns a dict of the computed CAE/score values for the
+  caller to log/inspect.
+- **`main()`:** called once per `network_id` in `gmn_runs`, alongside
+  `run_tp_vs_rho_sweep()`/`run_univariate_e_tau_grid()`, gated on the same
+  `cfg['MODE'] == 'MDE-GMN' and cfg['RUN_MDE_DIAGNOSTICS']` condition —
+  using `gmn_runs` (not `mde_results`) since this diagnostic needs the
+  *completed* network graph, not the depth-0-only MDE result.
+- **Stale comment fixed:** the pre-existing "the notebook cell 15
+  diagnostic... has no cleaned_helper_functions.py equivalent... stays
+  dropped" comment (which this task supersedes) now points at
+  `run_mde_evaluate()` instead of asserting the gap still exists.
+
+### Bug found and fixed during testing (not anticipated by the task text)
+
+Panel 2 (driver traces) originally looped `for t in targets: for driver in
+direct_drivers[t][:maxN]`. In combined mode, a driver shared by more than
+one target (e.g. an upstream node feeding both `head_position_x` and
+`head_position_y`) was plotted and labeled **twice**, once per target it
+feeds, under the identical name and color-cycle position — a duplicate,
+confusing legend entry, caught visually during testing (`tests/_scratch_r19`'s
+own combined-mode figure). Fixed to loop over `driver_union` (already
+computed for `D`) once, matching PCA/diffusion-map's own "one shared
+pool" treatment.
+
+### Test
+
+`tests/test_r19_mde_evaluate.py` — two scenarios on a tiny synthetic
+network (same pattern as `tests/test_r14_external_inputs.py`, real data
+not needed for this diagnostic's own correctness):
+
+- **`test_separate_mode`:** 1 target, 2 direct drivers (`A`, `B`).
+  Recomputes MDE's own CAE by hand from `proper_simplex`'s own
+  `Observations`/`Predictions` columns and asserts it matches
+  `run_mde_evaluate()`'s reported value to `1e-9` — the concrete proof
+  that `_cae()` reproduces `dimx.Evaluate`'s own definition rather than an
+  approximation of it. Asserts the figure file is written and every
+  score is finite.
+- **`test_combined_mode_asymmetric_drivers`:** 2 targets with
+  **asymmetric** driver sets (`head_position_x` has `{A, B}`,
+  `head_position_y` has only `{A}`) — deliberately chosen to exercise the
+  union-`D` rule (asserts `D == 2`, not 3, and not either target's own
+  count alone) and the panel-2 duplicate-driver bug above (this scenario
+  is exactly what surfaced it — `A` feeds both targets). Asserts PCA/
+  diffusion-map produce a genuine 2-column joint prediction (non-zero CAE,
+  finite score) and both targets' own MDE scores are finite.
+
+Both passed on first run after the panel-2 fix above (failed, as
+expected, before it — the pre-fix run still produced a figure and finite
+scores, so this bug would not have been caught by scores/assertions
+alone; it was caught by visually inspecting the generated PNG, which is
+why the fix is recorded as found "during testing" rather than by the
+test file's own assertions).
+
+Ran the full existing test suite (`tests/test_r*.py`) after this change —
+all pass, no regressions.
+
+### A3 sibling parity
+
+**Not a port — no divergence to record either.** `simple-mde-gmn.py`
+already has its own working `run_mde_evaluate()` (`dx.Evaluate`-based),
+predating this task, unmodified by it. This is not "shared machinery"
+that changed and needs porting (R19's own scope, per the review
+document's header, is `tsls-mde-gmn-pipeline_v1_annotated_export.pdf`
+only) — it is new, TSLS-specific code replicating a comparison the sibling
+already performs natively via a dependency (`dimx`) this pipeline
+deliberately does not have. Nothing to port; nothing diverges, since the
+sibling's own behavior is untouched.
+
+### A5 cache invalidation
+
+**Not applicable.** `run_mde_evaluate()` is a pure diagnostic: it reads an
+already-built `net_result` (graph + `DATA_AFTER_MDE`) and writes a figure;
+it does not feed back into any cacheable stage's numerical outcome (best
+theta, network topology, generated output). Same as
+`run_tp_vs_rho_sweep()`/`run_univariate_e_tau_grid()`, neither of which is
+fingerprinted either.
+
+### A4 verification
+
+`python3 -m py_compile` passed for both pipeline files (`simple-mde-gmn.py`
+untouched by this task, recompiled anyway as part of the standard check).
+`bash -n` passed for both sbatch scripts. Full existing test suite
+(`tests/test_r*.py`) passed, no regressions.
+
+**Real-data smoke run:** launched `tsls-mde-gmn.py` end-to-end at
+`REGION_CHANNEL_CAP=3, MDE_D=2, NESTED_M=1` (`GENERATE_LENGTH=40`,
+results/cache redirected to scratch — same config-approximation
+convention as R12's own smoke run) in the background, per A4's own
+requirement. **Result pending at commit time** — Stage 1 completed (2
+real-observable backbone nodes), Stage 2 was still running its first wave
+(candidate pool size 205, 40-deep lag set) when this section was written;
+this is a real, possibly long-running stage (consistent with this
+session's own prior timing observations for nested-MDE at small
+`REGION_CHANNEL_CAP` but non-trivial `NESTED_M`/lag-set size), not a
+crash. The new code itself is exercised up through this point without
+error (imports, `main()`'s new call-site wiring, the full MDE/network
+pipeline ahead of `run_mde_evaluate()` all ran cleanly against real data).
+Will append the real `run_mde_evaluate()` output here once the run
+reaches that point, or report a failure if one occurs — the synthetic
+test above is what this task's own commit relies on for correctness,
+consistent with this session's own established practice (see R12/R14's
+own "background smoke run: status update" sections) of not blocking a
+commit on a long background job while still launching and reporting on
+it honestly.
+

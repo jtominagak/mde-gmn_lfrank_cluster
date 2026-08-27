@@ -191,6 +191,15 @@ from apps.CreateNetwork import CreateNetwork
 # directly (no separate ComputeError call, there or here).
 from pyEDM import Embed, PredictNonlinear
 
+# R19 (docs/review-actions-v1.md): run_mde_evaluate()'s PCA/diffusion-map
+# baselines. Not a dimx dependency -- these are the same underlying
+# libraries dimx.Evaluate itself wraps (confirmed by reading
+# dimx/Evaluate.py in full), imported directly here since this pipeline
+# has no dimx dependency at all to route through.
+from sklearn.decomposition import PCA
+from sklearn.linear_model import LinearRegression
+from pydiffmap import diffusion_map as dmap
+
 # cleaned_helper_functions.py isn't installed as a package -- the sbatch
 # script copies it into this script's own directory (same convention as
 # scripts/src/tsls_example.py).
@@ -3843,13 +3852,16 @@ def plot_fidelity(rho, network_id, save_path):
 # MDE-only diagnostics (mirrors notebook cells 15, 17, 19 -- skipped when
 # MODE == 'GMN', same guard the notebook uses)
 # =============================================================================
-# NOTE: the notebook cell 15 diagnostic (dx.Evaluate: MDE selection vs.
-# PCA/diffusion-map baselines) has no cleaned_helper_functions.py equivalent
-# -- proper_mde replaced dimx.MDE for selection itself, but dx.Evaluate is a
-# standalone dimx tool with no TSLS-aware port, and it depended on the
-# dx.MDE result object this pipeline no longer constructs. Stays dropped,
-# exactly as this file's own architecture has always established (see this
-# module's own docstring).
+# NOTE (superseded by R19, docs/review-actions-v1.md): the notebook cell 15
+# diagnostic (dx.Evaluate: MDE selection vs. PCA/diffusion-map baselines)
+# used to have no cleaned_helper_functions.py equivalent here -- dx.Evaluate
+# is a standalone dimx tool with no TSLS-aware port, and it depended on a
+# dx.MDE result object this pipeline no longer constructs. run_mde_evaluate()
+# below reimplements the same MDE/PCA/diffusion-map comparison directly
+# against this pipeline's own building blocks (proper_simplex, sklearn,
+# pydiffmap -- the same underlying libraries dx.Evaluate itself wraps)
+# instead of routing through dimx at all -- see that function's own
+# docstring and docs/review-findings.md's R19 section for the full design.
 
 def run_tp_vs_rho_sweep(mde_results, targets, max_tp, target_colors, results_dir,
                          target_metric, gamma_delta):
@@ -3957,6 +3969,240 @@ def run_univariate_e_tau_grid(mde_results, targets, e_range, tau_range, rho_thre
         fig.tight_layout()
         fig.savefig(results_dir / f'mde_E_tau_grid_{target}.png', dpi=300)
         plt.close(fig)
+
+
+def _cae(x, y):
+    '''Cumulative absolute error -- recovered verbatim from dimx.Evaluate's
+    own CAE() (.venv/.../dimx/Evaluate.py:503-506: `sum(abs(x - y))`), per
+    R19 (docs/review-actions-v1.md)'s explicit instruction to read the
+    source and replicate the exact definition rather than reimplementing
+    from the name. Unnormalized -- not a mean, not a fraction -- and, for
+    a 2-column (x, y) array (GMN_MODE='combined'), sums the absolute error
+    over BOTH columns at once (numpy's own `abs`/`sum` broadcast this way
+    with no axis given), which is the natural generalization used for the
+    combined-mode spatial panel's own CAE.'''
+    return float(np.sum(np.abs(np.asarray(x) - np.asarray(y))))
+
+
+def run_mde_evaluate(net_result, prediction_start, prediction_length, results_dir,
+                      target_metric, gamma_delta, exclusion_radius=0,
+                      dmap_k=15, dmap_epsilon='bgh_generous', max_traces_shown=7,
+                      figsize=(8, 8)):
+    '''R19 (docs/review-actions-v1.md): TSLS-side counterpart of
+    simple-mde-gmn.py's dx.Evaluate()-based run_mde_evaluate() -- see the
+    NOTE above this function for why this pipeline had no such comparison
+    until now. Reimplements dx.Evaluate's own MDE-vs-PCA-vs-diffusion-map
+    comparison directly against proper_simplex (MDE) and sklearn.PCA /
+    pydiffmap.diffusion_map (the same two libraries dx.Evaluate itself
+    wraps, confirmed by reading dimx/Evaluate.py in full) rather than
+    reusing dx.Evaluate, which has no _metric_for()/_score() awareness and
+    depends on a dimx.MDE result object this pipeline no longer
+    constructs.
+
+    D = the number of *direct* drivers of the target in the COMPLETE
+    nested-MDE network (both stages) -- graph.predecessors(target), read
+    from net_result['network']['Graph'] (built by build_network() /
+    build_nested_mde_network()), NOT a depth-0-only SELECTED_COLUMNS list.
+    PCA and diffusion-map each fit their first D components on the same
+    pool, so all three methods compare at equal dimensionality (R19's own
+    requirement). That pool is every non-target column in
+    net_result['DATA_AFTER_MDE'] -- i.e. every observable nested-MDE kept
+    anywhere in the whole network (a superset of the target's own direct
+    drivers whenever Stage 2 chains through an intermediate node), the
+    TSLS-side analog of dx.Evaluate's own FilterData()-selected column
+    subset (confirmed: simple-mde-gmn.py's own run_mde_evaluate() passes
+    `columns_range=[1, mde_df.shape[1]]` against `mde_df = df[[target] +
+    observable_columns]` -- i.e. every candidate column except the target
+    itself, never the full pre-CCM-prefilter universe, which isn't
+    serialized anywhere after build_network() returns).
+
+    net_result['targets'] has one entry (GMN_MODE='separate') -> a
+    standard single-target figure, panel 1 an actual-vs-predicted time
+    series, matching docs/reference/mde-evaluate-reference-plot.png's
+    layout exactly. Two entries (GMN_MODE='combined') -> ONE joint figure
+    for the pair: panel 1 is a spatial (x, y) trajectory instead (explicit
+    user direction -- R19's own "ask before implementing" gate: "the
+    instruction reads as [a spatial plot]" -- confirmed against the
+    reference plot's own single-target case, which does not settle it).
+    D for this joint figure is the union of each target's own
+    direct-driver set (this pipeline's own reading, documented here since
+    R19's text only defines D for a single target -- "how many distinct
+    driver nodes feed the target(s) this figure is about," the natural
+    generalization once there is more than one target to be a direct
+    driver of). PCA/diffusion-map's own linear-regression step predicts
+    both target columns at once (sklearn's LinearRegression natively
+    supports a 2-column y) -- R19's own "PCA and diffusion-map extract
+    components of the multivariate target" -- rather than two independent
+    single-target Evaluate runs; MDE still reconstructs each target
+    separately (proper_simplex predicts one column at a time) and the two
+    reconstructions are combined into one (x, y) trajectory for the
+    spatial panel, since there is no multivariate Simplex call to make
+    instead.
+
+    Held-out window: [prediction_start, prediction_start+prediction_length)
+    -- the same MDE validation segment (B) evaluate_smap_candidate() and
+    every other MDE-side diagnostic in this file already uses; fit window
+    is [0, prediction_start). Never touches the Generate/Forecast
+    validation segment [B, end) -- same leakage boundary as everywhere
+    else in this pipeline.
+
+    Every target in net_result['targets'] is guaranteed to have D >= 1 by
+    the time this runs: build_network() already calls partition_network()
+    on this same graph, which raises if any target has zero drivers (R14)
+    -- so there is no zero-driver-target case to guard here.
+
+    Scoring (R19's own "scoring routes through _metric_for" acceptance
+    criterion): TARGETS are always continuous, so _metric_for() always
+    resolves to target_metric here regardless of which node is being
+    scored -- reported per method via tsls._score(), alongside CAE (which
+    stays the reference figure's own display convention, not replaced by
+    it). Writes results_dir/mde_evaluate_{network_id}.png; returns a dict
+    of the computed CAE/score values for the caller to log.'''
+    targets = net_result['targets']
+    graph = net_result['network']['Graph']
+    combined = len(targets) > 1
+
+    data_after_mde = pd.read_csv(net_result['DATA_AFTER_MDE'])
+    pool_columns = [c for c in data_after_mde.columns if c not in ('Time', *targets)]
+
+    lib = [1, prediction_start]
+    pred = [prediction_start + 1, prediction_start + prediction_length]
+    pred_slice = slice(prediction_start, prediction_start + prediction_length)
+
+    direct_drivers = {t: list(graph.predecessors(t)) for t in targets}
+    driver_union = sorted(set().union(*direct_drivers.values()))
+    D = len(driver_union)
+
+    # ---- MDE: each target's own reconstruction from its own direct drivers ----
+    mde_predicted, mde_cae, mde_score = {}, {}, {}
+    for t in targets:
+        out = tsls.proper_simplex(
+            data_after_mde, columns=direct_drivers[t], target=t,
+            lib=lib, pred=pred, Tp=0, embedded=True,
+            exclusionRadius=exclusion_radius,
+            metric=target_metric, gammaDelta=gamma_delta,
+        )
+        predicted = out['predictions']['Predictions'].to_numpy()
+        actual = out['predictions']['Observations'].to_numpy()
+        mde_predicted[t] = predicted
+        mde_cae[t] = _cae(actual, predicted)
+        mde_score[t] = out['metrics'][target_metric]
+
+    # ---- PCA / diffusion-map: fit on the network-wide driver pool, regress
+    # onto the target(s) (jointly, in combined mode) ----------------------
+    pool_lib = data_after_mde[pool_columns].iloc[:prediction_start].to_numpy()
+    pool_pred = data_after_mde[pool_columns].iloc[pred_slice].to_numpy()
+    target_lib = data_after_mde[targets].iloc[:prediction_start].to_numpy()
+    target_pred = data_after_mde[targets].iloc[pred_slice].to_numpy()
+    if not combined:
+        target_lib = target_lib.ravel()
+        target_pred = target_pred.ravel()
+
+    pca = PCA(n_components=D)
+    pca.fit(pool_lib)
+    pca_lib_proj, pca_pred_proj = pca.transform(pool_lib), pca.transform(pool_pred)
+    pca_predicted = LinearRegression().fit(pca_lib_proj, target_lib).predict(pca_pred_proj)
+
+    dmap_model = dmap.DiffusionMap.from_sklearn(
+        n_evecs=D, k=dmap_k, epsilon=dmap_epsilon,
+        neighbor_params={'n_jobs': -1, 'algorithm': 'kd_tree'},
+    )
+    dmap_model.fit(pool_lib)
+    dmap_lib_proj, dmap_pred_proj = dmap_model.transform(pool_lib), dmap_model.transform(pool_pred)
+    dmap_predicted = LinearRegression().fit(dmap_lib_proj, target_lib).predict(dmap_pred_proj)
+
+    pca_cae, dmap_cae = _cae(target_pred, pca_predicted), _cae(target_pred, dmap_predicted)
+    if combined:
+        pca_score = float(np.nanmean([
+            tsls._score(target_pred[:, i], pca_predicted[:, i], target_metric, gammaDelta=gamma_delta)
+            for i in range(len(targets))
+        ]))
+        dmap_score = float(np.nanmean([
+            tsls._score(target_pred[:, i], dmap_predicted[:, i], target_metric, gammaDelta=gamma_delta)
+            for i in range(len(targets))
+        ]))
+    else:
+        pca_score = tsls._score(target_pred, pca_predicted, target_metric, gammaDelta=gamma_delta)
+        dmap_score = tsls._score(target_pred, dmap_predicted, target_metric, gammaDelta=gamma_delta)
+
+    print(f"run_mde_evaluate ({net_result['network_id']}, D={D}): "
+          f"MDE CAE={ {t: round(mde_cae[t], 2) for t in targets} } "
+          f"{target_metric}={ {t: round(mde_score[t], 3) for t in targets} } | "
+          f"PCA CAE={pca_cae:.2f} {target_metric}={pca_score:.3f} | "
+          f"D-Map CAE={dmap_cae:.2f} {target_metric}={dmap_score:.3f}", flush=True)
+
+    # ---- Figure: 4 stacked panels, matching the reference -----------------
+    maxN = min(max_traces_shown, D)
+    x_pred = np.arange(prediction_start, prediction_start + prediction_length)
+
+    fig = plt.figure(figsize=figsize)
+    if combined:
+        # Panel 1 is spatial (x-y position), not a time series -- cannot
+        # share a time x-axis with panels 2-4, unlike the single-target case.
+        gs = fig.add_gridspec(4, 1, height_ratios=[2, 1, 1, 1])
+        ax0 = fig.add_subplot(gs[0])
+        ax1 = fig.add_subplot(gs[1])
+        ax2 = fig.add_subplot(gs[2], sharex=ax1)
+        ax3 = fig.add_subplot(gs[3], sharex=ax1)
+    else:
+        (ax0, ax1, ax2, ax3) = fig.subplots(4, 1, sharex=True)
+    axs = [ax0, ax1, ax2, ax3]
+
+    axs[0].set_title(f"{net_result['network_id']}: train {lib}  predict {pred}")
+    axs[1].set_ylabel('MDE', fontsize=12)
+    axs[2].set_ylabel('Diffusion Map', fontsize=12)
+    axs[3].set_ylabel('PCA', fontsize=12)
+    lw = 2.0
+
+    if combined:
+        tx, ty = targets
+        axs[0].plot(target_pred[:, 0], target_pred[:, 1], color='black', lw=lw,
+                    label=f'{tx}/{ty}')
+        mde_xy = np.column_stack([mde_predicted[tx], mde_predicted[ty]])
+        axs[0].plot(mde_xy[:, 0], mde_xy[:, 1], lw=lw,
+                     label=f'MDE   {mde_cae[tx] + mde_cae[ty]:.2f}')
+        axs[0].plot(pca_predicted[:, 0], pca_predicted[:, 1], lw=lw, label=f'PCA    {pca_cae:.2f}')
+        axs[0].plot(dmap_predicted[:, 0], dmap_predicted[:, 1], lw=lw, label=f'D-Map {dmap_cae:.2f}')
+        axs[0].set_xlabel(tx)
+        axs[0].set_ylabel(ty)
+        axs[0].set_ylabel('Predictions', fontsize=12)
+    else:
+        target = targets[0]
+        axs[0].set_ylabel('Predictions', fontsize=12)
+        axs[0].plot(x_pred, dmap_predicted, lw=lw, label=f'D-Map {dmap_cae:.2f}')
+        axs[0].plot(x_pred, pca_predicted, lw=lw, label=f'PCA    {pca_cae:.2f}')
+        axs[0].plot(x_pred, mde_predicted[target], lw=lw, label=f'MDE   {mde_cae[target]:.2f}')
+        axs[0].plot(x_pred, target_pred, color='black', lw=lw, label=target)
+    axs[0].legend(title='CAE', bbox_to_anchor=(1.0, 1.0), loc='upper left')
+
+    # driver_union, not a per-target loop -- a driver shared by more than
+    # one target in combined mode (e.g. a common upstream node) would
+    # otherwise get plotted and labeled once per target it feeds, showing
+    # the identical trace twice under the same name.
+    for driver in driver_union[:maxN]:
+        axs[1].plot(x_pred, data_after_mde[driver].iloc[pred_slice], lw=lw, label=driver)
+    axs[1].legend(title='MDE', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
+
+    for col in range(maxN):
+        axs[2].plot(x_pred, dmap_pred_proj[:, col], lw=lw, label=str(col))
+    axs[2].legend(title='Diffusion Map', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
+
+    for col in range(maxN):
+        axs[3].plot(x_pred, pca_pred_proj[:, col], lw=lw, label=str(col))
+    axs[3].legend(title='PCA', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
+
+    fig.tight_layout()
+    fig.subplots_adjust(hspace=0.3 if combined else 0.04)
+    fig.savefig(results_dir / f"mde_evaluate_{net_result['network_id']}.png",
+                dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+    return {
+        'D': D, 'direct_drivers': direct_drivers,
+        'mde_cae': mde_cae, 'mde_score': mde_score,
+        'pca_cae': pca_cae, 'pca_score': pca_score,
+        'dmap_cae': dmap_cae, 'dmap_score': dmap_score,
+    }
 
 
 def target_groups_for_mode(targets, gmn_mode):
@@ -4280,6 +4526,13 @@ def main():
         run_univariate_e_tau_grid(mde_results, cfg['TARGETS'], cfg['E_RANGE'], cfg['TAU_RANGE'],
                                    cfg['GRID_RHO_THRESHOLD'], cfg['RESULTS_DIR'],
                                    cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'])
+        # R19 (docs/review-actions-v1.md): per constructed network -- needs
+        # net_result['network']['Graph'] for D (direct-driver count), which
+        # mde_results (depth-0-only) doesn't carry.
+        for network_id, run in gmn_runs.items():
+            run_mde_evaluate(run['net_result'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+                              cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
+                              exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
     else:
         print(f"MODE={cfg['MODE']!r} / RUN_MDE_DIAGNOSTICS={cfg['RUN_MDE_DIAGNOSTICS']}: "
               f"skipping MDE-only diagnostics.", flush=True)
