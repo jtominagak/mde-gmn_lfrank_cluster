@@ -29,11 +29,8 @@ PY_SRC="$PROJ_DIR/scripts/src/${SBATCH_NAME%.sbatch}.py"
 job_id="$(sbatch --parsable "$SBATCH_SCRIPT")"
 echo "Submitted batch job $job_id ($SBATCH_NAME)"
 
-out_dir="$PROJ_DIR/results/job_${job_id}"
-mkdir -p "$out_dir"
-
 "$PROJ_DIR/scripts/batch/generate_job_description.sh" \
-    "$PROJ_DIR" "$out_dir" "$job_id" \
+    "$PROJ_DIR" "$job_id" \
     "$SBATCH_SCRIPT" \
     "$PY_SRC"
 

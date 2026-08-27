@@ -565,10 +565,10 @@ def _tp_valid_mask(N, vec, Tp):
     return in_bounds & ~np.isnan(vec[clipped])
 
 
-def _crossmap_predict(embed, pred_vals, L, k, rng, exclusionRadius=0,
+def _crossmap_predict(embed, pred_vals, lib_idx, k, exclusionRadius=0,
                       time_indices=None):
-    """One CCM subsample: choose L random library points from the M
-    embedding rows, build a KDTree, predict every M point with k-NN
+    """One CCM subsample: given L already-drawn random library points from
+    the M embedding rows, build a KDTree, predict every M point with k-NN
     simplex weights drawn only from the library. Returns predictions
     (length M) aligned with the actuals `pred_vals`.
 
@@ -587,12 +587,14 @@ def _crossmap_predict(embed, pred_vals, L, k, rng, exclusionRadius=0,
     INPUT: embed -- (M, E) embedding matrix (all M points, not just the
     library). pred_vals -- (M,) array of the *target*-side values to be
     predicted at each of those M time indices (already Tp-shifted by the
-    caller). L -- library size (number of points randomly drawn to seed
-    the KDTree). k -- number of nearest library neighbors used per
-    prediction (typically E+1, the minimal enclosing simplex). rng --
-    numpy Generator controlling the random library draw (for
-    reproducibility across calls, pass the same rng object across a
-    sample loop, or a fresh one per sample for genuine resampling).
+    caller). lib_idx -- sorted 1-D int array of already-drawn library row
+    indices into `embed` (proper_ccm draws this itself, sequentially, via
+    its own rng -- see that function's own docstring for why the random
+    draw and this function's own KDTree work are deliberately split: it
+    lets proper_ccm parallelize the latter across a thread pool without
+    touching reproducibility, since nothing here consumes any randomness
+    of its own). k -- number of nearest library neighbors used per
+    prediction (typically E+1, the minimal enclosing simplex).
     exclusionRadius -- neighbors whose *time index* is within this many
     steps of the query point's own time index are excluded (guards
     against autocorrelation letting a point "predict" itself via a
@@ -607,7 +609,7 @@ def _crossmap_predict(embed, pred_vals, L, k, rng, exclusionRadius=0,
     """
     from scipy.spatial import KDTree
     M = embed.shape[0]
-    L = min(L, M)          # can't ask for a library bigger than the data
+    L = len(lib_idx)
     k = min(k, L - 1)       # can't have more neighbors than library points minus the point itself
     if k < 1:
         return np.full(M, np.nan)
@@ -620,12 +622,6 @@ def _crossmap_predict(embed, pred_vals, L, k, rng, exclusionRadius=0,
     if exclusionRadius > 0:
         k_query += 2 * exclusionRadius
     k_query = min(k_query, L)
-
-    # Randomly draw L library points (without replacement) out of all M --
-    # this random subsampling at each (L, sample) pair is what lets proper_ccm
-    # average over many draws per library size instead of using one fixed library.
-    lib_idx = rng.choice(M, size=L, replace=False)
-    lib_idx.sort()
 
     tree = KDTree(embed[lib_idx])
     dist, loc = tree.query(embed, k=k_query)   # query EVERY point (not just the library) against the library tree
@@ -874,7 +870,7 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
                target, columns, target_measurement, columns_measurement,
                embedded=False, exclusionRadius=0, seed=None,
                gammaDelta=2,
-               show_plot=False, pass_fail=False):
+               show_plot=False, pass_fail=False, pool=None):
     """CCM with random-library subsampling and pluggable metric.
 
     Parameters
@@ -892,6 +888,18 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
         ``'gamma'`` (Kistler coincidence factor; see ``gammaDelta``).
     gammaDelta : int
         Coincidence window (bins) used by the ``'gamma'`` metric.
+    pool : concurrent.futures.Executor or None
+        Optional already-open worker pool (e.g. a ``ThreadPoolExecutor``
+        sized by the caller's own outer/inner core budget -- see
+        proper_mde's own ``pool`` docstring). When given, the
+        ``sample x len(libSizes)`` grid of independent cross-map
+        evaluations is dispatched across it via ``pool.map`` instead of
+        running sequentially; every random library draw still happens
+        first, in-order, on this function's own ``rng`` (see below), so
+        a given ``seed`` reproduces bit-identical results either way --
+        only wall-clock time changes. ``None`` (default) runs the exact
+        same work inline via the builtin ``map``, unchanged from before
+        this parameter existed.
 
     HOW TO USE
     ----------
@@ -981,32 +989,44 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
     c2t_measurements = np.full((sample, n_L), np.nan)
     t2c_measurements = np.full((sample, n_L), np.nan)
 
-    # Outer loop over independent random resamples, inner loop over the
-    # library-size sweep -- each (sample, libSize) cell gets its own
-    # independently-drawn random library (via `rng`, shared/advancing
-    # across the whole loop) and its own cross-map prediction + score in
-    # both directions.
+    M_fwd = embed_fwd.shape[0]
+    M_rev = embed_rev.shape[0]
+
+    # Draw every (sample, libSize) cell's random library SEQUENTIALLY,
+    # in the same (t, i, fwd-then-rev) order the old inline loop consumed
+    # `rng` in -- this is what keeps a given `seed` reproducible
+    # bit-for-bit regardless of `pool` below. Only the draw is sequential;
+    # the expensive part each cell then does (KDTree build + query in
+    # _crossmap_predict, scipy/numpy -- releases the GIL for the bulk of
+    # it) is what actually gets split across `pool` when one is given.
+    tasks = []
     for t in range(sample):
         for i, L in enumerate(libSizes):
-            preds_fwd = _crossmap_predict(
-                embed_fwd, obs_fwd, L, k, rng,
-                exclusionRadius=exclusionRadius,
-                time_indices=idx_fwd,
-            )
-            c2t_measurements[t, i] = _score(
-                obs_fwd, preds_fwd, target_measurement,
-                gammaDelta=gammaDelta,
-            )
+            lib_idx_fwd = rng.choice(M_fwd, size=min(L, M_fwd), replace=False)
+            lib_idx_fwd.sort()
+            lib_idx_rev = rng.choice(M_rev, size=min(L, M_rev), replace=False)
+            lib_idx_rev.sort()
+            tasks.append((t, i, lib_idx_fwd, lib_idx_rev))
 
-            preds_rev = _crossmap_predict(
-                embed_rev, obs_rev, L, k, rng,
-                exclusionRadius=exclusionRadius,
-                time_indices=idx_rev,
-            )
-            t2c_measurements[t, i] = _score(
-                obs_rev, preds_rev, columns_measurement,
-                gammaDelta=gammaDelta,
-            )
+    def _run_one_cell(task):
+        t, i, lib_idx_fwd, lib_idx_rev = task
+        preds_fwd = _crossmap_predict(
+            embed_fwd, obs_fwd, lib_idx_fwd, k,
+            exclusionRadius=exclusionRadius, time_indices=idx_fwd,
+        )
+        c2t = _score(obs_fwd, preds_fwd, target_measurement, gammaDelta=gammaDelta)
+
+        preds_rev = _crossmap_predict(
+            embed_rev, obs_rev, lib_idx_rev, k,
+            exclusionRadius=exclusionRadius, time_indices=idx_rev,
+        )
+        t2c = _score(obs_rev, preds_rev, columns_measurement, gammaDelta=gammaDelta)
+        return t, i, c2t, t2c
+
+    mapper = pool.map if pool is not None else map
+    for t, i, c2t, t2c in mapper(_run_one_cell, tasks):
+        c2t_measurements[t, i] = c2t
+        t2c_measurements[t, i] = t2c
 
     if pass_fail:
         # Quick convergence verdict instead of the full measurement arrays:
@@ -1110,6 +1130,7 @@ def proper_mde(
     gammaDelta=2,
     noTime=True,
     verbose=False,
+    pool=None,
 ):
     """Forward-stepwise Manifold Dimensional Expansion.
 
@@ -1178,13 +1199,15 @@ def proper_mde(
     ccmSeed : int or None
         Seed passed to ``proper_ccm``.
     E : int
-        Static E for all CCM. ``0`` ⇒ per-candidate ``EmbedDimension``
-        (requires ``metric='correlation'``; pyEDM's EmbedDimension is
-        Pearson-rho only).
+        Static E for all CCM. ``0`` (default) ⇒ per-candidate, per-dimension
+        auto-select via ``proper_embed_dimension`` -- a metric-aware rho-vs-E
+        sweep (works with any of this file's metrics, unlike pyEDM's own
+        Pearson-only ``EmbedDimension``), scored with `metric` (the same one
+        the ranking stage uses, since both predict `target`).
     crossMapRhoMin, embedDimRhoMin : float
         Thresholds; sign is auto-flipped for ``mae``.
     maxE, firstEMax : int, bool
-        Passed to ``EmbedDimension``.
+        Passed to ``proper_embed_dimension`` when ``E<=0``.
     metric : {'correlation', 'mae', 'f1', 'gamma'}
         Used for the ranking stage (Simplex of ``[candidate]+selected
         -> target``, scoring predictions of ``target``). Pick this to
@@ -1200,6 +1223,24 @@ def proper_mde(
     gammaDelta : int
     noTime : bool
         Passed to ``Simplex`` / ``EmbedDimension``.
+    pool : concurrent.futures.Executor or None
+        Optional already-open worker pool (a ``ThreadPoolExecutor`` is
+        the intended case -- every hot loop this reaches into,
+        ``_simplex_metric``'s ``pyEDM.Simplex`` call and
+        ``_crossmap_predict``'s KDTree build/query, is a compiled
+        extension that releases the GIL for the bulk of its own work,
+        so threads get real parallelism here without a second
+        multiprocessing pool nested inside whatever outer
+        ``ProcessPoolExecutor`` is already running this node's whole
+        ``proper_mde`` call). When given, this function's own ranking
+        loop (one ``_simplex_metric`` call per remaining candidate, every
+        dimension) and every ``proper_embed_dimension``/``proper_ccm``
+        call in the CCM gate below use it instead of running that
+        candidate's own work inline. ``None`` (default): everything runs
+        exactly as before this parameter existed. Caller is responsible
+        for sizing and the pool's lifetime -- see ``run_mde_for_target``
+        in tsls-mde-gmn.py for the intended one-pool-per-node-call
+        pattern (opened once for this whole call, not once per candidate).
 
     Returns
     -------
@@ -1237,7 +1278,6 @@ def proper_mde(
     (pyEDM's ``EmbedDimension``, used to auto-pick E, only understands
     Pearson rho).
     """
-    from pyEDM import EmbedDimension
     from scipy.signal import argrelextrema
     from sklearn.linear_model import LinearRegression
 
@@ -1251,12 +1291,6 @@ def proper_mde(
 
     if ccmMetric is None:
         ccmMetric = metric
-
-    if E <= 0 and metric != 'correlation':
-        raise ValueError(
-            "EmbedDimension uses Pearson rho only. Pass an explicit "
-            "E > 0 when metric != 'correlation'."
-        )
 
     direction     = _metric_direction(metric)      # ranking + thresholds
     direction_ccm = _metric_direction(ccmMetric)   # CCM slope sign
@@ -1303,8 +1337,7 @@ def proper_mde(
         # -- this is what makes the ranking "cumulative": a d-D score
         # reflects the skill of the d columns selected so far together,
         # not any one column's standalone skill.
-        rhoD = {}
-        for cl in column_lists:
+        def _rank_one(cl):
             s = _simplex_metric(
                 dataFrame, cl, target, lib, pred,
                 tau=tau, Tp=Tp, E=0,
@@ -1312,6 +1345,15 @@ def proper_mde(
                 metric=metric, gammaDelta=gammaDelta,
                 noTime=noTime,
             )
+            return cl, s
+
+        # Every remaining candidate's ranking score is independent of
+        # every other's (same dataFrame/lib/pred, read-only) -- see this
+        # function's own `pool` docstring for why a ThreadPoolExecutor
+        # here is both safe and effective (pyEDM.Simplex releases the GIL).
+        mapper = pool.map if pool is not None else map
+        rhoD = {}
+        for cl, s in mapper(_rank_one, column_lists):
             key = ','.join(cl) + ':' + target
             rhoD[key] = (s, cl)
 
@@ -1363,27 +1405,38 @@ def proper_mde(
             newColumn = cl[0]
 
             # (a) embedding dimension: either use the caller-supplied static E,
-            # or auto-pick it per-candidate via pyEDM.EmbedDimension's own
-            # univariate rho-vs-E sweep (rho-only, hence the metric=='correlation'
-            # requirement enforced earlier when E<=0).
+            # or auto-pick it per-candidate via proper_embed_dimension's own
+            # univariate rho-vs-E sweep -- a drop-in, metric-aware replacement
+            # for pyEDM.EmbedDimension (which is Pearson-rho only and can't
+            # score 'f1'/'gamma'/'mae'), scored with the SAME `metric` the
+            # ranking stage above uses (this call also predicts `target`, from
+            # newColumn's own embedding -- same quantity, same metric).
             if E > 0:
                 maxEDim    = E
                 maxRhoEDim = s_rank
             else:
-                EDimDF = EmbedDimension(
-                    dataFrame=dataFrame, columns=newColumn, target=target,
+                EDimDF = proper_embed_dimension(
+                    dataFrame, columns=newColumn, target=target,
                     maxE=maxE, lib=lib, pred=pred,
                     Tp=Tp, tau=tau, exclusionRadius=exclusionRadius,
-                    noTime=noTime, showPlot=False,
+                    metric=metric, gammaDelta=gammaDelta,
+                    noTime=noTime, showPlot=False, pool=pool,
                 )
-                rho_arr = EDimDF['rho'].to_numpy()
+                # Column is named after `metric` itself (proper_embed_dimension
+                # returns one column per requested metric), not the fixed
+                # 'rho' pyEDM.EmbedDimension always used -- and argmax/
+                # argrelextrema(np.greater) both assume higher-is-better, so
+                # both need the same sign-flip `sign_better`/`direction` above
+                # already applies for 'mae' (lower-is-better).
+                edim_scores = EDimDF[metric].round(4).to_numpy()
                 if firstEMax:
-                    iMaxArr = argrelextrema(rho_arr, np.greater)[0]
+                    extrema_fn = np.greater if direction > 0 else np.less
+                    iMaxArr = argrelextrema(edim_scores, extrema_fn)[0]
                     iMax = int(iMaxArr[0]) if len(iMaxArr) \
-                        else len(rho_arr) - 1
+                        else int(np.nanargmax(direction * edim_scores))
                 else:
-                    iMax = int(EDimDF['rho'].round(4).argmax())
-                maxRhoEDim = float(EDimDF['rho'].iloc[iMax].round(4))
+                    iMax = int(np.nanargmax(direction * edim_scores))
+                maxRhoEDim = float(edim_scores[iMax])
                 maxEDim    = int(EDimDF['E'].iloc[iMax])
 
             if verbose:
@@ -1409,6 +1462,7 @@ def proper_mde(
                     exclusionRadius=exclusionRadius,
                     seed=ccmSeed,
                     gammaDelta=gammaDelta,
+                    pool=pool,
                 )
             except Exception as exc:
                 if verbose:
@@ -1676,6 +1730,8 @@ def multi_proper_ccm(
     c2t_measurements = np.full((sample, n_L), np.nan)
     t2c_measurements = np.full((sample, n_L), np.nan)
 
+    M_fwd = embed_fwd.shape[0]
+
     for i, L in enumerate(libSizes):
         rng_fwd = np.random.default_rng(child_seqs[2 * i])
         rng_rev = np.random.default_rng(child_seqs[2 * i + 1])
@@ -1683,8 +1739,15 @@ def multi_proper_ccm(
             # ---- fwd: predict each target with source embedding ----
             per_target = []
             for tname in targets:
+                # _crossmap_predict no longer draws its own library --
+                # see that function's own docstring -- so the draw that
+                # used to happen inside it now happens here, in the same
+                # per-target spot in the loop, preserving this function's
+                # existing rng_fwd consumption order/count exactly.
+                lib_idx_fwd = rng_fwd.choice(M_fwd, size=min(L, M_fwd), replace=False)
+                lib_idx_fwd.sort()
                 preds = _crossmap_predict(
-                    embed_fwd, obs_fwd_dict[tname], L, k_fwd, rng_fwd,
+                    embed_fwd, obs_fwd_dict[tname], lib_idx_fwd, k_fwd,
                     exclusionRadius=exclusionRadius,
                     time_indices=idx_fwd,
                 )
@@ -1715,8 +1778,12 @@ def multi_proper_ccm(
             else:
                 col_idx = lag0_idx
             target_embed = np.ascontiguousarray(pool_valid[:, col_idx])
+            lib_idx_rev = rng_rev.choice(
+                target_embed.shape[0], size=min(L, target_embed.shape[0]), replace=False,
+            )
+            lib_idx_rev.sort()
             preds_rev = _crossmap_predict(
-                target_embed, obs_rev, L, k_rev, rng_rev,
+                target_embed, obs_rev, lib_idx_rev, k_rev,
                 exclusionRadius=exclusionRadius,
                 time_indices=idx_rev,
             )
@@ -2808,6 +2875,7 @@ def proper_embed_dimension(
     metric='correlation', gammaDelta=2,
     noTime=True,
     showPlot=False,
+    pool=None,
 ):
     """Estimate optimal embedding dimension E ∈ [1, maxE] under any metric.
 
@@ -2841,6 +2909,12 @@ def proper_embed_dimension(
         First column is data, not time.
     showPlot : bool
         If True, plot each metric vs E.
+    pool : concurrent.futures.Executor or None
+        Optional already-open worker pool -- see proper_mde's own `pool`
+        docstring. Each E in ``range(1, maxE+1)`` is fully independent
+        (its own ``proper_simplex`` call), so when given, the sweep below
+        is dispatched across it instead of running sequentially. ``None``
+        (default): unchanged sequential behavior.
 
     Returns
     -------
@@ -2874,8 +2948,7 @@ def proper_embed_dimension(
     if pred is None:
         pred = [N // 2 + 1, N]
 
-    rows = []
-    for E in range(1, maxE + 1):   # brute-force sweep E=1..maxE, one proper_simplex call each
+    def _run_one_E(E):   # brute-force sweep E=1..maxE, one proper_simplex call each -- independent
         result = proper_simplex(
             dataFrame, columns, target,
             lib=lib, pred=pred,
@@ -2886,7 +2959,10 @@ def proper_embed_dimension(
         )
         row = {'E': E}
         row.update(result['metrics'])
-        rows.append(row)
+        return row
+
+    mapper = pool.map if pool is not None else map
+    rows = list(mapper(_run_one_E, range(1, maxE + 1)))
 
     df = pd.DataFrame(rows)
 

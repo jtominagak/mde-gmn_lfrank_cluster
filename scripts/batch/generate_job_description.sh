@@ -9,7 +9,7 @@
 # unified diffs for both files), then overwrites the cache with this
 # job's files so the *next* submission diffs against this one.
 #
-# Deliberately not a per-job copy under $OUT_DIR: every job's own
+# Deliberately no per-job output directory of its own: every job's own
 # .py/.sbatch content is byte-identical to either the live canonical
 # scripts/batch/ + scripts/src/ files (the common case) or, if edited
 # again since, fully reconstructable from JOB_LOG.md's own diff history
@@ -17,7 +17,12 @@
 # recorded there in full) -- keeping a full duplicate copy per job dir on
 # top of that is pure redundancy that grows without bound. JOB_LOG.md is
 # the single source of truth for "what changed and when"; this script's
-# only job is to keep feeding it accurate diffs.
+# only job is to keep feeding it accurate diffs. (This script used to
+# also take an <out_dir> argument and `mkdir -p` it, left over from an
+# earlier design where a per-job copy was expected -- since dropped, that
+# left submit.sh creating a permanently-empty job_<id>/ directory on
+# /home for every single submission with nothing ever written into it;
+# removed along with the argument.)
 #
 # JOB_LOG.md is a single running record across all jobs and all pipelines
 # (newest entry first), not a per-job file -- entries are *inserted*
@@ -38,16 +43,15 @@
 set -uo pipefail
 
 usage() {
-    echo "Usage: $0 <proj_dir> <out_dir> <job_id> <sbatch_src> <py_src>" >&2
+    echo "Usage: $0 <proj_dir> <job_id> <sbatch_src> <py_src>" >&2
     exit 1
 }
-[ "$#" -eq 5 ] || usage
+[ "$#" -eq 4 ] || usage
 
 PROJ_DIR="$1"
-OUT_DIR="$2"
-JOB_ID="$3"
-SBATCH_SRC="$4"
-PY_SRC="$5"
+JOB_ID="$2"
+SBATCH_SRC="$3"
+PY_SRC="$4"
 
 RESULTS_DIR="$PROJ_DIR/results"
 LOG_FILE="$PROJ_DIR/JOB_LOG.md"
@@ -69,7 +73,7 @@ if grep -qF "## Job ${JOB_ID}" "$LOG_FILE" 2>/dev/null; then
     exit 0
 fi
 
-mkdir -p "$OUT_DIR" "$SNAP_DIR"
+mkdir -p "$SNAP_DIR"
 
 # Extract KEY=VALUE lines from the MODIFIABLE PARAMETERS block, comments
 # and quotes stripped, so cosmetic differences (quoting, trailing comment

@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local data and run outputs -- large, not meant to live in git history
+data/
+results/

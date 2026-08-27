@@ -95,7 +95,7 @@ mkdir -p "$OUT_DIR"
 # snapshot, writing $OUT_DIR/JOB_DESCRIPTION.md. Runs before the pipeline
 # itself so the description is written even if the run later fails.
 "$PROJ_DIR/scripts/batch/generate_job_description.sh" \
-    "$PROJ_DIR" "$OUT_DIR" "$SLURM_JOB_ID" \
+    "$PROJ_DIR" "$SLURM_JOB_ID" \
     "$PROJ_DIR/scripts/batch/tsls_example.sbatch" \
     "$PROJ_DIR/scripts/src/tsls_example.py"
 

@@ -150,7 +150,7 @@ from gmn.Common import FunctionType
 from apps.CreateNetwork import CreateNetwork
 from pyEDM import (
     Simplex, ComputeError, EmbedDimension,
-    PredictNonlinear, PredictInterval,
+    PredictNonlinear, PredictInterval, CCM,
 )
 
 
@@ -830,14 +830,40 @@ def load_config():
     cfg['TARGETS'] = _env_list('MDE_GMN_TARGETS', ['head_position_x', 'head_position_y'])
     cfg['SECOND_TARGET'] = cfg['TARGETS'][1] if len(cfg['TARGETS']) > 1 else None
 
-    # Lib/pred split as a fraction of the full dataset -- e.g. LIB_RATIO=0.5
-    # means the first 50% of rows are library, the remaining 50% are the
-    # held-out pred/Generate() window. PREDICTION_START/PREDICTION_LENGTH
-    # (row counts derived from this ratio and the data's length) are filled
-    # in by main() once the data is loaded, and are what the rest of the
-    # pipeline reads: the MDE lib/pred split, CCM/EmbedDimension calls, and
-    # the held-out window Generate() results are validated against.
+    # Three-way temporal split of the full dataset, resolved by main() once
+    # the data's row count is known:
+    #   [0, A)      MDE library    -- LIB_RATIO fraction of the full dataset
+    #   [A, B)      MDE validation -- dx.MDE's own held-out `pred` window
+    #               (CCM/EmbedDimension/crossMapRhoMin gates, both nested-
+    #               MDE stages) -- MDE_VALIDATION_RATIO fraction of the
+    #               *remainder* after A
+    #   [B, end)    Generate/Forecast validation -- generate_start floats
+    #               only within this segment (GENERATE_START_MIN/MAX/STEP_
+    #               OFFSET below), for GENERATE_LENGTH steps
+    # This exists so network construction (both nested-MDE stages) and
+    # the reported Generate()/Forecast() fidelity never touch the same
+    # rows -- see run_mde_for_target()'s docstring for the mechanics
+    # (mde_df truncated to end exactly at B, a Tp-row buffer before B) and
+    # main()'s window-resolution block for the actual arithmetic.
+    # PREDICTION_START/PREDICTION_LENGTH (row counts, filled in by main())
+    # are A and B-A respectively -- MDE's own lib/pred split, unchanged
+    # names from before this three-way split existed. GENERATE_VALIDATION_
+    # START/LENGTH (new) are B and end-B.
     cfg['LIB_RATIO'] = float(os.environ.get('MDE_GMN_LIB_RATIO', 0.5))
+    # Fraction of the *post-library* remainder (i.e. of [A, end)) given to
+    # the MDE validation segment [A, B) rather than the Generate/Forecast
+    # validation segment [B, end) -- e.g. LIB_RATIO=0.5, MDE_VALIDATION_
+    # RATIO=0.5 on a 1000-row dataset: A=500, remainder=500, B=500+250=750,
+    # so MDE validation gets rows 500-749 and Generate/Forecast validation
+    # gets rows 750-999. Widen this (toward 1.0) if MDE's own CCM/rho
+    # gates need a larger held-out window to be meaningful; narrow it
+    # (toward 0.0) to leave more room for GENERATE_LENGTH/the start-point
+    # sweep.
+    cfg['MDE_VALIDATION_RATIO'] = float(os.environ.get('MDE_GMN_MDE_VALIDATION_RATIO', 0.5))
+    if not (0.0 < cfg['MDE_VALIDATION_RATIO'] < 1.0):
+        raise ValueError(
+            f"MDE_GMN_MDE_VALIDATION_RATIO must be in (0, 1): {cfg['MDE_VALIDATION_RATIO']!r}"
+        )
 
     # Step count for each Generate() call, decoupled from PREDICTION_LENGTH:
     # every Generate() call (in the theta search, the start sweep, and
@@ -935,6 +961,30 @@ def load_config():
     cfg['TP'] = int(os.environ.get('MDE_GMN_TP', 1))
     cfg['EMBED_DIM_RHO_MIN'] = float(os.environ.get('MDE_GMN_EMBED_DIM_RHO_MIN', 0.2))
     cfg['CROSS_MAP_RHO_MIN'] = float(os.environ.get('MDE_GMN_CROSS_MAP_RHO_MIN', 0.2))
+    # CCM pre-filter (see ccm_prefilter_observables()'s docstring): a cheap
+    # CCM(observable -> target) skill check run once per target group,
+    # right before either nested-MDE stage, to shrink REGION_CHANNEL_CAP's
+    # candidate pool down to only observables that cross-map at least one
+    # target above this threshold -- cuts cost on both Stage 1 (real
+    # observables) and Stage 2 (their lags, since Stage 2 draws from the
+    # same filtered pool) for free. 0 disables the filter entirely (pool
+    # passed through unchanged); >0 enables it as the rho cutoff.
+    cfg['CCM_PREFILTER_RHO_MIN'] = float(os.environ.get('MDE_GMN_CCM_PREFILTER_RHO_MIN', 0.2))
+    # Static embedding dimension for the CCM pre-filter's own CCM calls --
+    # no per-candidate EmbedDimension auto-select here (would defeat the
+    # point of a *cheap* pre-filter), matching TSLS_MDE_GMN_MULTI_MDE_E's
+    # own rationale in tsls-mde-gmn.sbatch for the identical situation
+    # (default value 3 matches that parameter's own default too, for
+    # cross-pipeline consistency).
+    cfg['CCM_PREFILTER_E'] = int(os.environ.get('MDE_GMN_CCM_PREFILTER_E', 3))
+    # Library sizes for the CCM pre-filter, as fractions of PREDICTION_START
+    # (the leakage-safe MDE library window -- see main()'s three-way A/B/end
+    # split) rather than absolute row counts, since that window's size is
+    # data-dependent. Converted to actual libSizes (deduped, floored at 10
+    # rows) once PREDICTION_START is known -- see ccm_prefilter_observables().
+    cfg['LIBSIZE_RATIOS'] = _env_float_list(
+        'MDE_GMN_LIBSIZE_RATIOS', (0.05, 0.10, 0.20, 0.40, 0.6, 0.8, 0.9),
+    )
     # 'auto' (default): dynamic per-dimx.Run()-call exclusion radius --
     # see _dynamic_exclusion_radius()'s docstring near this file's
     # monkeypatch block (just above _sequential_ccm_api) for the full
@@ -973,23 +1023,97 @@ def load_config():
     # down for a fast test job.
     cfg['REGION_CHANNEL_CAP'] = int(os.environ.get('MDE_GMN_REGION_CHANNEL_CAP', 999))
 
-    # Delay set nested-MDE searches per observable (MODE='MDE-GMN' only):
-    # each candidate observable is offered to dimx.MDE's forward selection
-    # as len(DELAY_SET) separate columns, one per delay -- e.g. 200
-    # observables x 5 delays = 1000 candidate columns -- so MDE picks
-    # specific (observable, delay) pairs rather than being stuck with one
-    # fixed contemporaneous (delay=0) copy of every observable. This is a
-    # generalized/non-uniform Takens embedding (Deyle & Sugihara 2011):
-    # different driving variables, and even repeats of the *same* driver,
-    # can each carry their own delay rather than sharing one embedding
-    # depth/lag network-wide. Values must be <= 0 (0 = contemporaneous,
-    # negative = that many rows in the past) -- a positive delay would
-    # need future data that doesn't exist during a real free-running
-    # Generate() call. See build_nested_mde_network()'s docstring for how
-    # a node's per-driver delay is recorded and how nesting only recurses
-    # through delay=0 selections. 0 is always included in every node's
-    # own self-embedding regardless of whether it's listed here (see
-    # build_network()'s self_delay_set comment) -- a node's present
+    # ---- Two-stage nested-MDE network construction (MODE='MDE-GMN' only) --
+    # Per explicit direction, network construction interleaves two kinds
+    # of MDE call per node, every BFS wave -- see build_nested_mde_network()
+    # for the full unified algorithm (revised 2026-08-25 -- previously
+    # Stage 1 fully completed before Stage 2 ever ran once, and Stage 2
+    # never recursed regardless of what it selected):
+    #   Stage 1: nested-MDE over *real* (delay=0) observables only --
+    #     builds the "main node" backbone DAG (unchanged BFS/cycle-
+    #     rejection machinery, just given a delay-less candidate pool).
+    #   Stage 2: for every node, one MDE round over the *lagged* (or
+    #     lagged+real, per STAGE2_ALLOW_REAL_OBSERVABLES below) candidate
+    #     pool of the whole observable universe (not just that node's own
+    #     lags) -- attaches each node's own generalized (multi-lag)
+    #     embedding coordinates. A delay=0 (real-observable) selection
+    #     from Stage 2 now spawns a new backbone node exactly like a
+    #     Stage-1 selection would (see STAGE2_ALLOW_REAL_OBSERVABLES's own
+    #     docstring below); a delay!=0 selection stays terminal, as before.
+    #
+    # STAGE2_ALLOW_REAL_OBSERVABLES: whether Stage 2's candidate pool also
+    # includes delay=0 (real-observable) columns -- i.e. whether Stage 2
+    # can introduce a real observable Stage 1 never directly selected as
+    # one of its own drivers. Default False: Stage 2 stays lagged-only, so
+    # every backbone node still traces back to a Stage-1 selection
+    # somewhere in its ancestry. When True (REVISED 2026-08-25): a
+    # Stage-2-selected delay=0 driver is subject to the same eager
+    # cycle-rejection as every other edge (see build_nested_mde_network()'s
+    # docstring) -- acyclicity is guarded structurally, not by restricting
+    # which stage can propose an edge -- AND is now enqueued for its own
+    # further nested-MDE at depth+1 exactly like a Stage-1 delay=0
+    # selection would be (previously it was always a terminal leaf
+    # regardless of this setting -- that was the bug this revision fixes).
+    cfg['STAGE2_ALLOW_REAL_OBSERVABLES'] = _env_bool('MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES', False)
+
+    # DELAY_SOURCE picks what determines the nonzero-delay set used for
+    # (a) every node's unconditional self_delay_set (self-history, always
+    # present regardless of MDE-selected drivers) and (b) Stage 2's
+    # lagged-candidate pool:
+    #   'explicit' (legacy): the hand-picked MDE_GMN_DELAY_SET list below,
+    #     unchanged pre-existing behavior.
+    #   'lag_mode' (default): auto-derived from LAG_MODE/LAG_DENSITY/
+    #     LAG_STEP below instead -- MDE_GMN_DELAY_SET is ignored.
+    cfg['DELAY_SOURCE'] = os.environ.get('MDE_GMN_DELAY_SOURCE', 'lag_mode').strip().lower()
+    if cfg['DELAY_SOURCE'] not in ('explicit', 'lag_mode'):
+        raise ValueError(f"MDE_GMN_DELAY_SOURCE must be 'explicit' or 'lag_mode': {cfg['DELAY_SOURCE']!r}")
+
+    # LAG_MODE (only used when DELAY_SOURCE='lag_mode') sets the *bound*
+    # (deepest lag magnitude, in rows) the auto-derived delay set reaches:
+    #   'generation_length_adjusted' (default): bound = GENERATE_LENGTH --
+    #     ties the deepest embedding coordinate to the length of one full
+    #     Generate() run, per explicit direction.
+    #   'every_lag_possible': bound = as deep as the MDE library segment
+    #     [0, A) structurally allows (its own row count minus a small
+    #     fixed safety buffer so forward-selection still has a meaningful
+    #     library left after the deepest lag's warm-up NaN rows are
+    #     skipped -- see derive_lag_set()) -- exhaustive, and
+    #     correspondingly the more expensive of the two.
+    cfg['LAG_MODE'] = os.environ.get('MDE_GMN_LAG_MODE', 'generation_length_adjusted').strip().lower()
+    if cfg['LAG_MODE'] not in ('generation_length_adjusted', 'every_lag_possible'):
+        raise ValueError(f"MDE_GMN_LAG_MODE must be 'generation_length_adjusted' or "
+                          f"'every_lag_possible': {cfg['LAG_MODE']!r}")
+
+    # LAG_DENSITY (only used when DELAY_SOURCE='lag_mode') samples LAG_MODE's
+    # bound at LAG_STEP-row intervals ('strided', default) rather than
+    # every single integer lag ('dense') -- density is tunable
+    # independently of the bound for compute tractability: e.g.
+    # every_lag_possible against a several-thousand-row library would
+    # otherwise mean tens of thousands of candidate columns per Stage-2
+    # node. 'dense' accepts that cost -- keep REGION_CHANNEL_CAP/MDE_D/
+    # GENERATE_LENGTH small if using it.
+    cfg['LAG_DENSITY'] = os.environ.get('MDE_GMN_LAG_DENSITY', 'strided').strip().lower()
+    if cfg['LAG_DENSITY'] not in ('strided', 'dense'):
+        raise ValueError(f"MDE_GMN_LAG_DENSITY must be 'strided' or 'dense': {cfg['LAG_DENSITY']!r}")
+    cfg['LAG_STEP'] = int(os.environ.get('MDE_GMN_LAG_STEP', 5))
+    if cfg['LAG_STEP'] < 1:
+        raise ValueError(f"MDE_GMN_LAG_STEP must be >= 1: {cfg['LAG_STEP']!r}")
+
+    # Explicit delay set nested-MDE searches per observable (MODE='MDE-GMN'
+    # only, DELAY_SOURCE='explicit' only -- see above): each candidate
+    # observable is offered to dimx.MDE's forward selection as one column
+    # per delay -- e.g. 200 observables x 5 delays = 1000 candidate
+    # columns -- so MDE picks specific (observable, delay) pairs rather
+    # than being stuck with one fixed contemporaneous (delay=0) copy of
+    # every observable. This is a generalized/non-uniform Takens embedding
+    # (Deyle & Sugihara 2011): different driving variables, and even
+    # repeats of the *same* driver, can each carry their own delay rather
+    # than sharing one embedding depth/lag network-wide. Values must be <=
+    # 0 (0 = contemporaneous, negative = that many rows in the past) -- a
+    # positive delay would need future data that doesn't exist during a
+    # real free-running Generate() call. 0 is always included in every
+    # node's own self-embedding regardless of whether it's listed here
+    # (see build_network()'s self_delay_set comment) -- a node's present
     # value is the anchor SMap predicts from/to, not an optional driver
     # delay choice, so it can't be omitted even from a DELAY_SET that
     # doesn't otherwise include 0.
@@ -1101,10 +1225,34 @@ def observable_and_delay(column_name, raw_columns):
     underlying (observable, delay) pair. Delay=0 candidates are just the
     raw observable name itself (see expand_delay_columns()'s docstring
     for why that delay isn't also given a suffixed alias) -- checked
-    against `raw_columns` rather than by string shape alone, in case a
-    real channel name were ever to collide with the delay-suffix marker.
-    '''
+    against `raw_columns` FIRST rather than by string shape alone, in case
+    a real channel name were ever to collide with the delay-suffix marker
+    (membership is the authoritative signal whenever available).
+
+    Falls back to a marker-presence check (bug found 2026-08-25, job
+    39605472/39605473) when `column_name` isn't in `raw_columns` at all.
+    Originally this triggered on every run, because depth-0's mde_results
+    entry used to be computed in main() against the *full*, unfiltered
+    candidate pool, before ccm_prefilter_observables() ever ran -- main()
+    now runs the pre-filter first and seeds depth-0 from the *same*
+    filtered pool build_nested_mde_network() itself uses, so that original
+    mismatch no longer happens on a normal run. The fallback stays as a
+    cache-reuse safety net: with REUSE_BEST_PARAMS, a reused mde_results
+    entry can come from an earlier job that used a different
+    CCM_PREFILTER_RHO_MIN/E (or predates the pre-filter feature entirely),
+    so its SELECTED_COLUMNS can still legitimately reference an observable
+    absent from *this* run's (filtered) `raw_columns`. Without this
+    fallback, _parse_delayed_column_name() crashes on any such name
+    (confirmed: `ValueError: invalid literal for int() with base 10:
+    'CA1_22'`) since it has no delay marker to parse. Residual risk is
+    unchanged from before this fallback existed: only a real channel name
+    that is BOTH missing from `raw_columns` AND happens to contain the
+    literal `DELAY_MARKER` substring would still be misclassified -- this
+    codebase's actual naming scheme (CA1_N/mPFC_N/OFC_N/head_position_*)
+    never produces that.'''
     if column_name in raw_columns:
+        return column_name, 0
+    if DELAY_MARKER not in column_name:
         return column_name, 0
     return _parse_delayed_column_name(column_name)
 
@@ -1136,6 +1284,51 @@ def expand_delay_columns(df, columns, delay_set):
     return expanded, expanded_columns
 
 
+def derive_lag_set(delay_source, explicit_delay_set, lag_mode, lag_density, lag_step,
+                    generate_length, mde_lib_size, min_lib_rows=50):
+    '''Resolves the nonzero-delay set used for Stage 2's lagged-driver
+    candidate pool (build_nested_mde_network()'s own Stage-2 pass) and,
+    unioned with {0}, every
+    node's unconditional self_delay_set -- see load_config()'s
+    DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP docstrings for the
+    parameter semantics.
+
+    delay_source='explicit': just the hand-picked delay_set list,
+    stripped of any 0 entry (0 is added back in separately by callers --
+    matches expand_delay_columns()'s convention that delay=0 needs no
+    shifted column of its own).
+
+    delay_source='lag_mode': auto-derived --
+      lag_mode='generation_length_adjusted': bound = generate_length.
+      lag_mode='every_lag_possible': bound = mde_lib_size - min_lib_rows
+        (clamped to >= 1) -- as deep as the MDE library segment [0, A)
+        structurally allows while reserving min_lib_rows real rows so
+        MDE's own forward-selection still has a meaningful library left
+        after the deepest lag's warm-up NaN rows (see run_mde_for_target()'s
+        `warmup`) are skipped.
+    Either bound is then sampled every lag_step rows (lag_density=
+    'strided') or every single integer lag (lag_density='dense').
+
+    Returns a sorted-descending list of negative ints, e.g.
+    [-1, -6, -11, ...] for a strided bound of 15 at step 5 -- no 0 entry,
+    same convention as the explicit-source path above.'''
+    if delay_source == 'explicit':
+        return sorted((d for d in explicit_delay_set if d != 0), reverse=True)
+
+    if lag_mode == 'generation_length_adjusted':
+        bound = max(1, generate_length)
+    elif lag_mode == 'every_lag_possible':
+        bound = max(1, mde_lib_size - min_lib_rows)
+    else:
+        raise ValueError(f"Unknown lag_mode: {lag_mode!r}")
+
+    step = lag_step if lag_density == 'strided' else 1
+    if lag_density not in ('strided', 'dense'):
+        raise ValueError(f"Unknown lag_density: {lag_density!r}")
+
+    return list(range(-1, -bound - 1, -step))
+
+
 def effective_mde_dimension(mde_d, candidate_columns, num_delays):
     '''MDE_D names the desired count of distinct *real* observables
     dimx.MDE should be able to select -- not delay-expanded columns. Each
@@ -1163,7 +1356,8 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
                         mde_d, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
                         cores, results_dir, delay_set, tp=1,
                         reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
-                        data_file=None, data_file_sha256=None, code_fingerprint=None):
+                        data_file=None, data_file_sha256=None, code_fingerprint=None,
+                        cache_stage='stage1'):
     '''Run dimx.MDE's forward selection for a single target variable.
     `mde_d` here is already the *effective* dimension count (see
     effective_mde_dimension()) -- callers compute that from the
@@ -1183,6 +1377,22 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     original single-delay rationale (identical logic otherwise, just
     cores threaded through).
 
+    LEAKAGE (see load_config()'s three-way A/B/end window docstring):
+    `prediction_start`/`prediction_length` here are always A and B-A --
+    the MDE-only library/validation window, never the Generate/Forecast
+    validation segment [B, end). `mde_df` (below) is truncated to
+    `.iloc[:prediction_start+prediction_length]` == `.iloc[:B]` -- this
+    is the actual leakage guard, not just the `lib=`/`pred=` args below:
+    dimx.MDE's own internal CCM() call ignores those bounds and samples
+    its library/prediction sets from *whatever DataFrame it's given*
+    (confirmed by reading pyEDM/CCM.py directly), so physically excluding
+    every row at or past B from the DataFrame object itself is what
+    prevents CCM() -- and by extension exclusionRadius, which only ever
+    narrows an already-available candidate set, never expands it -- from
+    ever seeing segment 3. `pred`'s upper bound is further shortened by
+    `tp` rows (B-tp, not B) so the last validated row's own t+tp target
+    label can never land at or past B either.
+
     CACHE (reuse_cache, gated by MDE_GMN_REUSE_BEST_PARAMS same as every
     other stage -- see the module docstring's SEARCH REUSE section):
     every downstream consumer of the returned 'm' object only ever reads
@@ -1191,10 +1401,15 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     file) -- never anything else, never a second .Run(). So a cache hit
     reconstructs a types.SimpleNamespace exposing exactly those seven
     attributes instead of a live dx.MDE object, and skips calling
-    dx.MDE(...).Run() entirely. Called both from main()'s top-level
-    per-target loop and from every per-node wave inside
-    build_nested_mde_network()'s ProcessPoolExecutor, so caching here
-    covers both at full per-node granularity for free.'''
+    dx.MDE(...).Run() entirely. Called from main()'s top-level per-target
+    loop and, per wave, from both the Stage 1 and Stage 2 passes inside
+    build_nested_mde_network(), so caching here covers all three at full
+    per-node granularity for free. `cache_stage` ('stage1' default,
+    'stage2' from build_nested_mde_network()'s own Stage 2 pass) keeps the
+    two stages' cache files from ever colliding on the same
+    node name -- their candidate pools (and so their fingerprints) always
+    differ anyway, but distinct filenames also keep find_cached()'s glob
+    from scanning irrelevant entries.'''
     mde_df = df[[target] + observable_columns].iloc[:prediction_start + prediction_length]
 
     # expand_delay_columns() shifts each observable forward by abs(delay)
@@ -1208,12 +1423,12 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     warmup = max((abs(d) for d in delay_set), default=0)
 
     fingerprint = None
-    cache_filename = f'mde_selection_{target}.pkl'
+    cache_filename = f'mde_selection_{cache_stage}_{target}.pkl'
     if reuse_cache:
         fingerprint = build_mde_selection_fingerprint(
             target, observable_columns, mde_d, tp, embed_dim_rho_min, cross_map_rho_min,
             exclusion_radius, delay_set, prediction_start, prediction_length,
-            data_file, data_file_sha256, code_fingerprint,
+            data_file, data_file_sha256, code_fingerprint, cache_stage,
         )
         hit = find_cached(prev_runs_dir, cache_filename, fingerprint,
                            load_one=_load_pickle_cache_entry)
@@ -1226,7 +1441,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
                 args=types.SimpleNamespace(lib=entry['lib'], pred=entry['pred'],
                                             tau=entry['tau'], Tp=entry['Tp']),
             )
-            m.MDEOut.to_csv(results_dir / f'mde_output_{target}.csv', index=False)
+            m.MDEOut.to_csv(results_dir / f'mde_output_{cache_stage}_{target}.csv', index=False)
             selected_columns = list(m.MDEcolumns)
             print(f'MDE selected columns for {target}:', selected_columns, flush=True)
             return {
@@ -1241,7 +1456,11 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     m = dx.MDE( mde_df, target = target, D = mde_d,
                 removeColumns = [target],
                 lib  = [warmup + 1, prediction_start],
-                pred = [prediction_start + 1, prediction_start + prediction_length],
+                # -tp: the last validated row's own t+tp target label
+                # must land strictly before B (== prediction_start +
+                # prediction_length) -- see this function's LEAKAGE
+                # docstring.
+                pred = [prediction_start + 1, prediction_start + prediction_length - tp],
                 Tp = tp,
                 embedDimRhoMin = embed_dim_rho_min,
                 crossMapRhoMin = cross_map_rho_min,
@@ -1250,7 +1469,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
 
     m.Run()
 
-    m.MDEOut.to_csv(results_dir / f'mde_output_{target}.csv', index=False)
+    m.MDEOut.to_csv(results_dir / f'mde_output_{cache_stage}_{target}.csv', index=False)
 
     selected_columns = list(m.MDEcolumns)
     print(f'MDE selected columns for {target}:', selected_columns, flush=True)
@@ -1370,131 +1589,208 @@ def estimate_node_dimension(lib_df, node, cores, max_e=15, fallback=4):
         return fallback
 
 
+def _failed_mde_result(target):
+    '''Fallback run_mde_for_target()-shaped result for a node/target whose
+    MDE call raised, instead of returning normally -- a real, observed
+    failure mode (job 37946756: dimx's own internal EmbedDimension hit an
+    all-NaN rho column deep inside dimx.Run.Run(), ValueError:
+    "Encountered all NA values", not something this pipeline's own gates
+    catch or control), not a hypothetical one. Shaped to be
+    indistinguishable, to every downstream consumer, from a node that
+    legitimately selected zero drivers (SELECTED_COLUMNS=[], empty
+    MDErho) -- already one of build_nested_mde_network()'s documented
+    ordinary BFS termination conditions -- so a single degenerate node
+    dead-ends cleanly (no edges, no further nesting through it) instead
+    of the exception propagating out of a ProcessPoolExecutor wave and
+    crashing everything already computed alongside it, in this stage and
+    every other node's still-pending work in the same wave.'''
+    return {
+        'target': target,
+        'mde_df': None,
+        'm': types.SimpleNamespace(
+            MDEcolumns=[], MDErho=np.array([]), MDEOut=None,
+            args=types.SimpleNamespace(lib=None, pred=None, tau=None, Tp=None),
+        ),
+        'SELECTED_COLUMNS': [],
+    }
+
+
+def _accept_mde_result_edges(graph, edges, node, result, raw_columns):
+    '''Shared MDE-edge-acceptance rules -- self-loop guard, NaN marginal-
+    gain rejection, eager cycle rejection (see build_nested_mde_network()'s
+    docstring for the full rationale on each) -- applied to every column
+    run_mde_for_target() selected for `node`. Mutates `graph` (adds nodes/
+    edges, or removes a cycle-causing edge immediately after adding it)
+    and appends accepted rows to `edges` in place.
+
+    Used by both of build_nested_mde_network()'s per-wave passes -- Stage 1
+    (real-observable-only nested-MDE) and Stage 2 (lagged-embedding
+    attachment, plus real-observable drivers too when
+    STAGE2_ALLOW_REAL_OBSERVABLES is set). Either stage's accepted
+    delay=0 (driver, delay) pairs BFS-continue into the next wave, so a
+    Stage 2 real-observable selection recurses into its own further
+    nested-MDE round exactly like a Stage 1 one -- only delay!=0 (lagged)
+    acceptances stay leaves. Kept as one function rather than duplicated
+    so the acyclicity/self-loop/NaN-rejection rules can never drift
+    between the two call sites.
+
+    Returns the list of (driver, delay) pairs actually accepted as edges
+    into `node` (in selection order).'''
+    accepted = []
+    cols = result['SELECTED_COLUMNS']
+    gains = np.diff(np.concatenate(([0.0], result['m'].MDErho)))
+
+    for col, gain in zip(cols, gains):
+        driver, delay = observable_and_delay(col, raw_columns)
+
+        if driver == node:
+            continue  # explicit self-loop guard (belt-and-suspenders)
+
+        if np.isnan(gain):
+            # Degenerate marginal-gain computation -- dead-end this
+            # specific edge (see build_nested_mde_network()'s docstring
+            # for why NaN weights can't just be added anyway).
+            print(f'MDE edge accept: rejected {driver} (delay {delay}) -> {node} '
+                  f'(marginal MDE rho gain is NaN -- treating as a dead-end edge)', flush=True)
+            continue
+
+        graph.add_node(driver)
+        key = graph.add_edge(driver, node, delay=delay, weight=gain)
+
+        if not nx.is_directed_acyclic_graph(graph):
+            graph.remove_edge(driver, node, key=key)
+            if graph.degree(driver) == 0:
+                graph.remove_node(driver)
+            print(f'MDE edge accept: rejected {driver} (delay {delay}) -> {node} '
+                  f'(would create a cycle)', flush=True)
+            continue
+
+        edges.append({'driver': driver, 'node': node, 'delay': delay, 'weight': gain})
+        accepted.append((driver, delay))
+
+    return accepted
+
+
 def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns,
                               prediction_start, prediction_length, nested_n, nested_m,
                               embed_dim_rho_min, cross_map_rho_min, exclusion_radius, cores,
-                              results_dir, mde_results, delay_set, tp=1,
+                              results_dir, mde_results, delay_set, tp,
+                              lag_set, stage2_allow_real_observables,
                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                               data_file=None, data_file_sha256=None, code_fingerprint=None):
-    '''Nested-MDE network construction -- MODE='MDE-GMN' only. MODE='GMN'
-    still uses the original CCM-across-the-full-observable-pool path in
-    build_network(), untouched.
+    '''Two-stage nested-MDE network construction, unified into ONE BFS --
+    MODE='MDE-GMN' only. MODE='GMN' still uses the original CCM-across-the-
+    full-observable-pool path in build_network(), untouched.
 
-    No notebook precedent: replaces "CCM over the union of each target's
-    MDE-selected columns" with an algorithm built purely from repeated
-    dimx.MDE calls (no CCM, no apps.InteractionMatrix here). Per explicit
-    direction, this searches a *generalized* (non-uniform, multi-delay)
-    embedding rather than a single contemporaneous one: `expanded_df`
-    (built by expand_delay_columns() in main(), from DELAY_SET) offers
-    each raw observable at every delay in DELAY_SET as its own separate
-    candidate column, so dimx.MDE's forward selection can pick specific
-    (observable, delay) pairs -- e.g. CA1_55 at delay -5 and CA1_78 at
-    delay -1 as two independent drivers of the same node, rather than
-    every driver sharing one embedding depth/lag network-wide (Deyle &
-    Sugihara 2011's generalized embedding theorem). `raw_columns` is the
-    unexpanded observable list, needed to map a selected (possibly
-    delay-suffixed) column name back to its underlying observable via
-    observable_and_delay(), and to exclude a node's own raw+delayed
-    variants from its own candidate pool.
+    REVISED 2026-08-25 (per explicit request -- see JOB_LOG.md for the
+    prior design this replaces, where Stage 1 fully completed before
+    Stage 2 ever ran once, over the final node set, and never recursed):
+    every node now gets BOTH kinds of MDE call, every wave, not once each
+    in two cleanly separate passes:
+      - Stage 1 (real-observable-only): `expanded_df`/`expanded_columns`
+        are typically just the raw, unexpanded observable pool for this
+        call (build_network() passes delay_set=[] here), so num_delays
+        below is always 1 and every Stage-1 edge necessarily has delay=0.
+        No notebook precedent: replaces "CCM over the union of each
+        target's MDE-selected columns" with an algorithm built purely
+        from repeated dimx.MDE calls (no CCM, no apps.InteractionMatrix
+        here). Per explicit direction, this searches a *generalized*
+        (non-uniform, multi-delay) embedding rather than a single
+        contemporaneous one -- see the historical docstring in JOB_LOG.md
+        for the full Deyle & Sugihara 2011 rationale, unchanged.
+      - Stage 2 (lagged, or lagged+real per `stage2_allow_real_observables`):
+        candidates span `lag_set` x *every* real observable in
+        `raw_columns` -- built once, before the wave loop (not per-wave,
+        not per-node), via expand_delay_columns(). Deliberately not
+        restricted to just a node's own real-observable identity's lags,
+        per explicit direction, so a node's best lagged predictor can
+        come from any real observable in the pool, not only ones Stage 1
+        already connected to it.
 
-      Step 1 (depth 0): for each target, dimx.MDE selects up to
-        `nested_n` (== MDE_D) distinct *real* observables from
-        `expanded_columns` (excluding the target's own raw+delayed
-        variants) -- the actual D handed to dimx.MDE is
-        effective_mde_dimension(nested_n, candidate_pool, num_delays), not
-        nested_n itself, since each real observable spans num_delays
-        candidate columns; see that function's docstring. Reuses the
-        caller's precomputed mde_results entry when available -- main()
-        already ran this once per target for the MDE-only diagnostics
-        (against the same expanded pool), so it isn't paid for twice.
-      Step 2 (depth 1..nested_m): each driver selected *at delay 0* (see
-        below for why only these) becomes a new MDE target in turn,
-        again selecting up to `nested_n` real observables from the same
-        expanded pool (excluding itself), for `nested_m` further rounds
-        -- total graph depth from any target is 1 + nested_m levels.
-        nested_m == 0 is a sentinel for "uncapped": the depth check is
-        skipped entirely and nesting continues until it runs out on its
-        own (every reachable real observable already visited, or one of
-        the ordinary BFS termination conditions below), rather than
-        stopping after a fixed number of rounds.
-
-    Per explicit direction, only delay=0 selections continue the nested
-    search -- a driver selected at a nonzero delay is added to the graph
-    as a terminal edge, never itself MDE'd as a new target. A delayed
-    coordinate stands in for an unobserved dimension of the true state
-    space (a "placeholder" for something the recording didn't directly
-    measure, per generalized embedding theory), not a physical variable
-    whose own drivers are worth discovering -- so nesting into it would
-    search for the causal history of a lag, not of a real signal. Nodes
-    reached only via delay!=0 edges still simulate fine in gmn: they
-    always get an unconditional self-embedding (see build_network()'s
-    self_delay_set docstring) even with zero further discovered drivers,
-    the same fallback every driverless leaf node already relies on.
-
-    A branch's nesting stops before nested_m (or, when nested_m == 0,
-    stops at all), as ordinary BFS termination, when:
-      - A node's own dimx.MDE call selects zero drivers (embedDimRhoMin/
-        crossMapRhoMin/the CCM slope gate rejected every candidate) --
-        nothing gets enqueued for the next wave.
+    Per explicit direction, a delay=0 (real-observable) selection from
+    EITHER stage continues the nested search -- becomes a new MDE target
+    at depth+1, itself getting both a Stage-1-style and a Stage-2-style
+    call in turn -- while a delay!=0 (lagged) selection from either stage
+    is a terminal edge, never itself re-MDE'd. This is the actual fix:
+    previously only Stage 1's own selections could grow the backbone: a
+    Stage-2-selected real observable (only possible when
+    stage2_allow_real_observables=True) was accepted as a real edge but
+    never enqueued for its own further MDE round. Now it is, exactly like
+    a Stage-1 selection already was. Both stages share the same
+    `nested_m` depth budget (nested_m==0 = uncapped, same sentinel as
+    before -- the depth check is skipped entirely and nesting continues
+    until it runs out on its own) and the same ordinary BFS termination
+    conditions:
+      - A node's own dimx.MDE call (either stage) selects zero drivers.
       - A selected driver's marginal MDE rho gain is NaN (a degenerate
         correlation, not the same as dimx.MDE's own gates rejecting it --
         it already passed those, or it wouldn't be in `cols`). Since this
         function's graph IS the final network (build_network() hands it
         to gmn.GMN directly -- no downstream re-filtering by weight), an
         edge with no trustworthy strength must be rejected here or it
-        becomes a real edge with a nonsensical weight; nesting deeper
-        through it would also be wasted work. `driver` can still enter
-        the graph later via a different, valid edge. If every driver a
-        node selected is NaN, that node is terminal -- the same
-        empty-enqueue outcome as above.
-      - Every driver a node selected was picked at a nonzero delay (the
-        new rule above) -- also the same empty-enqueue outcome.
+        becomes a real edge with a nonsensical weight. `driver` can still
+        enter the graph later via a different, valid edge.
+      - Every driver a node selected, across BOTH stages, was picked at a
+        nonzero delay.
+    A delayed coordinate stands in for an unobserved dimension of the
+    true state space (a "placeholder" for something the recording didn't
+    directly measure, per generalized embedding theory), not a physical
+    variable whose own drivers are worth discovering -- so nesting into
+    it would search for the causal history of a lag, not of a real
+    signal. Nodes reached only via delay!=0 edges still simulate fine in
+    gmn: they always get an unconditional self-embedding (see
+    build_network()'s self_delay_set docstring) even with zero further
+    discovered drivers, the same fallback every driverless leaf node
+    already relies on.
 
-    Cycle/self-loop guarding happens eagerly during discovery: each
-    proposed edge is added to a networkx.MultiDiGraph shared across this
-    whole call, then checked with nx.is_directed_acyclic_graph()
-    immediately -- a cycle-causing edge is removed by its specific key
-    (MultiDiGraph.remove_edge() removes an arbitrary parallel edge if no
-    key is given, which would risk removing a different, already-valid
-    delay edge between the same driver/node pair). This is the only such
-    guard for MODE='MDE-GMN' (no apps.CreateNetwork call follows), and
-    dimx.MDE itself has no notion of the network being built around it,
-    so a cycle has to be caught here or never. Self-loop exclusion is
-    redundant with dimx.MDE's own removeColumns=[target]-equivalent
-    exclusion (observable_and_delay()-filtered candidate pool) in the
-    ordinary case, kept as an explicit guard anyway. A MultiDiGraph is
-    used (rather than DiGraph) specifically so the same observable can
-    drive one node at multiple delays simultaneously, each its own edge
-    -- per explicit direction, this is expected and kept, not deduped.
+    Cycle/self-loop guarding happens eagerly during discovery, via the
+    shared _accept_mde_result_edges() helper -- called once per stage per
+    node against the same networkx.MultiDiGraph, so acyclicity is checked
+    across BOTH stages' edges together (a structural graph property, not
+    something restricted to one stage), immediately as each edge is
+    proposed. This is the only such guard for MODE='MDE-GMN' (no
+    apps.CreateNetwork call follows), and dimx.MDE itself has no notion of
+    the network being built around it, so a cycle has to be caught here
+    or never. A MultiDiGraph is used (rather than DiGraph) specifically so
+    the same observable can drive one node at multiple delays
+    simultaneously, each its own edge -- per explicit direction, this is
+    expected and kept, not deduped.
 
-    Each unique node is MDE'd at most once (memoized via `visited`); it
-    can still gain further incoming edges later (ordinary DAG
-    driver-sharing), just isn't re-selected as an MDE target.
+    Each unique node is MDE'd (both stages) at most once (memoized via
+    `visited`); it can still gain further incoming edges later (ordinary
+    DAG driver-sharing), just isn't re-selected as an MDE target.
 
-    Parallelization: every node at the same BFS depth is MDE-independent
-    of every other (each dimx.MDE call only reads the static
-    expanded_df/expanded_columns pool). So each "wave" (not-yet-visited
-    nodes newly discovered at one depth) is submitted concurrently via
-    ProcessPoolExecutor, one process per node. Edge-acceptance/cycle-
-    checking stays sequential once a wave's results are back -- cheap
-    graph bookkeeping that genuinely needs one consistent MultiDiGraph,
-    nothing to gain from parallelizing.
+    Parallelization: within one wave, every node is independent of every
+    other for a given stage, so each stage's own set of calls for that
+    wave is submitted concurrently via its own ProcessPoolExecutor (one
+    process per node) -- two separate pools per wave (Stage 1's, then
+    Stage 2's), not one merged dispatch: lower risk, mirrors the exact
+    structure both stages already used independently before this change,
+    and there's no oversubscription risk since they run one after the
+    other, never concurrently. Outer (per-node) and inner (each node's
+    own CrossMapColumns) parallelism are split adaptively per wave, per
+    stage, from that stage's own actual node count for that wave --
+    outer_workers = min(node_count, cores), inner_cores = max(1, cores //
+    outer_workers), computed twice (once per stage) since Stage 1's
+    to_compute set (depth-0 nodes already cached are skipped -- see
+    below) and Stage 2's full wave-node set (never has a depth-0
+    shortcut) generally aren't the same size. This is the same
+    outer-x-inner split that avoided the pool-squaring blowup this
+    project hit once already (see the module docstring's FIXED section).
+    dimx.MDE's own CCM validation is forced sequential by
+    `_sequential_ccm_workers`, but that patch doesn't reliably survive
+    into a ProcessPoolExecutor worker on its own (this cluster's
+    'forkserver' start method can predate the patch), so both pools pass
+    `initializer=_mde_wave_worker_init` to reapply it inside every worker.
 
-    Outer (per-node) and inner (each node's own CrossMapColumns)
-    parallelism are split adaptively per wave rather than both left at
-    `cores` -- that would reproduce the outer x inner pool-squaring
-    blowup this project hit once already (see the module docstring's
-    FIXED section). outer_workers = min(len(wave), cores), inner_cores =
-    max(1, cores // outer_workers): a wide wave leans on outer
-    parallelism with each MDE call single-threaded; a narrow wave gives
-    that one call the full remaining core budget. outer_workers *
-    inner_cores never exceeds `cores`. dimx.MDE's own CCM validation is
-    forced sequential by `_sequential_ccm_workers`, but that patch
-    doesn't reliably survive into a ProcessPoolExecutor worker on its own
-    (this cluster's 'forkserver' start method can predate the patch), so
-    the wave pool passes `initializer=_mde_wave_worker_init` to reapply
-    it inside every worker -- see that function's docstring for the
-    crash this avoids.
+    Depth-0 targets reuse the caller's precomputed `mde_results` entry for
+    Stage 1 only (main() already ran this once per target/group, against
+    the same CCM-pre-filtered pool this call also uses -- see main()'s own
+    depth-0 docstring for why that precompute step still exists even
+    though it duplicates this function's own first-wave logic in shape).
+    Stage 2 has never been precomputed for depth-0, before or after this
+    change -- every node, at every depth, always gets a fresh Stage-2
+    call.
 
     Edge weight is the *marginal* MDE rho gain at the step that driver
     was selected (gain_d = MDErho[d] - MDErho[d-1], MDErho[0] := 0) --
@@ -1505,6 +1801,11 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     The marginal gain isolates what that driver specifically added on
     top of the previous d-1 -- what "edge strength" should mean here.
 
+    LEAKAGE: identical lib/pred window (prediction_start/prediction_length
+    = the MDE validation segment [A, B), never the Generate/Forecast
+    segment [B, end)) for both stages and every run_mde_for_target() call
+    -- see that function's own LEAKAGE docstring.
+
     Returns (graph, edges_df, nested_mde_results):
       graph      -- networkx.MultiDiGraph, acyclic, no self-loops. Every
                  edge has 'delay' (<= 0) and 'weight' attributes. The
@@ -1512,14 +1813,16 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                  that function's docstring) -- apps.CreateNetwork is not
                  involved.
       edges_df   -- DataFrame with columns ['driver', 'node', 'delay',
-                 'weight'], one row per edge -- an NxN interaction matrix
-                 can't represent a node having multiple edges from the
-                 same driver at different delays, so this replaces that
-                 format. Exported to CSV by build_network() as a
-                 human-readable record alongside the graph; not fed to
-                 apps.CreateNetwork.
+                 'weight'], one row per edge from EITHER stage -- an NxN
+                 interaction matrix can't represent a node having
+                 multiple edges from the same driver at different
+                 delays, so this replaces that format. Exported to CSV by
+                 build_network() as a human-readable record alongside the
+                 graph; not fed to apps.CreateNetwork.
       nested_mde_results -- {node: run_mde_for_target() result} for every
-                 node this call ran dimx.MDE on. Kept separate from the
+                 node this call ran Stage 1 on (Stage 2's own per-node
+                 results were never returned even before this change,
+                 only their accepted edges). Kept separate from the
                  caller's own mde_results so repeated separate-mode calls
                  can't cross-contaminate a shared intermediate channel
                  name.
@@ -1527,24 +1830,37 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     graph = nx.MultiDiGraph()
     graph.add_nodes_from(targets)
 
-    # expanded_columns is raw_columns with num_delays-1 extra columns
-    # appended per real observable (see expand_delay_columns()) -- exact,
-    # not approximate, so this recovers num_delays without needing
-    # delay_set threaded through as its own parameter. Used by
-    # effective_mde_dimension() below to convert nested_n (a real-
-    # observable count) into the actual D handed to dimx.MDE.
-    num_delays = len(expanded_columns) // len(raw_columns)
+    # Stage 1's own candidate-pool sizing -- expanded_columns is
+    # raw_columns with num_delays-1 extra columns appended per real
+    # observable (see expand_delay_columns()) -- exact, not approximate,
+    # so this recovers num_delays without needing delay_set threaded
+    # through as its own parameter. Used by effective_mde_dimension()
+    # below to convert nested_n (a real-observable count) into the actual
+    # D handed to dimx.MDE.
+    stage1_num_delays = len(expanded_columns) // len(raw_columns)
 
-    edges = []                # list of {driver, node, delay, weight} dicts
-    nested_mde_results = {}   # node -> run_mde_for_target() result, this call only
+    # Stage 2's own candidate universe, built once (not per wave, not per
+    # node) -- expand_delay_columns() always emits raw_columns (delay=0)
+    # first, then the lag-shifted columns in order, so slicing off the
+    # first len(raw_columns) entries cleanly isolates the lagged-only
+    # candidates without needing an observable_and_delay() scan.
+    stage2_df, stage2_expanded_columns = expand_delay_columns(expanded_df, raw_columns, lag_set)
+    stage2_lag_only_columns = stage2_expanded_columns[len(raw_columns):]
+    stage2_candidate_universe = (
+        stage2_expanded_columns if stage2_allow_real_observables else stage2_lag_only_columns
+    )
+    stage2_num_delays = len(lag_set) + (1 if stage2_allow_real_observables else 0)
+
+    edges = []                # list of {driver, node, delay, weight} dicts, both stages
+    nested_mde_results = {}   # node -> Stage 1's run_mde_for_target() result, this call only
     visited = set()
     current_wave = [(t, 0) for t in targets]
 
     while current_wave:
         # Dedup within the wave itself -- two different nodes discovered
-        # in the *previous* wave can independently propose the same
-        # not-yet-visited driver as their own new MDE target; each
-        # unique node still only gets MDE'd once.
+        # in the *previous* wave (from either stage) can independently
+        # propose the same not-yet-visited driver as their own new MDE
+        # target; each unique node still only gets MDE'd once.
         wave_nodes, seen = [], set()
         for node, depth in current_wave:
             if node in visited or node in seen:
@@ -1555,12 +1871,13 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         if not wave_nodes:
             break
 
+        # ---- Stage 1 pass: real-observable-only ----
         # Depth-0 targets reuse the caller's precomputed mde_results
         # directly (see docstring) -- no need to pay for, or parallelize,
         # that MDE call again.
         to_compute = [(node, depth) for node, depth in wave_nodes
                       if not (depth == 0 and node in mde_results)]
-        wave_results = {
+        stage1_results = {
             node: mde_results[node] for node, depth in wave_nodes
             if depth == 0 and node in mde_results
         }
@@ -1568,7 +1885,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         if to_compute:
             outer_workers = min(len(to_compute), max(1, cores))
             inner_cores = max(1, cores // outer_workers)
-            print(f'nested MDE: wave of {len(to_compute)} node(s) at depth '
+            print(f'nested MDE (Stage 1): wave of {len(to_compute)} node(s) at depth '
                   f'{to_compute[0][1]} -- {outer_workers} parallel worker(s) '
                   f'x {inner_cores} core(s) each', flush=True)
 
@@ -1579,7 +1896,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                 for node, depth in to_compute:
                     candidate_pool = [c for c in expanded_columns
                                        if observable_and_delay(c, raw_columns)[0] != node]
-                    effective_d = effective_mde_dimension(nested_n, candidate_pool, num_delays)
+                    effective_d = effective_mde_dimension(nested_n, candidate_pool, stage1_num_delays)
                     fut = executor.submit(
                         run_mde_for_target, node, expanded_df, candidate_pool,
                         prediction_start, prediction_length, effective_d,
@@ -1590,57 +1907,88 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                     )
                     futures[fut] = node
                 for fut in as_completed(futures):
-                    wave_results[futures[fut]] = fut.result()
+                    node = futures[fut]
+                    try:
+                        stage1_results[node] = fut.result()
+                    except Exception as exc:
+                        # See _failed_mde_result()'s own docstring -- a
+                        # single node's MDE call failing (dimx's own
+                        # internal code, not this pipeline's) must not
+                        # crash the rest of this wave or every already-
+                        # completed node in prior waves.
+                        print(f'nested MDE (Stage 1): {node} MDE call FAILED: {exc!r} -- treating '
+                              f'as a dead-end (zero drivers selected, no further nesting from this '
+                              f'node)', flush=True)
+                        stage1_results[node] = _failed_mde_result(node)
 
+        # ---- Stage 2 pass: lagged (+ optionally real) embedding -- every
+        # node in this wave, no depth-0 shortcut (see docstring) ----
+        outer_workers2 = min(len(wave_nodes), max(1, cores))
+        inner_cores2 = max(1, cores // outer_workers2)
+        print(f'nested MDE (Stage 2): wave of {len(wave_nodes)} node(s) at depth '
+              f'{wave_nodes[0][1]} -- {outer_workers2} parallel worker(s) '
+              f'x {inner_cores2} core(s) each, candidate pool size '
+              f'{len(stage2_candidate_universe)} (lag_set={lag_set}, '
+              f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
+
+        stage2_results = {}
+        with ProcessPoolExecutor(max_workers=outer_workers2,
+                                  mp_context=mp.get_context('fork'),
+                                  initializer=_mde_wave_worker_init) as executor:
+            futures = {}
+            for node, depth in wave_nodes:
+                candidate_pool = [c for c in stage2_candidate_universe
+                                   if observable_and_delay(c, raw_columns)[0] != node]
+                effective_d = effective_mde_dimension(nested_n, candidate_pool, stage2_num_delays)
+                fut = executor.submit(
+                    run_mde_for_target, node, stage2_df, candidate_pool,
+                    prediction_start, prediction_length, effective_d,
+                    embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                    inner_cores2, results_dir, lag_set, tp,
+                    reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+                    code_fingerprint, 'stage2',
+                )
+                futures[fut] = node
+            for fut in as_completed(futures):
+                node = futures[fut]
+                try:
+                    stage2_results[node] = fut.result()
+                except Exception as exc:
+                    # See _failed_mde_result()'s own docstring -- a single
+                    # node's Stage-2 MDE call failing must not crash every
+                    # other node's already-completed edges in this same
+                    # wave.
+                    print(f'nested MDE (Stage 2): {node} MDE call FAILED: {exc!r} -- treating as '
+                          f'a dead-end (zero lagged drivers attached for this node)', flush=True)
+                    stage2_results[node] = _failed_mde_result(node)
+
+        # ---- Edge acceptance: Stage 1's result first, then Stage 2's --
+        # both via the same shared helper, against the same graph, so
+        # cycle-rejection sees both stages' edges together. Either
+        # stage's delay=0 discoveries feed the next wave -- the actual
+        # fix this restructuring makes (previously only Stage 1's did).
         next_wave = []
         for node, depth in wave_nodes:
             visited.add(node)
-            result = wave_results[node]
-            nested_mde_results[node] = result
+            result1 = stage1_results[node]
+            nested_mde_results[node] = result1
 
-            cols = result['SELECTED_COLUMNS']
-            gains = np.diff(np.concatenate(([0.0], result['m'].MDErho)))
-
-            for col, gain in zip(cols, gains):
-                driver, delay = observable_and_delay(col, raw_columns)
-
-                if driver == node:
-                    continue  # explicit self-loop guard (belt-and-suspenders)
-
-                if np.isnan(gain):
-                    # Degenerate marginal-gain computation -- dead-end
-                    # this specific edge without nesting further through
-                    # it (see this function's docstring for why NaN
-                    # weights can't just be added anyway).
-                    print(f'nested MDE: rejected {driver} (delay {delay}) -> {node} '
-                          f'(marginal MDE rho gain is NaN -- treating as a dead-end edge, '
-                          f'no further nesting from this driver via this path)', flush=True)
-                    continue
-
-                graph.add_node(driver)
-                key = graph.add_edge(driver, node, delay=delay, weight=gain)
-
-                if not nx.is_directed_acyclic_graph(graph):
-                    graph.remove_edge(driver, node, key=key)
-                    if graph.degree(driver) == 0:
-                        graph.remove_node(driver)
-                    print(f'nested MDE: rejected {driver} (delay {delay}) -> {node} '
-                          f'(would create a cycle)', flush=True)
-                    continue
-
-                edges.append({'driver': driver, 'node': node, 'delay': delay, 'weight': gain})
-
-                # Only a delay=0 (contemporaneous) selection continues the
-                # nested search -- see this function's docstring for why a
-                # delayed coordinate is a terminal placeholder, not a new
-                # MDE target. nested_m == 0 is the "uncapped" sentinel --
-                # see this function's docstring -- so the depth check is
-                # skipped entirely in that case and nesting only stops via
-                # the other ordinary BFS termination conditions (empty
-                # wave once every reachable real observable is visited,
-                # zero-driver/NaN/nonzero-delay/cycle rejections).
+            accepted1 = _accept_mde_result_edges(graph, edges, node, result1, raw_columns)
+            for driver, delay in accepted1:
+                # nested_m == 0 is the "uncapped" sentinel -- see this
+                # function's docstring -- so the depth check is skipped
+                # entirely in that case and nesting only stops via the
+                # other ordinary BFS termination conditions.
                 if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited:
                     next_wave.append((driver, depth + 1))
+
+            result2 = stage2_results[node]
+            accepted2 = _accept_mde_result_edges(graph, edges, node, result2, raw_columns)
+            for driver, delay in accepted2:
+                if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited:
+                    next_wave.append((driver, depth + 1))
+                # delay != 0: leaf, same as before this restructuring --
+                # the edge is already added above, nothing further to do.
 
         current_wave = next_wave
 
@@ -1653,43 +2001,165 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     return graph, edges_df, nested_mde_results
 
 
+def _ccm_prefilter_worker(candidate, df_slice, targets, e, tp, exclusion_radius, lib_sizes):
+    '''One candidate's worth of ccm_prefilter_observables() work -- run in
+    an outer ProcessPoolExecutor worker (see that function's docstring for
+    why this stays a single parallelism layer). Returns (candidate,
+    mean_rho_across_targets) -- mean because `targets` is already one
+    target_groups_for_mode() group (all targets for GMN_MODE=combined, one
+    target for GMN_MODE=separate), so "mean across targets" already
+    collapses to the right thing for either mode with no branching needed
+    here.
+
+    `df_slice` is already row-truncated to the leakage-safe MDE library/
+    validation window by the caller -- pyEDM.CCM (unlike Simplex) has no
+    `lib=`/`pred=` parameters at all (confirmed against its actual
+    signature), so the *only* way to keep it from ever seeing rows past B
+    is to physically exclude them from the DataFrame it's given, exactly
+    the same mechanism run_mde_for_target()'s own LEAKAGE docstring already
+    relies on for dimx.MDE's internal CCM() call.
+
+    `parallel=False` is passed explicitly, not left to sitecustomize.py's
+    `_resolve_workers` patch alone: empirically confirmed (direct A/B timing
+    test, this same call site, 0.02s with parallel=False explicit vs. 28s+
+    with it omitted and 40 "No module named 'kedm'" reimport-spam lines --
+    os.cpu_count() on this machine) that `_resolve_workers` does NOT
+    reliably intercept this specific call path once dimx/gmn have already
+    been imported (as they always are here) -- the patch alone is
+    insufficient for this call site, unlike CCM calls reached through
+    dimx.Run's own code. This is very likely the same still-unexplained
+    mechanism behind the "MODE=GMN jobs STILL stuck" residual case recorded
+    in this project's own pyEDM-Pool-bug history -- flagged for the user,
+    out of scope to chase further here since this pipeline's own
+    apps.InteractionMatrix/dimx.Run CCM call sites are untouched by this
+    change.'''
+    scores = []
+    for target in targets:
+        try:
+            ccm_df = CCM(
+                dataFrame=df_slice, columns=candidate, target=target,
+                libSizes=lib_sizes, sample=20, E=e, Tp=tp, tau=-1,
+                exclusionRadius=exclusion_radius, noTime=False, parallel=False,
+            )
+            scores.append(float(ccm_df[f'{target}:{candidate}'].to_numpy()[-1]))
+        except Exception:
+            # A single candidate/target CCM call failing (e.g. degenerate
+            # all-NaN column) must not crash the whole pre-filter -- treat
+            # it as "no skill" for this pair, same spirit as
+            # _failed_mde_result() elsewhere in this file.
+            scores.append(float('nan'))
+    mean_rho = float(np.nanmean(scores)) if scores else float('nan')
+    return candidate, mean_rho
+
+
+def ccm_prefilter_observables(df, candidate_columns, targets, prediction_start,
+                               prediction_length, rho_min, e, tp, exclusion_radius,
+                               libsize_ratios, cores):
+    '''Cheap CCM(observable -> target) pre-filter, run once per
+    target_groups_for_mode() group in main(), before that group's depth-0
+    MDE call -- shrinks REGION_CHANNEL_CAP's candidate pool down to only
+    observables that cross-map at least one target in `targets` with skill
+    >= `rho_min`, before depth-0 or either of build_nested_mde_network()'s
+    per-wave stages (Stage 1 real observables, Stage 2 their lags) ever see
+    it. Since Stage 2 draws its lagged candidates from the same observable
+    list Stage 1 uses, one filtering pass here covers both -- "both the
+    real observables and their lags" per the original request.
+
+    Every CCM-call parameter here is either reused from an existing config
+    value used elsewhere in this pipeline (Tp, exclusionRadius) or, where
+    nothing existing fits (E, sample, tau), matches dimx.MDE's own
+    unoverridden default (run_mde_for_target()'s dx.MDE(...) call never
+    sets tau= or sample=, so this mirrors that by hardcoding pyEDM's own
+    defaults: tau=-1, sample=20) rather than inventing new arbitrary
+    values -- see load_config()'s own CCM_PREFILTER_RHO_MIN/CCM_PREFILTER_E
+    docstrings for the two knobs that genuinely have no existing analog.
+
+    `df_slice` (`df.iloc[:prediction_start+prediction_length]`) mirrors
+    run_mde_for_target()'s own leakage-safe MDE library/validation window
+    (`prediction_start`/`prediction_length`, the A/B segment from main()'s
+    three-way split) -- no delay-shift warm-up trim needed here (real
+    observables only, delay=0, no leading-NaN rows the way
+    expand_delay_columns() produces for Stage 2's own candidates).
+    `libsize_ratios` (fractions of `prediction_start`, i.e. of this same
+    leakage-safe window) are converted to actual row-count libSizes here,
+    deduped and floored at 10 rows -- mirrors
+    build_interaction_matrix()-style floor conventions elsewhere in this
+    codebase's sibling pipeline against requesting a degenerately small
+    library.
+
+    Parallelism: one outer ProcessPoolExecutor (fork context, sized by
+    `cores`) over candidates -- each worker computes every target's CCM
+    score for its one candidate sequentially (pyEDM.CCM's own inner Pool
+    is already forced sequential venv-wide, so this is the only
+    parallelism layer, matching every other wave-style pool in this file).
+
+    Returns (kept_columns, scores) -- `kept_columns` is `candidate_columns`
+    (with `targets` excluded) filtered down to those scoring >= `rho_min`,
+    in original order; `scores` is {candidate: mean_rho} for every
+    candidate considered (including dropped ones), for diagnostics.'''
+    candidates = [c for c in candidate_columns if c not in targets]
+    if not candidates:
+        return [], {}
+
+    df_slice = df.iloc[:prediction_start + prediction_length]
+    lib_sizes = sorted({max(10, round(r * prediction_start)) for r in libsize_ratios})
+
+    scores = {}
+    with ProcessPoolExecutor(max_workers=max(1, min(cores, len(candidates))),
+                              mp_context=mp.get_context('fork'),
+                              initializer=_mde_wave_worker_init) as executor:
+        futures = {
+            executor.submit(_ccm_prefilter_worker, c, df_slice, targets, e, tp,
+                             exclusion_radius, lib_sizes): c
+            for c in candidates
+        }
+        for fut in as_completed(futures):
+            candidate, mean_rho = fut.result()
+            scores[candidate] = mean_rho
+
+    kept = [c for c in candidates if scores.get(c, float('nan')) >= rho_min]
+    return kept, scores
+
+
 def build_network(targets, mde_results, df, prediction_start, prediction_length,
                    mode, e_range, tau_range, results_dir, cores, interaction_matrix_outer_cores,
                    observable_columns=None, nested_n=None, nested_m=None,
                    embed_dim_rho_min=None, cross_map_rho_min=None, exclusion_radius=None,
-                   expanded_df=None, expanded_observable_columns=None, delay_set=None, tp=1,
+                   lag_set=None, stage2_allow_real_observables=False, tp=1,
                    threshold=0, fallback_node_dimension=4, max_node_dimension=15,
                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                    data_file=None, data_file_sha256=None, code_fingerprint=None):
     '''Build one network spanning `targets` and their driver candidates,
     via one of two unrelated constructions depending on `mode`:
-      - mode == 'MDE-GMN': build_nested_mde_network()'s own graph IS the
-        final network, handed to gmn.GMN directly -- no
-        apps.CreateNetwork() call. Per explicit direction: nested-MDE
-        already does the network-discovery job CreateNetwork exists for
-        (BFS out from targets, rejecting cycles as edges are proposed),
-        using real MDE-driven edge selection, so re-deriving a network
-        from an interaction matrix afterward would just be redundant
-        work. Safe because gmn.Network only ever reads the pickled
-        network file's 'Graph' entry (gmn/Network.py:43-46) via
-        Graph.predecessors(node) (gmn/Node.py:104) -- the 'Map' entry
-        CreateNetwork also writes is explicitly unused (that file's own
-        comment) -- so a {'Graph': graph, 'Map': ...} pickle built
-        directly from build_nested_mde_network()'s MultiDiGraph is
-        exactly what CreateNetwork would have handed back anyway.
-        observable_columns/nested_n/nested_m/embed_dim_rho_min/
-        cross_map_rho_min/expanded_df/expanded_observable_columns/
-        delay_set are required in this mode -- expanded_df/
-        expanded_observable_columns are built once in main() via
-        expand_delay_columns() (see build_nested_mde_network()'s
-        docstring for why the search needs a delay-expanded pool rather
-        than the raw `df`/`observable_columns`, which are still used
-        as-is below for the real data every node actually simulates
-        from). delay_set is stored on the returned graph
+      - mode == 'MDE-GMN': two-stage nested-MDE, no apps.CreateNetwork()
+        call, both stages unified into build_nested_mde_network()'s own
+        BFS (see that function's docstring for the full algorithm,
+        including the 2026-08-25 revision letting Stage 2's own
+        real-observable selections recurse). `observable_columns` here is
+        already the CCM-pre-filtered pool -- main() runs the pre-filter
+        once per target_groups_for_mode() group before this function is
+        ever called, so this function no longer runs it itself. The
+        final graph -- handed to gmn.GMN directly -- already has every
+        edge from both stages by the time build_nested_mde_network()
+        returns. Per
+        explicit direction: nested-MDE already does the network-discovery
+        job CreateNetwork exists for (BFS out from targets, rejecting
+        cycles as edges are proposed), using real MDE-driven edge
+        selection, so re-deriving a network from an interaction matrix
+        afterward would just be redundant work. Safe because gmn.Network
+        only ever reads the pickled network file's 'Graph' entry
+        (gmn/Network.py:43-46) via Graph.predecessors(node)
+        (gmn/Node.py:104) -- the 'Map' entry CreateNetwork also writes is
+        explicitly unused (that file's own comment) -- so a {'Graph':
+        graph, 'Map': ...} pickle built directly from this two-stage
+        MultiDiGraph is exactly what CreateNetwork would have handed back
+        anyway. observable_columns/nested_n/nested_m/embed_dim_rho_min/
+        cross_map_rho_min/lag_set are required in this mode.
+        lag_set is stored on the returned graph
         (graph.graph['self_delay_set']) so gmn's own generalized-
         embedding patches (see the module docstring) know which delays
-        to always give each node's own self-history, regardless of
-        what nested-MDE discovered for its external drivers.
+        to always give each node's own self-history, regardless of what
+        either nested-MDE stage discovered for its external drivers.
         node_dimensions is NOT computed here (see gmn_fidelity_rho()'s
         default_E fallback for its one remaining consumer).
       - mode == 'GMN': the original CCM interaction matrix (data-driven
@@ -1747,9 +2217,10 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
     if reuse_cache:
         fingerprint = build_network_fingerprint(
             mode, targets, observable_columns, nested_n, nested_m, tp,
-            embed_dim_rho_min, cross_map_rho_min, exclusion_radius, delay_set,
+            embed_dim_rho_min, cross_map_rho_min, exclusion_radius, lag_set,
             e_range, tau_range, prediction_start, prediction_length,
             data_file, data_file_sha256, code_fingerprint,
+            stage2_allow_real_observables=stage2_allow_real_observables,
         )
         hit = find_cached(prev_runs_dir, cache_filename, fingerprint, load_one=_load_pickle_cache_entry)
         if hit is not None:
@@ -1764,22 +2235,41 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
         if cache_hit is not None:
             graph = cache_hit['graph']
         else:
+            # CCM pre-filter (see ccm_prefilter_observables()'s docstring):
+            # shrinks the candidate pool BEFORE either nested-MDE stage
+            # sees it -- Stage 2 draws its lagged candidates from this same
+            # filtered list, so one filtering pass covers both. Note:
+            # `observable_columns` here is ALREADY the CCM-pre-filtered
+            # pool -- main() now runs ccm_prefilter_observables() once per
+            # target_groups_for_mode() group *before* computing that
+            # group's own depth-0 MDE seed, so depth-0 itself only ever
+            # searches already-filtered observables too (see main()'s own
+            # depth-0 docstring for why the pre-filter had to move there
+            # rather than staying here).
+            #
+            # Both stages, interleaved per BFS wave, in one call -- see
+            # build_nested_mde_network()'s own docstring for the full
+            # algorithm (revised 2026-08-25: Stage 2's own real-observable
+            # selections now recurse exactly like Stage 1's, instead of
+            # always being terminal).
             graph, _, _ = build_nested_mde_network(
-                targets, expanded_df, observable_columns, expanded_observable_columns,
+                targets, df, observable_columns, observable_columns,
                 prediction_start, prediction_length,
                 nested_n, nested_m, embed_dim_rho_min, cross_map_rho_min, exclusion_radius, cores,
-                results_dir, mde_results, delay_set, tp,
+                results_dir, mde_results, [], tp,
+                lag_set, stage2_allow_real_observables,
                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
                 code_fingerprint,
             )
-        # 0 is forced into self_delay_set regardless of DELAY_SET: gmn's
+        # 0 is forced into self_delay_set regardless of lag_set: gmn's
         # own SMap target-lookup convention (Parameters.target + '(t-0)',
         # mirrored by this pipeline's _generalized_node_forecast/Generate)
         # requires a node's own present-value coordinate to exist in its
         # embedding -- this isn't a driver delay choice, it's the anchor
-        # point being predicted, so it can't be left out even if a user
-        # configures a DELAY_SET without 0 in it.
-        graph.graph['self_delay_set'] = sorted(set(delay_set) | {0}, reverse=True)
+        # point being predicted, so it can't be left out even if lag_set
+        # doesn't otherwise include 0 (it never does -- see
+        # derive_lag_set()'s own no-zero-entry convention).
+        graph.graph['self_delay_set'] = sorted(set(lag_set) | {0}, reverse=True)
         selected_union = [n for n in graph.nodes if n not in targets]
         # Rebuilt from the graph itself (rather than build_nested_mde_
         # network()'s own returned edges_df) so this works identically on
@@ -1803,9 +2293,18 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                 if c not in selected_union:
                     selected_union.append(c)
 
+    # Sliced to the *full* dataset (len(df), a no-op slice -- df is never
+    # pre-truncated by any caller), not prediction_start+prediction_length
+    # -- under the three-way A/B/end split (see load_config()'s
+    # docstring) that sum is only B (the MDE validation segment's own
+    # end), and Generate()/Forecast()/their diagnostics need real data
+    # all the way through end (the Generate/Forecast validation segment
+    # [B, end)) to score and plot against. Only run_mde_for_target()'s
+    # own `mde_df` needs to stay truncated at B -- see that function's
+    # LEAKAGE docstring.
     data_after_mde = (
         df[targets + selected_union]
-        .iloc[:prediction_start + prediction_length]
+        .iloc[:len(df)]
         .reset_index(drop=True)
     )
     data_after_mde.insert(0, 'Time', np.arange(len(data_after_mde)))
@@ -2338,11 +2837,22 @@ def build_search_fingerprint(cfg, net_result, data_file_sha256, code_fingerprint
         'cross_map_rho_min': cfg['CROSS_MAP_RHO_MIN'],
         'exclusion_radius': 'auto' if cfg['EXCLUSION_RADIUS_AUTO'] else cfg['EXCLUSION_RADIUS_VALUE'],
         'gmn_exclusion_radius': cfg['GMN_EXCLUSION_RADIUS'],
+        'stage2_allow_real_observables': cfg['STAGE2_ALLOW_REAL_OBSERVABLES'],
         'nested_m': cfg['NESTED_M'],
         'region_channel_cap': cfg['REGION_CHANNEL_CAP'],
         'lib_ratio': cfg['LIB_RATIO'],
         'generate_length': cfg['GENERATE_LENGTH'],
-        'delay_set': list(cfg['DELAY_SET']),
+        # LAG_SET (the fully-resolved list actually used, whichever of
+        # DELAY_SOURCE='explicit'/'lag_mode' produced it), NOT the raw
+        # DELAY_SET -- DELAY_SET alone is silently ignored under
+        # DELAY_SOURCE='lag_mode', so two runs with different LAG_MODE/
+        # LAG_DENSITY/LAG_STEP settings would otherwise fingerprint
+        # identically (same unused DELAY_SET default) despite the network
+        # actually being built from different lag sets -- exactly the
+        # "dangerous case" (a knob that changes output but isn't
+        # reflected in any fingerprint field) find_cached()'s own
+        # docstring warns against.
+        'lag_set': list(cfg['LAG_SET']),
         'e_vals': list(cfg['E_RANGE']),
         'tau_vals': list(cfg['TAU_RANGE']),
         'theta_vals': list(cfg['THETA_RANGE']),
@@ -2359,23 +2869,38 @@ def build_search_fingerprint(cfg, net_result, data_file_sha256, code_fingerprint
 def build_network_fingerprint(mode, targets, observable_columns, nested_n, nested_m, tp,
                                embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
                                delay_set, e_range, tau_range, prediction_start,
-                               prediction_length, data_file, data_file_sha256, code_fingerprint):
+                               prediction_length, data_file, data_file_sha256, code_fingerprint,
+                               stage2_allow_real_observables=False):
     '''Everything that determines one group's network-construction outcome
-    (build_nested_mde_network(), or the CCM/apps.CreateNetwork path for
-    MODE='GMN') -- unlike build_search_fingerprint() above, computable
-    *before* that construction runs, since the whole point is deciding
-    whether to skip it. Takes build_network()'s own already-resolved
-    parameters directly (e.g. `observable_columns` -- REGION_CHANNEL_CAP's
-    effect is already fully captured by exactly which channels ended up
-    in that list, so the raw cap number doesn't need its own field; same
-    for LIB_RATIO via prediction_start/prediction_length) rather than raw
-    cfg knobs, so this needs no `cfg` dependency. Skips
-    build_search_fingerprint()'s network_nodes sanity check (nothing
-    built yet to check) and GMN_MODE (irrelevant to one already-resolved
-    `targets` group's own topology -- see target_groups_for_mode()).
-    'stage' is what keeps this from ever being confused with a
-    theta_search/mde_selection fingerprint even if the remaining fields
-    happened to collide.'''
+    (build_nested_mde_network()'s own unified two-stage BFS, or the
+    CCM/apps.CreateNetwork path for MODE='GMN') -- unlike
+    build_search_fingerprint() above, computable *before* that
+    construction runs, since the whole point is deciding whether to skip
+    it. Takes build_network()'s own already-resolved parameters directly
+    (e.g. `observable_columns` -- REGION_CHANNEL_CAP's effect, AND the CCM
+    pre-filter's own effect (main() runs it before this fingerprint is
+    ever computed -- see build_network()'s own docstring), are both
+    already fully captured by exactly which channels ended up in that
+    list, so neither the raw cap number nor the pre-filter's own
+    threshold/E/libSize-ratio knobs need their own field here; same for
+    LIB_RATIO/MDE_VALIDATION_RATIO via prediction_start/prediction_length)
+    rather than raw cfg knobs, so this needs no `cfg` dependency.
+    `delay_set` here is Stage 2's own fully-*resolved* nonzero-delay list
+    (whatever DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP produced, or the
+    explicit MDE_GMN_DELAY_SET list) -- since it's the resolved list
+    rather than the raw toggle settings, two different toggle
+    combinations that happen to resolve to the identical list are
+    (correctly) treated as the identical network-construction input; no
+    separate field is needed for the toggles themselves.
+    `stage2_allow_real_observables` IS its own separate field regardless,
+    since it's an independent structural choice (whether Stage 2's
+    candidate pool also includes delay=0 columns) that the resolved
+    delay_set list alone can't imply. Skips build_search_fingerprint()'s
+    network_nodes sanity check (nothing built yet to check) and GMN_MODE
+    (irrelevant to one already-resolved `targets` group's own topology --
+    see target_groups_for_mode()). 'stage' is what keeps this from ever
+    being confused with a theta_search/mde_selection fingerprint even if
+    the remaining fields happened to collide.'''
     return {
         'mode': mode,
         'targets': sorted(targets),
@@ -2387,6 +2912,7 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
         'cross_map_rho_min': cross_map_rho_min,
         'exclusion_radius': exclusion_radius,
         'delay_set': list(delay_set) if delay_set is not None else None,
+        'stage2_allow_real_observables': stage2_allow_real_observables,
         'e_vals': list(e_range),
         'tau_vals': list(tau_range),
         'prediction_start': prediction_start,
@@ -2401,7 +2927,8 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
 def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_rho_min,
                                      cross_map_rho_min, exclusion_radius, delay_set,
                                      prediction_start, prediction_length,
-                                     data_file, data_file_sha256, code_fingerprint):
+                                     data_file, data_file_sha256, code_fingerprint,
+                                     cache_stage='stage1'):
     '''Everything that determines one run_mde_for_target() call's outcome,
     computable before that call runs. `candidate_pool` is the exact
     (possibly delay-expanded) column list dx.MDE searched over, kept in
@@ -2412,7 +2939,11 @@ def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_r
     does) since run_mde_for_target() itself has no visibility into
     EXCLUSION_RADIUS_AUTO -- see that function's own docstring on why the
     argument is a harmless placeholder in AUTO mode; at worst this costs
-    an occasional unnecessary cache miss, never an incorrect hit.'''
+    an occasional unnecessary cache miss, never an incorrect hit.
+    `cache_stage` ('stage1'/'stage2') folds into 'stage' below -- belt-
+    and-suspenders alongside the two stages' already-distinct cache
+    filenames (see run_mde_for_target()'s own docstring) and their
+    naturally-different `candidate_pool` content.'''
     return {
         'node': node,
         'candidate_pool': list(candidate_pool),
@@ -2427,7 +2958,7 @@ def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_r
         'data_file': data_file,
         'data_file_sha256': data_file_sha256,
         'code_fingerprint': code_fingerprint,
-        'stage': 'mde_selection',
+        'stage': f'mde_selection_{cache_stage}',
     }
 
 
@@ -2479,11 +3010,13 @@ def _save_to_cache(filename, results_dir, run_cache_dir, write_one):
     {results_dir, run_cache_dir} (deduplicated, order-preserving, so the
     RUN_CACHE_DIR==RESULTS_DIR fallback for ad hoc runs outside the sbatch
     script -- see load_config()'s docstring -- writes exactly once, not
-    twice). results_dir is this run's ordinary per-job record, unchanged
-    in behavior from before this cache existed: it still only reaches
-    persistent storage at job end, on success, via simple-mde-gmn.sbatch's
-    final `cp -av`. run_cache_dir is the durable bucket pool
-    (MDE_GMN_RUN_CACHE_DIR) a future job's find_cached() searches --
+    twice). results_dir is this run's ordinary per-job record -- itself
+    also persistent and immediate now (MDE_GMN_RESULTS_DIR points
+    directly at the per-job /flash OUT_DIR, not a scratch tempdir copied
+    out only at job end -- see simple-mde-gmn.sbatch's RUN section), so
+    this call's two writes differ only in *where* they land, not in
+    *when*. run_cache_dir is the separate, durable *cross-job* bucket
+    pool (MDE_GMN_RUN_CACHE_DIR) a future job's find_cached() searches --
     writing there *immediately*, right after this stage finishes, is what
     lets its result survive even if this job crashes or times out later in
     the pipeline, instead of being lost with the rest of the /flash
@@ -2589,15 +3122,23 @@ def retune_theta_for_all_nodes(data_lib, graph, nodes, theta_range, cores, min_p
 
 def evaluate_smap_candidate(net_result, prediction_start, prediction_length,
                              node_theta, variant, results_dir, cores,
-                             generate_length=None, generate_start=None, exclusion_radius=0):
+                             generate_length=None, generate_start=None, exclusion_radius=0,
+                             generate_validation_start=None):
     '''Runs one Generate() call and scores it as mean rho, across
     `net_result['targets']` only (not every driver node), between the
     simulated and real held-out series -- this is "generative skill" as
     this pipeline defines it everywhere: the theta search
     (run_theta_search) and the start-point sweep (sweep_generate_start)
     both call this same function, at the same objective, so a search
-    over either axis is comparable to the other.'''
-    generate_start = generate_start if generate_start is not None else prediction_start
+    over either axis is comparable to the other.
+
+    generate_start defaults to generate_validation_start (== cfg's B --
+    the start of the Generate/Forecast validation segment, load_config()'s
+    three-way A/B/end split docstring), NOT prediction_start (== A, the
+    MDE validation segment's own start) -- a Generate() call scored here
+    must never launch from inside the segment MDE's own driver selection
+    already validated against.'''
+    generate_start = generate_start if generate_start is not None else generate_validation_start
     config_file = build_gmn_config(
         net_result, prediction_start, prediction_length, results_dir,
         mode='Generate', node_theta_overrides=node_theta,
@@ -2623,7 +3164,8 @@ def evaluate_smap_candidate(net_result, prediction_start, prediction_length,
 
 def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range, results_dir,
                       cores, generate_length=None, reuse_best_params=False, prev_runs_dir=None,
-                      run_cache_dir=None, fingerprints=None, exclusion_radius=0):
+                      run_cache_dir=None, fingerprints=None, exclusion_radius=0,
+                      generate_validation_start=None):
     '''Retunes each network's per-node theta once
     (retune_theta_for_all_nodes()), then scores the result with a single
     Generate() call -- replacing this pipeline's old combined (E, tau,
@@ -2679,6 +3221,7 @@ def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range,
                 net_result, prediction_start, prediction_length, best_node_theta,
                 'theta_search', results_dir, cores, generate_length=generate_length,
                 exclusion_radius=exclusion_radius,
+                generate_validation_start=generate_validation_start,
             )
             print(f'{network_id}: theta search score={score:.4f}', flush=True)
         except Exception as exc:
@@ -2725,7 +3268,7 @@ def build_start_sweep_fingerprint(network_fingerprint, node_theta, start_offsets
 def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, prediction_length,
                           results_dir, cores, generate_length, start_offsets, exclusion_radius=0,
                           reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
-                          fingerprints=None):
+                          fingerprints=None, generate_validation_start=None):
     '''Finds, per network, which row Generate() should start free-running
     from to best match the real held-out data -- at the per-node theta
     run_theta_search() already chose, not re-searched here (E and each
@@ -2738,8 +3281,11 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
     best model."
 
     One evaluate_smap_candidate() call per offset in `start_offsets`
-    (each offset a row count added to prediction_start), scored on the
-    exact same mean-rho-across-targets objective the theta search uses
+    (each offset a row count added to generate_validation_start -- see
+    load_config()'s three-way A/B/end split docstring; never
+    prediction_start, which anchors the unrelated MDE validation
+    segment), scored on the exact same mean-rho-across-targets objective
+    the theta search uses
     -- see that function's docstring. Checkpoints to disk after every
     offset (same resume pattern as run_theta_search's cache) since each
     candidate is its own full Generate() call and this shouldn't have to
@@ -2762,7 +3308,7 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
     best_starts = {}
     for network_id, run in gmn_runs.items():
         if len(start_offsets) == 1:
-            best_starts[network_id] = prediction_start + start_offsets[0]
+            best_starts[network_id] = generate_validation_start + start_offsets[0]
             continue
 
         net_result = run['net_result']
@@ -2780,7 +3326,7 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
                 entry, source = hit
                 scores = {int(k): v for k, v in entry['scores'].items()}
                 best_offset = entry['best_offset']
-                best_starts[network_id] = prediction_start + best_offset
+                best_starts[network_id] = generate_validation_start + best_offset
                 print(f'{network_id}: MDE_GMN_REUSE_BEST_PARAMS matched cached start sweep '
                       f'{source} -- skipping sweep entirely (best offset {best_offset}, '
                       f'score={scores.get(best_offset, float("nan")):.4f})', flush=True)
@@ -2788,7 +3334,7 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
                 fig, ax = plt.subplots(figsize=(7, 4))
                 ax.plot(start_offsets, [scores.get(o, np.nan) for o in start_offsets], marker='o')
                 ax.axvline(best_offset, color='gray', ls='--', lw=0.8)
-                ax.set_xlabel('Start offset from PREDICTION_START (rows)')
+                ax.set_xlabel('Start offset from GENERATE_VALIDATION_START (rows)')
                 ax.set_ylabel('Generate() rho (mean over targets)')
                 ax.set_title(f'Generate() start-point sweep -- {network_id} (cached)')
                 fig.tight_layout()
@@ -2813,7 +3359,7 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
             if offset in scores and not np.isnan(scores[offset]):
                 continue
 
-            generate_start = prediction_start + offset
+            generate_start = generate_validation_start + offset
             try:
                 score, _, _ = evaluate_smap_candidate(
                     net_result, prediction_start, prediction_length,
@@ -2837,7 +3383,7 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
 
         valid_offsets = [o for o in start_offsets if not np.isnan(scores.get(o, np.nan))]
         best_offset = max(valid_offsets, key=lambda o: scores[o]) if valid_offsets else start_offsets[0]
-        best_starts[network_id] = prediction_start + best_offset
+        best_starts[network_id] = generate_validation_start + best_offset
         print(f'{network_id}: best generate start = row {best_starts[network_id]} '
               f'(offset {best_offset}, score={scores.get(best_offset, float("nan")):.4f})', flush=True)
 
@@ -2857,7 +3403,7 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
         fig, ax = plt.subplots(figsize=(7, 4))
         ax.plot(start_offsets, [scores.get(o, np.nan) for o in start_offsets], marker='o')
         ax.axvline(best_offset, color='gray', ls='--', lw=0.8)
-        ax.set_xlabel('Start offset from PREDICTION_START (rows)')
+        ax.set_xlabel('Start offset from GENERATE_VALIDATION_START (rows)')
         ax.set_ylabel('Generate() rho (mean over targets)')
         ax.set_title(f'Generate() start-point sweep -- {network_id}')
         fig.tight_layout()
@@ -2874,11 +3420,14 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
 
 def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, prediction_length,
                             results_dir, cores, generate_length=None, generate_starts=None,
-                            exclusion_radius=0):
+                            exclusion_radius=0, generate_validation_start=None):
     '''Reruns Generate() at the winning per-node theta found by
     run_theta_search(), and the winning start row found by
-    sweep_generate_start() (generate_starts; defaults to prediction_start
-    per network when None). Plotting is deliberately NOT done here -- it
+    sweep_generate_start() (generate_starts; defaults to
+    generate_validation_start -- the Generate/Forecast validation
+    segment's own start, load_config()'s three-way A/B/end split
+    docstring -- per network when None). Plotting is deliberately NOT
+    done here -- it
     used to draw its own actual-vs-Generate() figure, but that was a
     strict subset of run_forecast_diagnostic()'s own actual-vs-
     Generate()-vs-Forecast() figure (same two of its three lines, same
@@ -2905,7 +3454,7 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
     for network_id, run in gmn_runs.items():
         net_result = run['net_result']
         node_theta = theta_search_results[network_id]['best_node_theta']
-        generate_start = generate_starts[network_id] if generate_starts else prediction_start
+        generate_start = generate_starts[network_id] if generate_starts else generate_validation_start
 
         try:
             config_file = build_gmn_config(
@@ -2945,14 +3494,18 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
 def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
                              node_theta, results_dir, cores, save_path,
                              generate_length=None, generate_start=None, nodes_per_figure=10,
-                             exclusion_radius=0, plot_range_mode='full'):
+                             exclusion_radius=0, plot_range_mode='full',
+                             generate_validation_start=None, total_rows=None):
     '''Runs the Forecast() diagnostic and draws the one actual-vs-
     Generate()-vs-Forecast() figure for this network (see
     rebuild_at_best_params()'s docstring for why there's only one figure
     here rather than a separate Generate()-only one).
 
-    generate_start (defaults to prediction_start when None) anchors both
-    Forecast()'s own pred window and the plotted window to the same row
+    generate_start (defaults to generate_validation_start when None --
+    the Generate/Forecast validation segment's own start, load_config()'s
+    three-way A/B/end split docstring, never prediction_start) anchors
+    both Forecast()'s own pred window and the plotted window to the same
+    row
     sweep_generate_start() picked for G's own Generate() run -- so all
     three lines on the figure (actual, Generate(), Forecast()) describe
     the same starting point, "to be consistent with the generative mode."
@@ -2979,8 +3532,7 @@ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
         2*generate_length rows before it (actual/lib only -- Generate()
         never ran that far back) and 2*generate_length rows after it,
         clamped to the data actually available (can't plot before row 0,
-        and can't plot past this network's held-out
-        prediction_start+prediction_length rows -- see actual_df's own
+        and can't plot past total_rows -- see actual_df's own
         construction in build_network()). Forecast() (this function's own
         call, independent of Generate()'s own generate_length -- Forecast
         is a direct per-row SMap prediction against real held-out
@@ -3021,8 +3573,15 @@ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
     every other, unrelated network in the same job. Callers must check
     for a None first return value before using it.'''
     generate_length = generate_length if generate_length is not None else prediction_length
-    generate_start = generate_start if generate_start is not None else prediction_start
-    total_rows = prediction_start + prediction_length  # == len(actual_df) -- see build_network()
+    generate_start = generate_start if generate_start is not None else generate_validation_start
+    # total_rows must be the *full* dataset length (len(df), passed in by
+    # the caller), not prediction_start+prediction_length -- under the
+    # three-way A/B/end split (load_config()'s docstring) that sum is
+    # only B (the MDE validation segment's own end); actual_df (loaded
+    # from net_result['DATA_AFTER_MDE'], see build_network()'s own fix to
+    # that slicing) spans all the way to end, and 'windowed' mode below
+    # needs the real row count to clamp against, not the shorter MDE-only
+    # window.
 
     if plot_range_mode == 'windowed':
         forecast_compute_length = min(2 * generate_length, max(total_rows - generate_start, 0))
@@ -3269,25 +3828,34 @@ def main():
     df = pd.read_csv(cfg['DATA_DIR'] / cfg['DATA_FILE'])
     print('Data shape:', df.shape, flush=True)
 
-    cfg['PREDICTION_START'] = int(round(len(df) * cfg['LIB_RATIO']))
-    cfg['PREDICTION_LENGTH'] = len(df) - cfg['PREDICTION_START']
+    # Three-way A/B/end split -- see load_config()'s docstring for the
+    # full rationale (MDE construction must never see, or leak into, the
+    # Generate/Forecast validation segment).
+    cfg['PREDICTION_START'] = int(round(len(df) * cfg['LIB_RATIO']))                          # A
+    post_lib_remainder = len(df) - cfg['PREDICTION_START']
+    cfg['PREDICTION_LENGTH'] = int(round(post_lib_remainder * cfg['MDE_VALIDATION_RATIO']))   # B - A
+    cfg['GENERATE_VALIDATION_START'] = cfg['PREDICTION_START'] + cfg['PREDICTION_LENGTH']     # B
+    cfg['GENERATE_VALIDATION_LENGTH'] = len(df) - cfg['GENERATE_VALIDATION_START']            # end - B
 
-    # Resolve GENERATE_LENGTH now that PREDICTION_LENGTH is known: 0
-    # (unset) means "use the full held-out window", and anything
-    # requesting more steps than there is real held-out data to score
-    # against gets clamped down to it (see load_config()'s docstring).
+    # Resolve GENERATE_LENGTH now that GENERATE_VALIDATION_LENGTH is
+    # known: 0 (unset) means "use the entire Generate/Forecast validation
+    # segment", and anything requesting more steps than that segment has
+    # gets clamped down to it (see load_config()'s docstring).
     if cfg['GENERATE_LENGTH'] <= 0:
-        cfg['GENERATE_LENGTH'] = cfg['PREDICTION_LENGTH']
-    elif cfg['GENERATE_LENGTH'] > cfg['PREDICTION_LENGTH']:
-        print(f"GENERATE_LENGTH={cfg['GENERATE_LENGTH']} exceeds the held-out window "
-              f"({cfg['PREDICTION_LENGTH']} rows); clamping to it.", flush=True)
-        cfg['GENERATE_LENGTH'] = cfg['PREDICTION_LENGTH']
+        cfg['GENERATE_LENGTH'] = cfg['GENERATE_VALIDATION_LENGTH']
+    elif cfg['GENERATE_LENGTH'] > cfg['GENERATE_VALIDATION_LENGTH']:
+        print(f"GENERATE_LENGTH={cfg['GENERATE_LENGTH']} exceeds the Generate/Forecast "
+              f"validation segment ({cfg['GENERATE_VALIDATION_LENGTH']} rows); clamping "
+              f"to it.", flush=True)
+        cfg['GENERATE_LENGTH'] = cfg['GENERATE_VALIDATION_LENGTH']
 
     # Resolve the generate-start sweep's candidate offsets now that
-    # PREDICTION_LENGTH/GENERATE_LENGTH are known: drop any offset that
-    # would leave too little real data to score GENERATE_LENGTH steps
-    # against (see load_config()'s docstring on GENERATE_START_MAX_OFFSET).
-    max_feasible_offset = cfg['PREDICTION_LENGTH'] - cfg['GENERATE_LENGTH']
+    # GENERATE_VALIDATION_LENGTH/GENERATE_LENGTH are known: offsets are
+    # rows added to GENERATE_VALIDATION_START (B), not PREDICTION_START
+    # (A) -- see load_config()'s three-way split docstring -- dropping
+    # any offset that would leave too little real data to score
+    # GENERATE_LENGTH steps against.
+    max_feasible_offset = cfg['GENERATE_VALIDATION_LENGTH'] - cfg['GENERATE_LENGTH']
     start_offsets = list(range(cfg['GENERATE_START_MIN_OFFSET'], cfg['GENERATE_START_MAX_OFFSET'],
                                 cfg['GENERATE_START_STEP']))
     feasible_offsets = [o for o in start_offsets if 0 <= o <= max_feasible_offset]
@@ -3295,6 +3863,15 @@ def main():
         print(f'GENERATE_START offsets {start_offsets} include values outside the feasible '
               f'range [0, {max_feasible_offset}]; using {feasible_offsets} instead.', flush=True)
     cfg['GENERATE_START_OFFSETS'] = feasible_offsets or [0]
+
+    # Resolve Stage 2's / self_delay_set's nonzero-delay list now that
+    # PREDICTION_START (the MDE library's own size, for LAG_MODE=
+    # every_lag_possible) and GENERATE_LENGTH (for LAG_MODE=
+    # generation_length_adjusted) are both known.
+    cfg['LAG_SET'] = derive_lag_set(
+        cfg['DELAY_SOURCE'], cfg['DELAY_SET'], cfg['LAG_MODE'], cfg['LAG_DENSITY'], cfg['LAG_STEP'],
+        cfg['GENERATE_LENGTH'], cfg['PREDICTION_START'],
+    )
 
     print('Config:', {k: v for k, v in cfg.items() if k != 'TARGET_COLORS'}, flush=True)
 
@@ -3315,30 +3892,60 @@ def main():
 
     # ---- MDE (or its full-channel-pool stand-in for MODE='GMN') -------
     mde_results = {}
-    expanded_df = expanded_obs_cols = None  # MDE-GMN only -- see below
+    # Per-group CCM-pre-filtered candidate pool (see
+    # ccm_prefilter_observables()'s docstring), computed once per
+    # target_groups_for_mode() group and reused by the network-
+    # construction loop further below instead of recomputing --
+    # deliberately computed *before* depth-0's own MDE seed call now (not
+    # inside build_network(), where it used to live), so depth-0 only
+    # ever searches already-filtered observables too. Keyed by
+    # tuple(group) so both loops address it identically.
+    filtered_pools = {}
     if cfg['MODE'] == 'MDE-GMN':
-        # Built once, shared by every depth-0 target below and by
-        # build_nested_mde_network()'s own nested calls (via build_network()
-        # -- see expand_delay_columns()'s and build_nested_mde_network()'s
-        # docstrings) -- both need to search the exact same delay-expanded
-        # candidate pool for the depth-0 reuse (build_nested_mde_network's
-        # own docstring) to be valid.
-        expanded_df, expanded_obs_cols = expand_delay_columns(df, obs_cols, cfg['DELAY_SET'])
+        # Stage 1 seed: real-observable-only MDE, no delay expansion --
+        # matches build_nested_mde_network()'s own Stage-1 candidate pool
+        # exactly (delay_set=[]), so its depth-0 reuse of this result
+        # stays valid (same candidate_pool/effective_d/fingerprint either
+        # way) -- see build_network()'s docstring for the two-stage
+        # split, and derive_lag_set() for Stage 2's own delay-expanded
+        # pool.
+        for group in target_groups_for_mode(cfg['TARGETS'], cfg['GMN_MODE']):
+            if cfg['CCM_PREFILTER_RHO_MIN'] > 0:
+                filtered_columns, _ = ccm_prefilter_observables(
+                    df, obs_cols, group, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+                    cfg['CCM_PREFILTER_RHO_MIN'], cfg['CCM_PREFILTER_E'], cfg['TP'],
+                    cfg['EXCLUSION_RADIUS_VALUE'], cfg['LIBSIZE_RATIOS'], cfg['CORES'],
+                )
+                print(f'CCM pre-filter: kept {len(filtered_columns)}/{len(obs_cols)} '
+                      f'observables (rho >= {cfg["CCM_PREFILTER_RHO_MIN"]}) for {group}', flush=True)
+            else:
+                filtered_columns = obs_cols
+            filtered_pools[tuple(group)] = filtered_columns
 
-        for target in cfg['TARGETS']:
-            candidate_pool = [c for c in expanded_obs_cols
-                              if observable_and_delay(c, obs_cols)[0] != target]
-            effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, len(cfg['DELAY_SET']))
-            mde_results[target] = run_mde_for_target(
-                target, expanded_df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
-                effective_d, cfg['EMBED_DIM_RHO_MIN'], cfg['CROSS_MAP_RHO_MIN'],
-                cfg['EXCLUSION_RADIUS_VALUE'], cfg['CORES'], cfg['RESULTS_DIR'], cfg['DELAY_SET'],
-                tp=cfg['TP'],
-                reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
-                run_cache_dir=cfg['RUN_CACHE_DIR'],
-                data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
-                code_fingerprint=code_fingerprint,
-            )
+            for target in group:
+                candidate_pool = [c for c in filtered_columns if c != target]
+                effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
+                try:
+                    mde_results[target] = run_mde_for_target(
+                        target, df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+                        effective_d, cfg['EMBED_DIM_RHO_MIN'], cfg['CROSS_MAP_RHO_MIN'],
+                        cfg['EXCLUSION_RADIUS_VALUE'], cfg['CORES'], cfg['RESULTS_DIR'], [],
+                        tp=cfg['TP'],
+                        reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
+                        run_cache_dir=cfg['RUN_CACHE_DIR'],
+                        data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
+                        code_fingerprint=code_fingerprint,
+                    )
+                except Exception as exc:
+                    # Same failure mode _failed_mde_result() guards against
+                    # in build_nested_mde_network() below (dimx's own
+                    # internal code, e.g. an all-NaN EmbedDimension column)
+                    # -- this is the depth-0 seed for that same Stage-1
+                    # BFS, so it needs the identical guard or the exact
+                    # crash just relocates one level up.
+                    print(f'{target}: top-level MDE call FAILED: {exc!r} -- treating as a dead-end '
+                          f'(zero drivers selected for this target)', flush=True)
+                    mde_results[target] = _failed_mde_result(target)
 
         if cfg['RUN_MDE_DIAGNOSTICS']:
             plot_mde_rho_vs_dimension(
@@ -3363,11 +3970,12 @@ def main():
             group, mde_results, df, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
             cfg['MODE'], cfg['E_RANGE'], cfg['TAU_RANGE'], cfg['RESULTS_DIR'], cfg['CORES'],
             cfg['INTERACTION_MATRIX_OUTER_CORES'],
-            observable_columns=obs_cols, nested_n=cfg['MDE_D'], nested_m=cfg['NESTED_M'],
+            observable_columns=filtered_pools.get(tuple(group), obs_cols),
+            nested_n=cfg['MDE_D'], nested_m=cfg['NESTED_M'],
             embed_dim_rho_min=cfg['EMBED_DIM_RHO_MIN'], cross_map_rho_min=cfg['CROSS_MAP_RHO_MIN'],
             exclusion_radius=cfg['EXCLUSION_RADIUS_VALUE'],
-            expanded_df=expanded_df, expanded_observable_columns=expanded_obs_cols,
-            delay_set=cfg['DELAY_SET'], tp=cfg['TP'],
+            lag_set=cfg['LAG_SET'], stage2_allow_real_observables=cfg['STAGE2_ALLOW_REAL_OBSERVABLES'],
+            tp=cfg['TP'],
             reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
             run_cache_dir=cfg['RUN_CACHE_DIR'],
             data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
@@ -3393,6 +4001,7 @@ def main():
         reuse_best_params=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
         run_cache_dir=cfg['RUN_CACHE_DIR'],
         fingerprints=fingerprints, exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
+        generate_validation_start=cfg['GENERATE_VALIDATION_START'],
     )
 
     generate_starts = sweep_generate_start(
@@ -3401,6 +4010,7 @@ def main():
         exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
         reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
         run_cache_dir=cfg['RUN_CACHE_DIR'], fingerprints=fingerprints,
+        generate_validation_start=cfg['GENERATE_VALIDATION_START'],
     )
 
     rebuild_at_best_params(
@@ -3408,6 +4018,7 @@ def main():
         cfg['RESULTS_DIR'], cfg['CORES'],
         generate_length=cfg['GENERATE_LENGTH'], generate_starts=generate_starts,
         exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
+        generate_validation_start=cfg['GENERATE_VALIDATION_START'],
     )
 
     for network_id, run in gmn_runs.items():
@@ -3427,6 +4038,7 @@ def main():
             generate_length=cfg['GENERATE_LENGTH'], generate_start=run['generate_start'],
             exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
             plot_range_mode=cfg['FORECAST_PLOT_RANGE'],
+            generate_validation_start=cfg['GENERATE_VALIDATION_START'], total_rows=len(df),
         )
         run['Gf'] = Gf
         run['forecast_rho'] = forecast_rho

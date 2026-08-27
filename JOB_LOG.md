@@ -5,6 +5,11920 @@ submissions (see scripts/batch/submit.sh), newest entry first.
 
 <!-- new entries inserted below this line -->
 
+## Job 39674609
+
+Generated: 2026-08-25T14:39:17+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39671271**
+
+### Plain-language summary
+
+Same medium-scale config as job_39671271 (which is still RUNNING and
+left untouched -- this is a parallel comparison job, not a replacement),
+only `--mem` raised 128G -> 200G. Reason: no tsls-mde-gmn job has ever
+actually completed at this exact config (REGION_CHANNEL_CAP=30/MDE_D=10/
+NESTED_M=5/TP=10/GENERATE_LENGTH=40) -- every past attempt either
+crashed for an unrelated reason (bucket outage, the now-fixed
+`CA1_12_tsls` bug) or ran out of the 4-day walltime first. Of the two
+that did run the full 4 days, one (job_39069787, code predating the
+inner-pool parallelism/CCM-pre-filter/Stage2-recursion fixes) peaked at
+~114GB against its 128G request -- a genuinely close call, close enough
+that it's worth real headroom rather than assuming the newer code's much
+lower measured usage (job_39083467, ~11.4GB; job_39671271 itself,
+~6.1GB about an hour in as of this submission) is guaranteed to hold for
+the entire run. 200G stays well under this partition's 500G/node cap
+while giving ~1.75x the room job_39069787's own peak needed.
+
+`--mem` was bumped, this job submitted, then reverted back to 128G
+immediately afterward in the working tree -- Slurm snapshots a script's
+full contents at submission time (same round-trip pattern used for
+job_37946959), so this doesn't affect what job_39674609 actually
+requested; it just keeps the standing sbatch file's default unchanged
+until there's a confirmed reason (an actual OOM, not just a historical
+close call from now-superseded code) to raise it permanently.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_39671271/tsls-mde-gmn.sbatch
++++ job_39674609/tsls-mde-gmn.sbatch
+@@ -2,7 +2,7 @@
+ #SBATCH --job-name=run_tsls_mde_gmn
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+-#SBATCH --mem=128G
++#SBATCH --mem=200G
+ #SBATCH --cpus-per-task=64
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell) runs,
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39671271
+
+Generated: 2026-08-25T13:26:41+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39671218**
+
+### Plain-language summary
+
+Third resubmission of the same medium-scale config (see job_39671000's
+own entry for the full description of what changed in the code).
+job_39671165 and job_39671218 both landed on `deigo011902` specifically
+and both failed the same `/bucket` read-only way -- two consecutive
+identical landings is enough to suspect the scheduler keeps preferring
+that node (rather than pure bad luck), so this submission adds
+`sbatch --exclude=deigo011902` (submitted directly, not via submit.sh,
+since submit.sh has no flag passthrough -- generate_job_description.sh
+called manually afterward with the same arguments submit.sh would have
+used, so this job's JOB_LOG entry is generated identically either way).
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39671218
+
+Generated: 2026-08-25T13:25:59+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39671165**
+
+### Plain-language summary
+
+Second resubmission of the same medium-scale config (see job_39671000's
+own entry for the full description of what changed in the code) --
+job_39671165 landed on `deigo011902` again and failed the same way.
+Resubmitted a second time; same rationale as job_39671165's own entry.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39671165
+
+Generated: 2026-08-25T13:25:17+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39671000**
+
+### Plain-language summary
+
+Resubmission of job_39671000 (same config, unchanged) after it failed in
+1 second on `/bucket` being read-only from its compute node
+(`deigo011902`: `mkdir: cannot create directory '.../tsls_mde_gmn_cache/
+job_39671000': Read-only file system`). Confirmed via direct `srun`
+probes this is a partial recurrence of today's earlier outage (see
+job_39656077's own entry): `deigo011902`/`011904`/`010901`/`010903` all
+reproduced the same read-only error, while `deigo011123` (where
+job_39656077, this pipeline's own still-running earlier job, landed) is
+healthy. Resubmitted anyway -- normal scheduling has a real chance of
+landing on a healthy node, same resolution as job_39656077 itself.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39671164
+
+Generated: 2026-08-25T13:25:13+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39670999**
+
+### Plain-language summary
+
+Resubmission of job_39670999 (same config, unchanged) after it failed in
+1 second on `/bucket` being read-only from its compute node
+(`deigo011902`: `mkdir: cannot create directory '.../mde_gmn_cache/
+job_39670999': Read-only file system`). Same partial outage recurrence
+diagnosed in job_39671165's own entry (tsls-mde-gmn's sibling
+resubmission) -- resubmitted for the same reason.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39671000
+
+Generated: 2026-08-25T13:20:48+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39656077**
+
+### Plain-language summary
+
+Same medium-scale config as job_39656077 (unchanged: REGION_CHANNEL_CAP=30,
+MDE_D=10, NESTED_M=5, TP=10, GENERATE_LENGTH=40, CCM_PREFILTER_RHO_MIN=0.2,
+CCM_PREFILTER_E=7, STAGE2_ALLOW_REAL_OBSERVABLES=false) -- this
+resubmission exists purely to cluster-validate the same significant
+Python restructuring described below, not to test a new parameter
+combination. job_39656077 itself is still RUNNING as of this submission
+(started ~2h ago, on the pre-restructuring code) and is left alone; this
+is a separate, independent job on the current code.
+
+**What changed in the code** (see diff below for the full change; two
+fixes, made together per explicit request, after review found the
+previous CCM-pre-filter integration didn't match the intended algorithm):
+
+1. **Stage 2 now recurses.** Previously, Stage 1 (real-observable-only
+   nested-MDE) ran to completion, then Stage 2 (lagged-embedding
+   attachment, or lagged+real when STAGE2_ALLOW_REAL_OBSERVABLES=true) ran
+   once over the final node set -- even a Stage-2-selected *real*
+   observable driver was always a dead-end leaf, never itself searched
+   for its own further drivers. `attach_lag_embeddings()` (the old
+   separate Stage 2 function) is now folded into `build_nested_mde_network()`
+   as a per-wave pass: every BFS wave runs both a Stage 1 pass and a
+   Stage 2 pass, and *either* stage's real-observable (delay=0) picks
+   feed the next wave. Verified on real data locally before this
+   submission (isolated Stage-2-style probe calls' real-observable picks
+   were confirmed to actually recurse into their own further nested-MDE
+   round, on both this pipeline's 40Hz data and simple-mde-gmn.py's 1Hz
+   data) -- see the nested-MDE-stage2-recursion memory for the full
+   writeup. This job runs with STAGE2_ALLOW_REAL_OBSERVABLES=false
+   (unchanged default), so it does not exercise this specific behavior
+   change -- it mainly validates fix 2 below and general no-crash/
+   no-performance-regression at cluster scale, since fix 1 was already
+   confirmed correct locally.
+2. **CCM pre-filter now runs before depth-0, not after.** Previously each
+   target's first-round ("depth-0") driver search ran in `main()` against
+   the *full*, unfiltered observable pool, and the CCM pre-filter only
+   narrowed the pool afterward, inside `build_network()` -- this was the
+   root cause of the `CA1_12_tsls`/`CA1_22` crash job_39655803/39655804
+   fixed with a fallback in `observable_and_delay()`. That fallback is
+   now closer to a pure safety net (still needed for cross-job cache
+   reuse of an older result) rather than the normal path: `main()` now
+   runs the pre-filter once per target group *before* seeding depth-0, so
+   depth-0 and every later nested-MDE round search the exact same
+   filtered pool.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_39656077/tsls-mde-gmn.py
++++ job_39671000/tsls-mde-gmn.py
+@@ -31,13 +31,16 @@
+      in place of dimx.MDE -- see run_mde_for_target()'s docstring.
+   2. Network construction -- two unrelated methods depending on MODE,
+      identical branching to simple-mde-gmn.py's own build_network():
+-       - MODE='MDE-GMN': build_nested_mde_network() (Stage 1, real-
+-         observable-only) + attach_lag_embeddings() (Stage 2, per-node
+-         lagged-embedding attachment from the whole observable universe) --
+-         both call the TSLS-flavored run_mde_for_target() below instead of
+-         dimx.MDE. No CCM, no apps.InteractionMatrix, no apps.CreateNetwork
+-         -- the resulting MultiDiGraph IS the network handed to gmn.GMN
+-         directly.
++       - MODE='MDE-GMN': build_nested_mde_network(), a single unified BFS
++         that runs both stages per wave (Stage 1, real-observable-only;
++         Stage 2, per-node lagged-embedding attachment from the CCM-pre-
++         filtered observable universe) so a Stage 2 real-observable
++         selection recurses into its own further nested-MDE round exactly
++         like a Stage 1 one, instead of terminating as a leaf -- both
++         stages call the TSLS-flavored run_mde_for_target() below instead
++         of dimx.MDE. No CCM interaction matrix, no apps.InteractionMatrix,
++         no apps.CreateNetwork -- the resulting MultiDiGraph IS the network
++         handed to gmn.GMN directly.
+        - MODE='GMN': the original CCM interaction matrix, now via
+          cleaned_helper_functions.proper_ccm (build_interaction_matrix())
+          instead of apps.InteractionMatrix's CLI subprocess -- see that
+@@ -838,7 +841,8 @@
+ 
+     # ---- Two-stage nested-MDE network construction (MODE='MDE-GMN' only) --
+     # Ported unchanged from simple-mde-gmn.py -- see build_nested_mde_network()
+-    # (Stage 1) and attach_lag_embeddings() (Stage 2) for the full algorithm,
++    # for the full unified two-stage-per-wave algorithm (Stage 1 real-
++    # observable-only, Stage 2 lagged-embedding attachment, both per wave),
+     # and that file's own load_config() docstrings for STAGE2_ALLOW_REAL_
+     # OBSERVABLES/DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP/DELAY_SET's full
+     # rationale (identical here -- this is all pure column-name/DataFrame
+@@ -1086,14 +1090,18 @@
+ 
+     Falls back to a marker-presence check (bug found 2026-08-25, job
+     39605472/39605473 -- ported from simple-mde-gmn.py's own identical
+-    fix) when `column_name` isn't in `raw_columns` at all:
+-    ccm_prefilter_observables() can shrink the `raw_columns` a given
+-    build_nested_mde_network()/attach_lag_embeddings() call sees, but a
+-    depth-0 node's mde_results entry was computed once in main(), against
+-    the *full*, unfiltered candidate pool, before that filtering ever ran
+-    -- so a depth-0-selected real observable can legitimately be absent
+-    from this call's own (filtered) `raw_columns` while still being a
+-    perfectly valid delay=0 column. Without this fallback,
++    fix) when `column_name` isn't in `raw_columns` at all. Originally this
++    triggered on every run, because depth-0's mde_results entry used to be
++    computed in main() against the *full*, unfiltered candidate pool,
++    before ccm_prefilter_observables() ever ran -- main() now runs the
++    pre-filter first and seeds depth-0 from the *same* filtered pool
++    build_nested_mde_network() itself uses, so that original mismatch no
++    longer happens on a normal run. The fallback stays as a cache-reuse
++    safety net: with REUSE_BEST_PARAMS, a reused mde_results entry can come
++    from an earlier job that used a different CCM_PREFILTER_RHO_MIN/E (or
++    predates the pre-filter feature entirely), so its SELECTED_COLUMNS can
++    still legitimately reference an observable absent from *this* run's
++    (filtered) `raw_columns`. Without this fallback,
+     _parse_delayed_column_name() crashes on any such name (confirmed:
+     `ValueError: invalid literal for int() with base 10: 'CA1_12_tsls'`)
+     since it has no delay marker to parse. Residual risk is unchanged from
+@@ -1137,10 +1145,10 @@
+ def derive_lag_set(delay_source, explicit_delay_set, lag_mode, lag_density, lag_step,
+                     generate_length, mde_lib_size, min_lib_rows=50):
+     '''Resolves the nonzero-delay set used for Stage 2's lagged-driver
+-    candidate pool (attach_lag_embeddings()) and, unioned with {0}, every
+-    node's unconditional self_delay_set -- see load_config()'s
+-    DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP docstrings for the parameter
+-    semantics. Ported unchanged from simple-mde-gmn.py.
++    candidate pool (build_nested_mde_network()'s own Stage-2 pass) and,
++    unioned with {0}, every node's unconditional self_delay_set -- see
++    load_config()'s DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP docstrings
++    for the parameter semantics. Ported unchanged from simple-mde-gmn.py.
+ 
+     delay_source='explicit': just the hand-picked delay_set list, stripped
+     of any 0 entry.
+@@ -1256,8 +1264,8 @@
+     unchanged from simple-mde-gmn.py -- a cache hit reconstructs the same
+     'm' namespace shape from a pickled dict instead of calling proper_mde
+     at all. `cache_stage` ('stage1' default, 'stage2' from
+-    attach_lag_embeddings()) keeps the two stages' cache files distinct,
+-    same as simple-mde-gmn.py.
++    build_nested_mde_network()'s own Stage 2 pass) keeps the two stages'
++    cache files distinct, same as simple-mde-gmn.py.
+ 
+     INNER POOL (inner_workers, default 1 -- no pool at all): this call's
+     own proper_mde() forward-selection is otherwise entirely single-core
+@@ -1269,10 +1277,10 @@
+     proper_mde's own `pool` argument (see that function's docstring for
+     why threads, not another process pool: every hot loop it reaches is a
+     compiled pyEDM/scipy call that releases the GIL). Callers
+-    (build_nested_mde_network()/attach_lag_embeddings()) size this as
+-    `max(1, cores // outer_workers)`, recomputed fresh per wave from that
+-    wave's own actual size -- see those functions' own docstrings -- which
+-    is what keeps outer_workers * inner_workers <= cores always: the same
++    (build_nested_mde_network()'s own Stage 1 and Stage 2 passes) size
++    this as `max(1, cores // outer_workers)`, recomputed fresh per wave
++    from that wave's own actual size -- see that function's own docstring
++    -- which is what keeps outer_workers * inner_workers <= cores always: the same
+     invariant that kept simple-mde-gmn.py's own outer x inner CCM
+     parallelism (see that file's own module docstring's FIXED section)
+     from repeating the pool-squaring blowup apps.InteractionMatrix x
+@@ -1280,8 +1288,8 @@
+     equivalent of that bug ever existed here (proper_mde never had any
+     multiprocessing at all until this parameter) -- this inner pool is
+     new, sized the same careful way from the start.'''
+-    # Fallback only -- every real call site (main()'s depth-0 seed,
+-    # build_nested_mde_network(), attach_lag_embeddings()) passes this
++    # Fallback only -- every real call site (main()'s depth-0 seed, and
++    # both of build_nested_mde_network()'s per-wave passes) passes this
+     # explicitly as the raw TSLS_MDE_GMN_MDE_D value. Falls back to mde_d
+     # (the effective, possibly num_delays-scaled dimension) only if a
+     # caller genuinely omits it, matching this function's own pre-max_e
+@@ -1770,33 +1778,44 @@
+                               results_dir, mde_results, delay_set, tp,
+                               metric, target_metric, gamma_delta, ccm_window_rows,
+                               ccm_lib_size_pcts, ccm_sample, ccm_slope, cores,
++                              lag_set, stage2_allow_real_observables,
+                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                               data_file=None, data_file_sha256=None, code_fingerprint=None):
+-    '''Stage 1 of two-stage nested-MDE network construction -- MODE='MDE-GMN'
+-    only. Ported from simple-mde-gmn.py's own build_nested_mde_network();
+-    see that function's docstring for the full algorithm (BFS out from
+-    targets, real-observable-only, cycle/self-loop/NaN-gain rejection,
+-    delay=0-only nesting continuation) -- identical here, data-agnostic.
+-
+-    Two differences from simple-mde-gmn.py: (1) the wave pool passes no
+-    `initializer=` -- simple-mde-gmn.py's own _mde_wave_worker_init()
+-    reapplies dimx.Run monkeypatches inside every worker, which has no
+-    TSLS-side equivalent (no dimx.Run to monkeypatch at all); (2) the
+-    outer/inner split is computed the same way (outer_workers = min(wave
+-    size, cores), inner_workers = cores // outer_workers, recomputed
+-    fresh every wave from that wave's own real size) but fed to a
++    '''Two-stage nested-MDE network construction, unified into ONE BFS --
++    MODE='MDE-GMN' only. Ported from simple-mde-gmn.py's own (also
++    unified, as of 2026-08-25) build_nested_mde_network(); see that
++    function's docstring for the full algorithm (BFS out from targets,
++    both a Stage-1-style real-observable-only call and a Stage-2-style
++    lagged-embedding call per node per wave, cycle/self-loop/NaN-gain
++    rejection, delay=0-only nesting continuation from EITHER stage --
++    revised so Stage 2's own real-observable selections now recurse
++    exactly like Stage 1's, instead of always being terminal) --
++    identical here, data-agnostic.
++
++    Differences from simple-mde-gmn.py, both pre-existing (not new to
++    this revision): (1) neither pool passes `initializer=` -- simple-
++    mde-gmn.py's own _mde_wave_worker_init() reapplies dimx.Run
++    monkeypatches inside every worker, which has no TSLS-side equivalent
++    (no dimx.Run to monkeypatch at all); (2) the outer/inner split is
++    computed the same way (outer_workers = min(node count, cores),
++    inner_workers = cores // outer_workers, recomputed fresh per stage
++    per wave from that stage's own real node count) but fed to a
+     different layer than simple-mde-gmn.py's dx.MDE(cores=...) -- here
+     inner_workers becomes a ThreadPoolExecutor opened once per node
+     inside run_mde_for_target() itself (see that function's own INNER
+     POOL docstring), since proper_mde has no multiprocessing of its own
+-    to hand a bare core count to. Every outer worker computes
+-    inner_workers from the same (cores, len(to_compute)) this wave
+-    already fixed, so siblings never need to coordinate to stay within
+-    outer_workers * inner_workers <= cores.'''
++    to hand a bare core count to.'''
+     graph = nx.MultiDiGraph()
+     graph.add_nodes_from(targets)
+ 
+-    num_delays = len(expanded_columns) // len(raw_columns)
++    stage1_num_delays = len(expanded_columns) // len(raw_columns)
++
++    stage2_df, stage2_expanded_columns = expand_delay_columns(expanded_df, raw_columns, lag_set)
++    stage2_lag_only_columns = stage2_expanded_columns[len(raw_columns):]
++    stage2_candidate_universe = (
++        stage2_expanded_columns if stage2_allow_real_observables else stage2_lag_only_columns
++    )
++    stage2_num_delays = len(lag_set) + (1 if stage2_allow_real_observables else 0)
+ 
+     edges = []
+     nested_mde_results = {}
+@@ -1814,9 +1833,10 @@
+         if not wave_nodes:
+             break
+ 
++        # ---- Stage 1 pass: real-observable-only ----
+         to_compute = [(node, depth) for node, depth in wave_nodes
+                       if not (depth == 0 and node in mde_results)]
+-        wave_results = {
++        stage1_results = {
+             node: mde_results[node] for node, depth in wave_nodes
+             if depth == 0 and node in mde_results
+         }
+@@ -1824,7 +1844,7 @@
+         if to_compute:
+             outer_workers = min(len(to_compute), max(1, cores))
+             inner_workers = max(1, cores // outer_workers)
+-            print(f'nested MDE: wave of {len(to_compute)} node(s) at depth '
++            print(f'nested MDE (Stage 1): wave of {len(to_compute)} node(s) at depth '
+                   f'{to_compute[0][1]} -- {outer_workers} parallel worker(s) '
+                   f'x {inner_workers} inner thread(s) each', flush=True)
+ 
+@@ -1834,7 +1854,7 @@
+                 for node, depth in to_compute:
+                     candidate_pool = [c for c in expanded_columns
+                                        if observable_and_delay(c, raw_columns)[0] != node]
+-                    effective_d = effective_mde_dimension(nested_n, candidate_pool, num_delays)
++                    effective_d = effective_mde_dimension(nested_n, candidate_pool, stage1_num_delays)
+                     fut = executor.submit(
+                         run_mde_for_target, node, expanded_df, candidate_pool,
+                         prediction_start, prediction_length, effective_d,
+@@ -1850,28 +1870,76 @@
+                 for fut in as_completed(futures):
+                     node = futures[fut]
+                     try:
+-                        wave_results[node] = fut.result()
++                        stage1_results[node] = fut.result()
+                     except Exception as exc:
+                         # See _failed_mde_result()'s own docstring -- a
+                         # single node's MDE call failing must not crash the
+                         # rest of this wave or every already-completed node
+                         # in prior waves.
+-                        print(f'nested MDE: {node} MDE call FAILED: {exc!r} -- treating as a '
+-                              f'dead-end (zero drivers selected, no further nesting from this '
++                        print(f'nested MDE (Stage 1): {node} MDE call FAILED: {exc!r} -- treating '
++                              f'as a dead-end (zero drivers selected, no further nesting from this '
+                               f'node)', flush=True)
+-                        wave_results[node] = _failed_mde_result(node)
++                        stage1_results[node] = _failed_mde_result(node)
++
++        # ---- Stage 2 pass: lagged (+ optionally real) embedding -- every
++        # node in this wave, no depth-0 shortcut (Stage 2 was never
++        # precomputed for depth-0, before or after this restructuring) ----
++        outer_workers2 = min(len(wave_nodes), max(1, cores))
++        inner_workers2 = max(1, cores // outer_workers2)
++        print(f'nested MDE (Stage 2): wave of {len(wave_nodes)} node(s) at depth '
++              f'{wave_nodes[0][1]} -- {outer_workers2} parallel worker(s) '
++              f'x {inner_workers2} inner thread(s) each, candidate pool size '
++              f'{len(stage2_candidate_universe)} (lag_set={lag_set}, '
++              f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
++
++        stage2_results = {}
++        with ProcessPoolExecutor(max_workers=outer_workers2,
++                                  mp_context=mp.get_context('fork')) as executor:
++            futures = {}
++            for node, depth in wave_nodes:
++                candidate_pool = [c for c in stage2_candidate_universe
++                                   if observable_and_delay(c, raw_columns)[0] != node]
++                effective_d = effective_mde_dimension(nested_n, candidate_pool, stage2_num_delays)
++                fut = executor.submit(
++                    run_mde_for_target, node, stage2_df, candidate_pool,
++                    prediction_start, prediction_length, effective_d,
++                    embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                    results_dir, lag_set, tp,
++                    metric, target_metric, gamma_delta, ccm_window_rows,
++                    ccm_lib_size_pcts, ccm_sample, ccm_slope,
++                    reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
++                    code_fingerprint, 'stage2',
++                    max_e=nested_n, inner_workers=inner_workers2,
++                )
++                futures[fut] = node
++            for fut in as_completed(futures):
++                node = futures[fut]
++                try:
++                    stage2_results[node] = fut.result()
++                except Exception as exc:
++                    print(f'nested MDE (Stage 2): {node} MDE call FAILED: {exc!r} -- treating as '
++                          f'a dead-end (zero lagged drivers attached for this node)', flush=True)
++                    stage2_results[node] = _failed_mde_result(node)
+ 
++        # ---- Edge acceptance: Stage 1's result first, then Stage 2's --
++        # either stage's delay=0 discoveries feed the next wave.
+         next_wave = []
+         for node, depth in wave_nodes:
+             visited.add(node)
+-            result = wave_results[node]
+-            nested_mde_results[node] = result
++            result1 = stage1_results[node]
++            nested_mde_results[node] = result1
+ 
+-            accepted = _accept_mde_result_edges(graph, edges, node, result, raw_columns)
++            accepted1 = _accept_mde_result_edges(graph, edges, node, result1, raw_columns)
++            for driver, delay in accepted1:
++                if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited:
++                    next_wave.append((driver, depth + 1))
+ 
+-            for driver, delay in accepted:
++            result2 = stage2_results[node]
++            accepted2 = _accept_mde_result_edges(graph, edges, node, result2, raw_columns)
++            for driver, delay in accepted2:
+                 if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited:
+                     next_wave.append((driver, depth + 1))
++                # delay != 0: leaf -- edge already added above.
+ 
+         current_wave = next_wave
+ 
+@@ -1884,81 +1952,6 @@
+     return graph, edges_df, nested_mde_results
+ 
+ 
+-def attach_lag_embeddings(graph, raw_columns, df, prediction_start, prediction_length,
+-                           stage2_n, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+-                           results_dir, lag_set, stage2_allow_real_observables, tp,
+-                           metric, target_metric, gamma_delta, ccm_window_rows,
+-                           ccm_lib_size_pcts, ccm_sample, ccm_slope, cores,
+-                           reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+-                           data_file=None, data_file_sha256=None, code_fingerprint=None):
+-    '''Stage 2 of two-stage nested-MDE network construction (MODE='MDE-GMN'
+-    only) -- ported from simple-mde-gmn.py's own attach_lag_embeddings();
+-    see that function's docstring for the full algorithm (one non-recursive
+-    MDE round per Stage-1 node, candidate pool spans lag_set x every real
+-    observable, never itself recurses). Same outer/inner split as
+-    build_nested_mde_network() above -- see that function's own docstring
+-    for why inner_workers becomes a ThreadPoolExecutor inside each node's
+-    own run_mde_for_target() call rather than a bare `cores` argument here
+-    (proper_mde has no multiprocessing of its own to hand one to). This is
+-    Stage 2's own single wave (every Stage-1 node at once, not a BFS), so
+-    outer_workers/inner_workers are computed once here rather than
+-    per-wave -- but from this call's own real `len(nodes)`, same as
+-    Stage 1's per-wave recomputation, not a guessed constant.'''
+-    expanded_df, expanded_columns = expand_delay_columns(df, raw_columns, lag_set)
+-    lag_only_columns = expanded_columns[len(raw_columns):]
+-    candidate_universe = expanded_columns if stage2_allow_real_observables else lag_only_columns
+-    num_delays = len(lag_set) + (1 if stage2_allow_real_observables else 0)
+-
+-    nodes = sorted(graph.nodes)
+-    edges = []
+-    if not nodes:
+-        return pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
+-
+-    outer_workers = min(len(nodes), max(1, cores))
+-    inner_workers = max(1, cores // outer_workers)
+-    print(f'lag embedding (Stage 2): {len(nodes)} node(s) -- {outer_workers} parallel '
+-          f'worker(s) x {inner_workers} inner thread(s) each, candidate pool size '
+-          f'{len(candidate_universe)} (lag_set={lag_set}, '
+-          f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
+-
+-    results = {}
+-    with ProcessPoolExecutor(max_workers=outer_workers,
+-                              mp_context=mp.get_context('fork')) as executor:
+-        futures = {}
+-        for node in nodes:
+-            candidate_pool = [c for c in candidate_universe
+-                               if observable_and_delay(c, raw_columns)[0] != node]
+-            effective_d = effective_mde_dimension(stage2_n, candidate_pool, num_delays)
+-            fut = executor.submit(
+-                run_mde_for_target, node, expanded_df, candidate_pool,
+-                prediction_start, prediction_length, effective_d,
+-                embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+-                results_dir, lag_set, tp,
+-                metric, target_metric, gamma_delta, ccm_window_rows,
+-                ccm_lib_size_pcts, ccm_sample, ccm_slope,
+-                reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+-                code_fingerprint, 'stage2',
+-                max_e=stage2_n, inner_workers=inner_workers,
+-            )
+-            futures[fut] = node
+-        for fut in as_completed(futures):
+-            node = futures[fut]
+-            try:
+-                results[node] = fut.result()
+-            except Exception as exc:
+-                print(f'lag embedding (Stage 2): {node} MDE call FAILED: {exc!r} -- treating as '
+-                      f'a dead-end (zero lagged drivers attached for this node)', flush=True)
+-                results[node] = _failed_mde_result(node)
+-
+-    for node in nodes:
+-        _accept_mde_result_edges(graph, edges, node, results[node], raw_columns)
+-
+-    edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
+-    print(f'lag embedding (Stage 2): {len(edges_df)} edges added across {len(nodes)} node(s) '
+-          f'(N={stage2_n})', flush=True)
+-    return edges_df
+-
+-
+ def _ccm_prefilter_pair(candidate, target, targets, windowed, e, tp, metric, target_metric,
+                          gamma_delta, exclusion_radius, ccm_sample, lib_sizes):
+     '''One (candidate, target) pair's worth of ccm_prefilter_observables()
+@@ -2064,17 +2057,19 @@
+                    threshold=0, fallback_node_dimension=4, max_node_dimension=15,
+                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                    data_file=None, data_file_sha256=None, code_fingerprint=None,
+-                   gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
+-                   ccm_prefilter_rho_min=0, ccm_prefilter_e=7, libsize_ratios=()):
++                   gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None):
+     '''Build one network spanning `targets` and their driver candidates, via
+     one of two unrelated constructions depending on `mode` -- same
+     mode-branch restructuring as simple-mde-gmn.py's own build_network():
+-      - mode == 'MDE-GMN': two-stage nested-MDE (build_nested_mde_network()
+-        + attach_lag_embeddings()), no apps.CreateNetwork() call -- see
+-        simple-mde-gmn.py's own build_network() docstring for the full
+-        rationale (identical here). observable_columns/nested_n/nested_m/
+-        embed_dim_rho_min/cross_map_rho_min/lag_set are required in this
+-        mode.
++      - mode == 'MDE-GMN': two-stage nested-MDE, both stages unified into
++        build_nested_mde_network()'s own BFS, no apps.CreateNetwork() call
++        -- see simple-mde-gmn.py's own build_network() docstring for the
++        full rationale (identical here). `observable_columns` is already
++        the CCM-pre-filtered pool -- main() runs the pre-filter once per
++        target_groups_for_mode() group before this function is ever
++        called, so this function no longer runs it itself.
++        observable_columns/nested_n/nested_m/embed_dim_rho_min/
++        cross_map_rho_min/lag_set are required in this mode.
+       - mode == 'GMN': the interaction matrix via
+         cleaned_helper_functions.proper_ccm (build_interaction_matrix()) --
+         TSLS's own existing replacement for apps.InteractionMatrix's CLI
+@@ -2103,8 +2098,6 @@
+             stage2_allow_real_observables=stage2_allow_real_observables,
+             gmn_mode=gmn_mode, multi_mde_e=multi_mde_e,
+             multi_mde_target_aggregate=multi_mde_target_aggregate,
+-            ccm_prefilter_rho_min=ccm_prefilter_rho_min, ccm_prefilter_e=ccm_prefilter_e,
+-            libsize_ratios=libsize_ratios,
+         )
+         hit = find_cached(prev_runs_dir, cache_filename, fingerprint, load_one=_load_pickle_cache_entry)
+         if hit is not None:
+@@ -2119,42 +2112,24 @@
+         if cache_hit is not None:
+             graph = cache_hit['graph']
+         else:
+-            # CCM pre-filter (see ccm_prefilter_observables()'s docstring):
+-            # shrinks the candidate pool BEFORE either nested-MDE stage
+-            # sees it -- Stage 2 draws its lagged candidates from this same
+-            # filtered list, so one filtering pass covers both. Only run
+-            # on a cache miss -- the fingerprint above already covers
+-            # ccm_prefilter_rho_min/ccm_prefilter_e/libsize_ratios as their
+-            # own fields against the *raw* observable_columns, so no need
+-            # to pay for this just to decide whether the stage can be
+-            # skipped.
+-            if ccm_prefilter_rho_min > 0:
+-                filtered_columns, _ = ccm_prefilter_observables(
+-                    df, observable_columns, targets, prediction_start,
+-                    ccm_prefilter_rho_min, ccm_prefilter_e, tp, metric, target_metric, gamma_delta,
+-                    exclusion_radius, ccm_window_rows, ccm_sample, libsize_ratios, cores,
+-                )
+-                print(f'CCM pre-filter: kept {len(filtered_columns)}/{len(observable_columns)} '
+-                      f'observables (rho >= {ccm_prefilter_rho_min}) for {targets}', flush=True)
+-            else:
+-                filtered_columns = observable_columns
+-
++            # `observable_columns` is already the CCM-pre-filtered pool --
++            # main() runs ccm_prefilter_observables() once per
++            # target_groups_for_mode() group before this function is ever
++            # called, so depth-0 itself only ever searches already-
++            # filtered observables too (see main()'s own depth-0
++            # docstring for why the pre-filter had to move there rather
++            # than staying here). Both stages, interleaved per BFS wave,
++            # in one call -- see build_nested_mde_network()'s own
++            # docstring (revised 2026-08-25: Stage 2's own real-observable
++            # selections now recurse exactly like Stage 1's).
+             graph, _, _ = build_nested_mde_network(
+-                targets, df, filtered_columns, filtered_columns,
++                targets, df, observable_columns, observable_columns,
+                 prediction_start, prediction_length,
+                 nested_n, nested_m, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                 results_dir, mde_results, [], tp,
+                 metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
+                 ccm_sample, ccm_slope, cores,
+-                reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+-                code_fingerprint,
+-            )
+-            attach_lag_embeddings(
+-                graph, filtered_columns, df, prediction_start, prediction_length,
+-                nested_n, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+-                results_dir, lag_set, stage2_allow_real_observables, tp,
+-                metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
+-                ccm_sample, ccm_slope, cores,
++                lag_set, stage2_allow_real_observables,
+                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+                 code_fingerprint,
+             )
+@@ -2635,12 +2610,18 @@
+                                ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
+                                data_file, data_file_sha256, code_fingerprint,
+                                stage2_allow_real_observables=False,
+-                               gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
+-                               ccm_prefilter_rho_min=0, ccm_prefilter_e=7, libsize_ratios=()):
++                               gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None):
+     '''Everything that determines one group's network-construction outcome
+     -- ported from simple-mde-gmn.py, TSLS scoring/CCM-calibration knobs
+     folded in. Computable *before* that construction runs, since the whole
+-    point is deciding whether to skip it.
++    point is deciding whether to skip it. `observable_columns` here is
++    already the CCM-pre-filtered pool (main() runs the pre-filter, and its
++    own threshold/E/libSize-ratio knobs, before this fingerprint is ever
++    computed -- see build_network()'s own docstring), so -- matching this
++    function's own original design philosophy, predating the pre-filter --
++    the resolved list alone captures everything a cache needs to
++    distinguish, the same way it already does for REGION_CHANNEL_CAP; no
++    separate pre-filter fields needed here.
+ 
+     gmn_mode/multi_mde_e/multi_mde_target_aggregate: this function itself
+     doesn't consume these (the depth-0 `mde_results` it's handed is already
+@@ -2650,27 +2631,12 @@
+     this fingerprint too -- otherwise switching GMN_MODE (or its
+     multi_proper_mde knobs) between two REUSE_BEST_PARAMS runs wouldn't
+     invalidate a stale cached network built from the other mode's
+-    mde_results.
+-
+-    ccm_prefilter_rho_min/ccm_prefilter_e/libsize_ratios: their own explicit
+-    fields for the same reason simple-mde-gmn.py's own
+-    build_network_fingerprint() gives them one -- `observable_columns` here
+-    is the *raw* pool (build_network()'s own MDE-GMN branch never actually
+-    runs the CCM pre-filter before computing this fingerprint), so these
+-    fields are what make a threshold/E/libSize-ratio change invalidate a
+-    stale cache entry even though the raw pool itself is unchanged.
+-    ccm_prefilter_e is its own field (NOT a reuse of multi_mde_e, despite
+-    both being "a static E somewhere in this pipeline") -- see
+-    ccm_prefilter_observables()'s own docstring for why the two must be
+-    independently tunable.'''
++    mde_results.'''
+     return {
+         'mode': mode,
+         'gmn_mode': gmn_mode,
+         'multi_mde_e': multi_mde_e,
+         'multi_mde_target_aggregate': multi_mde_target_aggregate,
+-        'ccm_prefilter_rho_min': ccm_prefilter_rho_min,
+-        'ccm_prefilter_e': ccm_prefilter_e,
+-        'libsize_ratios': list(libsize_ratios),
+         'targets': sorted(targets),
+         'observable_columns': sorted(observable_columns),
+         'mde_d': nested_n,
+@@ -3511,7 +3477,29 @@
+ 
+     # ---- MDE (or its full-channel-pool stand-in for MODE='GMN') -------
+     mde_results = {}
++    filtered_pools = {}
+     if cfg['MODE'] == 'MDE-GMN':
++        # CCM pre-filter runs once per target_groups_for_mode() group, here,
++        # BEFORE depth-0 -- so depth-0's own candidate pool is already the
++        # filtered one, same as every later nested-MDE round. See this
++        # pipeline's own build_network() docstring: that function no longer
++        # runs the pre-filter itself, precisely because main() now always
++        # does it first.
++        for group in target_groups_for_mode(cfg['TARGETS'], cfg['GMN_MODE']):
++            if cfg['CCM_PREFILTER_RHO_MIN'] > 0:
++                filtered_columns, _ = ccm_prefilter_observables(
++                    df, obs_cols, group, cfg['PREDICTION_START'],
++                    cfg['CCM_PREFILTER_RHO_MIN'], cfg['CCM_PREFILTER_E'], cfg['TP'],
++                    cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
++                    cfg['EXCLUSION_RADIUS_VALUE'], cfg['CCM_WINDOW_ROWS'], cfg['CCM_SAMPLE'],
++                    cfg['LIBSIZE_RATIOS'], cfg['CORES'],
++                )
++                print(f'CCM pre-filter: kept {len(filtered_columns)}/{len(obs_cols)} '
++                      f'observables (rho >= {cfg["CCM_PREFILTER_RHO_MIN"]}) for {group}', flush=True)
++            else:
++                filtered_columns = obs_cols
++            filtered_pools[tuple(group)] = filtered_columns
++
+         # Stage 1 seed: real-observable-only MDE, no delay expansion --
+         # matches build_nested_mde_network()'s own Stage-1 candidate pool
+         # exactly, so its depth-0 reuse of this result stays valid.
+@@ -3528,7 +3516,7 @@
+             # node in the group, which is the intended "combined" MDE
+             # behaviour), and the diagnostics plots/sweeps below -- keeps
+             # working completely unchanged.
+-            candidate_pool = [c for c in obs_cols if c not in cfg['TARGETS']]
++            candidate_pool = [c for c in filtered_pools[tuple(cfg['TARGETS'])] if c not in cfg['TARGETS']]
+             effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
+             try:
+                 shared_result = run_multi_mde_for_targets(
+@@ -3559,7 +3547,7 @@
+                 mde_results[target] = {**shared_result, 'target': target}
+         else:
+             for target in cfg['TARGETS']:
+-                candidate_pool = [c for c in obs_cols if c != target]
++                candidate_pool = [c for c in filtered_pools[(target,)] if c != target]
+                 effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
+                 try:
+                     mde_results[target] = run_mde_for_target(
+@@ -3579,17 +3567,17 @@
+                         # This loop is sequential over cfg['TARGETS'] (one
+                         # target computed at a time, no outer pool sharing
+                         # cores with it) -- so unlike build_nested_mde_
+-                        # network()/attach_lag_embeddings()'s per-wave
+-                        # outer_workers-based split, this depth-0 seed call
+-                        # gets the FULL core budget for its own inner pool.
++                        # network()'s own per-wave outer_workers-based
++                        # split, this depth-0 seed call gets the FULL core
++                        # budget for its own inner pool.
+                         inner_workers=max(1, cfg['CORES']),
+                     )
+                 except Exception as exc:
+                     # Same failure mode _failed_mde_result() guards against
+-                    # in build_nested_mde_network()/attach_lag_embeddings()
+-                    # below -- this is the depth-0 seed for that same
+-                    # Stage-1 BFS, so it needs the identical guard or the
+-                    # exact crash just relocates one level up.
++                    # in build_nested_mde_network() below -- this is the
++                    # depth-0 seed for that same Stage-1 BFS, so it needs
++                    # the identical guard or the exact crash just
++                    # relocates one level up.
+                     print(f'{target}: top-level MDE call FAILED: {exc!r} -- treating as a dead-end '
+                           f'(zero drivers selected for this target)', flush=True)
+                     mde_results[target] = _failed_mde_result(target)
+@@ -3618,7 +3606,8 @@
+             cfg['MODE'], cfg['E_RANGE'], cfg['TAU_RANGE'], cfg['RESULTS_DIR'], cfg['CORES'],
+             cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'], cfg['CCM_WINDOW_ROWS'],
+             cfg['CCM_LIB_SIZE_PCTS'], cfg['CCM_SAMPLE'], cfg['CCM_SLOPE'],
+-            observable_columns=obs_cols, nested_n=cfg['MDE_D'], nested_m=cfg['NESTED_M'],
++            observable_columns=filtered_pools.get(tuple(group), obs_cols),
++            nested_n=cfg['MDE_D'], nested_m=cfg['NESTED_M'],
+             embed_dim_rho_min=cfg['EMBED_DIM_RHO_MIN'], cross_map_rho_min=cfg['CROSS_MAP_RHO_MIN'],
+             exclusion_radius=cfg['EXCLUSION_RADIUS_VALUE'],
+             lag_set=cfg['LAG_SET'], stage2_allow_real_observables=cfg['STAGE2_ALLOW_REAL_OBSERVABLES'],
+@@ -3629,8 +3618,6 @@
+             code_fingerprint=code_fingerprint,
+             gmn_mode=cfg['GMN_MODE'], multi_mde_e=cfg['MULTI_MDE_E'],
+             multi_mde_target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
+-            ccm_prefilter_rho_min=cfg['CCM_PREFILTER_RHO_MIN'], ccm_prefilter_e=cfg['CCM_PREFILTER_E'],
+-            libsize_ratios=cfg['LIBSIZE_RATIOS'],
+         )
+         draw_colored_network(
+             net_result, cfg['TARGET_COLORS'],
+```
+
+---
+
+
+## Job 39670999
+
+Generated: 2026-08-25T13:20:44+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39655803**
+
+### Plain-language summary
+
+Same medium-scale config as job_39655803 (unchanged: REGION_CHANNEL_CAP=30,
+MDE_D=10, NESTED_M=5, TP=10, GENERATE_LENGTH=40, CCM_PREFILTER_RHO_MIN=0.2,
+CCM_PREFILTER_E=3, STAGE2_ALLOW_REAL_OBSERVABLES=false) -- this
+resubmission exists purely to cluster-validate the same significant
+Python restructuring described below, not to test a new parameter
+combination. job_39655803 itself is still RUNNING as of this submission
+(started ~2h ago, on the pre-restructuring code) and is left alone; this
+is a separate, independent job on the current code.
+
+**What changed in the code** (mirrors job_39671000's own tsls-mde-gmn.py
+entry -- two fixes, made together per explicit request, after review
+found the previous CCM-pre-filter integration didn't match the intended
+algorithm):
+
+1. **Stage 2 now recurses.** Previously, Stage 1 (real-observable-only
+   nested-MDE) ran to completion, then Stage 2 (lagged-embedding
+   attachment, or lagged+real when STAGE2_ALLOW_REAL_OBSERVABLES=true) ran
+   once over the final node set -- even a Stage-2-selected *real*
+   observable driver was always a dead-end leaf, never itself searched
+   for its own further drivers. `attach_lag_embeddings()` (the old
+   separate Stage 2 function) is now folded into `build_nested_mde_network()`
+   as a per-wave pass: every BFS wave runs both a Stage 1 pass and a
+   Stage 2 pass, and *either* stage's real-observable (delay=0) picks
+   feed the next wave. Verified on real data locally before this
+   submission (isolated Stage-2-style probe calls' real-observable picks
+   were confirmed to actually recurse into their own further nested-MDE
+   round) -- see the nested-MDE-stage2-recursion memory for the full
+   writeup. This job runs with STAGE2_ALLOW_REAL_OBSERVABLES=false
+   (unchanged default), so it does not exercise this specific behavior
+   change -- it mainly validates fix 2 below and general no-crash/
+   no-performance-regression at cluster scale, since fix 1 was already
+   confirmed correct locally.
+2. **CCM pre-filter now runs before depth-0, not after.** Previously each
+   target's first-round ("depth-0") driver search ran in `main()` against
+   the *full*, unfiltered observable pool, and the CCM pre-filter only
+   narrowed the pool afterward, inside `build_network()` -- this was the
+   root cause of the `CA1_22` crash job_39655803 itself fixed with a
+   fallback in `observable_and_delay()`. That fallback is now closer to a
+   pure safety net (still needed for cross-job cache reuse of an older
+   result) rather than the normal path: `main()` now runs the pre-filter
+   once per target group *before* seeding depth-0, so depth-0 and every
+   later nested-MDE round search the exact same filtered pool.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+```diff
+--- job_39655803/simple-mde-gmn.py
++++ job_39670999/simple-mde-gmn.py
+@@ -1024,33 +1024,36 @@
+     cfg['REGION_CHANNEL_CAP'] = int(os.environ.get('MDE_GMN_REGION_CHANNEL_CAP', 999))
+ 
+     # ---- Two-stage nested-MDE network construction (MODE='MDE-GMN' only) --
+-    # Per explicit direction, network construction is split into two
+-    # stages -- see build_nested_mde_network() (Stage 1) and
+-    # attach_lag_embeddings() (Stage 2) for the full algorithm:
++    # Per explicit direction, network construction interleaves two kinds
++    # of MDE call per node, every BFS wave -- see build_nested_mde_network()
++    # for the full unified algorithm (revised 2026-08-25 -- previously
++    # Stage 1 fully completed before Stage 2 ever ran once, and Stage 2
++    # never recursed regardless of what it selected):
+     #   Stage 1: nested-MDE over *real* (delay=0) observables only --
+     #     builds the "main node" backbone DAG (unchanged BFS/cycle-
+     #     rejection machinery, just given a delay-less candidate pool).
+-    #   Stage 2: for every Stage-1 node, one non-recursive MDE round over
+-    #     the *lagged* candidate pool of the whole observable universe
+-    #     (not just that node's own lags) -- attaches each node's own
+-    #     generalized (multi-lag) embedding coordinates. Never itself
+-    #     spawns new Stage-1-style targets, regardless of what delay a
+-    #     selected driver carries -- Stage 1 alone owns backbone-node
+-    #     discovery.
++    #   Stage 2: for every node, one MDE round over the *lagged* (or
++    #     lagged+real, per STAGE2_ALLOW_REAL_OBSERVABLES below) candidate
++    #     pool of the whole observable universe (not just that node's own
++    #     lags) -- attaches each node's own generalized (multi-lag)
++    #     embedding coordinates. A delay=0 (real-observable) selection
++    #     from Stage 2 now spawns a new backbone node exactly like a
++    #     Stage-1 selection would (see STAGE2_ALLOW_REAL_OBSERVABLES's own
++    #     docstring below); a delay!=0 selection stays terminal, as before.
+     #
+     # STAGE2_ALLOW_REAL_OBSERVABLES: whether Stage 2's candidate pool also
+     # includes delay=0 (real-observable) columns -- i.e. whether Stage 2
+-    # can introduce a real observable Stage 1 never reached. Default
+-    # False: Stage 2 stays lagged-only, keeping Stage 1 the sole authority
+-    # over which real observables become backbone nodes (a real observable
+-    # worth hub status belongs in a wider Stage-1 MDE_D/NESTED_M search,
+-    # not as a Stage-2-only leaf that's discovered but never itself
+-    # expanded). When True, a Stage-2-selected delay=0 driver is still
+-    # subject to the same eager cycle-rejection as every other edge (see
+-    # build_nested_mde_network()'s docstring) -- acyclicity is guarded
+-    # structurally, not by restricting which stage can propose an edge --
+-    # but such a driver is *never* enqueued for further nesting even if
+-    # accepted, unlike a Stage-1 delay=0 selection.
++    # can introduce a real observable Stage 1 never directly selected as
++    # one of its own drivers. Default False: Stage 2 stays lagged-only, so
++    # every backbone node still traces back to a Stage-1 selection
++    # somewhere in its ancestry. When True (REVISED 2026-08-25): a
++    # Stage-2-selected delay=0 driver is subject to the same eager
++    # cycle-rejection as every other edge (see build_nested_mde_network()'s
++    # docstring) -- acyclicity is guarded structurally, not by restricting
++    # which stage can propose an edge -- AND is now enqueued for its own
++    # further nested-MDE at depth+1 exactly like a Stage-1 delay=0
++    # selection would be (previously it was always a terminal leaf
++    # regardless of this setting -- that was the bug this revision fixes).
+     cfg['STAGE2_ALLOW_REAL_OBSERVABLES'] = _env_bool('MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES', False)
+ 
+     # DELAY_SOURCE picks what determines the nonzero-delay set used for
+@@ -1227,20 +1230,24 @@
+     (membership is the authoritative signal whenever available).
+ 
+     Falls back to a marker-presence check (bug found 2026-08-25, job
+-    39605472/39605473) when `column_name` isn't in `raw_columns` at all:
+-    ccm_prefilter_observables() can shrink the `raw_columns` a given
+-    build_nested_mde_network()/attach_lag_embeddings() call sees, but a
+-    depth-0 node's mde_results entry was computed once in main(), against
+-    the *full*, unfiltered candidate pool, before that filtering ever ran
+-    -- so a depth-0-selected real observable can legitimately be absent
+-    from this call's own (filtered) `raw_columns` while still being a
+-    perfectly valid delay=0 column. Without this fallback,
+-    _parse_delayed_column_name() crashes on any such name (confirmed:
+-    `ValueError: invalid literal for int() with base 10: 'CA1_22'`) since
+-    it has no delay marker to parse. Residual risk is unchanged from
+-    before this fallback existed: only a real channel name that is BOTH
+-    missing from `raw_columns` AND happens to contain the literal
+-    `DELAY_MARKER` substring would still be misclassified -- this
++    39605472/39605473) when `column_name` isn't in `raw_columns` at all.
++    Originally this triggered on every run, because depth-0's mde_results
++    entry used to be computed in main() against the *full*, unfiltered
++    candidate pool, before ccm_prefilter_observables() ever ran -- main()
++    now runs the pre-filter first and seeds depth-0 from the *same*
++    filtered pool build_nested_mde_network() itself uses, so that original
++    mismatch no longer happens on a normal run. The fallback stays as a
++    cache-reuse safety net: with REUSE_BEST_PARAMS, a reused mde_results
++    entry can come from an earlier job that used a different
++    CCM_PREFILTER_RHO_MIN/E (or predates the pre-filter feature entirely),
++    so its SELECTED_COLUMNS can still legitimately reference an observable
++    absent from *this* run's (filtered) `raw_columns`. Without this
++    fallback, _parse_delayed_column_name() crashes on any such name
++    (confirmed: `ValueError: invalid literal for int() with base 10:
++    'CA1_22'`) since it has no delay marker to parse. Residual risk is
++    unchanged from before this fallback existed: only a real channel name
++    that is BOTH missing from `raw_columns` AND happens to contain the
++    literal `DELAY_MARKER` substring would still be misclassified -- this
+     codebase's actual naming scheme (CA1_N/mPFC_N/OFC_N/head_position_*)
+     never produces that.'''
+     if column_name in raw_columns:
+@@ -1280,7 +1287,8 @@
+ def derive_lag_set(delay_source, explicit_delay_set, lag_mode, lag_density, lag_step,
+                     generate_length, mde_lib_size, min_lib_rows=50):
+     '''Resolves the nonzero-delay set used for Stage 2's lagged-driver
+-    candidate pool (attach_lag_embeddings()) and, unioned with {0}, every
++    candidate pool (build_nested_mde_network()'s own Stage-2 pass) and,
++    unioned with {0}, every
+     node's unconditional self_delay_set -- see load_config()'s
+     DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP docstrings for the
+     parameter semantics.
+@@ -1394,11 +1402,11 @@
+     reconstructs a types.SimpleNamespace exposing exactly those seven
+     attributes instead of a live dx.MDE object, and skips calling
+     dx.MDE(...).Run() entirely. Called from main()'s top-level per-target
+-    loop, every per-node wave inside build_nested_mde_network() (Stage 1),
+-    and every node inside attach_lag_embeddings() (Stage 2), so caching
+-    here covers all three at full per-node granularity for free.
+-    `cache_stage` ('stage1' default, 'stage2' from attach_lag_embeddings())
+-    keeps the two stages' cache files from ever colliding on the same
++    loop and, per wave, from both the Stage 1 and Stage 2 passes inside
++    build_nested_mde_network(), so caching here covers all three at full
++    per-node granularity for free. `cache_stage` ('stage1' default,
++    'stage2' from build_nested_mde_network()'s own Stage 2 pass) keeps the
++    two stages' cache files from ever colliding on the same
+     node name -- their candidate pools (and so their fingerprints) always
+     differ anyway, but distinct filenames also keep find_cached()'s glob
+     from scanning irrelevant entries.'''
+@@ -1615,14 +1623,16 @@
+     edges, or removes a cycle-causing edge immediately after adding it)
+     and appends accepted rows to `edges` in place.
+ 
+-    Used by both build_nested_mde_network() (Stage 1, real-observable-
+-    only nested-MDE -- BFS-continues through delay=0 accepted drivers,
+-    using the (driver, delay) pairs this returns) and
+-    attach_lag_embeddings() (Stage 2, per-node lagged-embedding
+-    attachment -- never recurses regardless of what this returns, since
+-    Stage 1 alone owns backbone-node discovery). Kept as one function
+-    rather than duplicated so the acyclicity/self-loop/NaN-rejection
+-    rules can never drift between the two call sites.
++    Used by both of build_nested_mde_network()'s per-wave passes -- Stage 1
++    (real-observable-only nested-MDE) and Stage 2 (lagged-embedding
++    attachment, plus real-observable drivers too when
++    STAGE2_ALLOW_REAL_OBSERVABLES is set). Either stage's accepted
++    delay=0 (driver, delay) pairs BFS-continue into the next wave, so a
++    Stage 2 real-observable selection recurses into its own further
++    nested-MDE round exactly like a Stage 1 one -- only delay!=0 (lagged)
++    acceptances stay leaves. Kept as one function rather than duplicated
++    so the acyclicity/self-loop/NaN-rejection rules can never drift
++    between the two call sites.
+ 
+     Returns the list of (driver, delay) pairs actually accepted as edges
+     into `node` (in selection order).'''
+@@ -1664,143 +1674,123 @@
+ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns,
+                               prediction_start, prediction_length, nested_n, nested_m,
+                               embed_dim_rho_min, cross_map_rho_min, exclusion_radius, cores,
+-                              results_dir, mde_results, delay_set, tp=1,
++                              results_dir, mde_results, delay_set, tp,
++                              lag_set, stage2_allow_real_observables,
+                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                               data_file=None, data_file_sha256=None, code_fingerprint=None):
+-    '''Stage 1 of two-stage nested-MDE network construction -- MODE='MDE-GMN'
+-    only. MODE='GMN' still uses the original CCM-across-the-full-
+-    observable-pool path in build_network(), untouched.
+-
+-    Per explicit direction, network construction is split into two
+-    stages: this function builds the "main node" backbone DAG from
+-    *real* (delay=0) observables only -- `expanded_df`/`expanded_columns`
+-    are typically just the raw, unexpanded observable pool for this call
+-    (build_network() passes delay_set=[] here), so num_delays below is
+-    always 1 and every edge this function finds necessarily has delay=0.
+-    attach_lag_embeddings() (Stage 2) runs afterward, once per node this
+-    function discovers, to attach each node's own lagged-embedding
+-    coordinates from the full observable universe -- see that function's
+-    docstring. This function's own delay==0 nesting-continuation rule
+-    (still present below, now trivially true against a delay-less pool)
+-    is kept rather than special-cased away, so this function still works
+-    unmodified if ever called with a delay-expanded pool directly (e.g.
+-    for a future single-stage comparison run).
+-
+-    No notebook precedent: replaces "CCM over the union of each target's
+-    MDE-selected columns" with an algorithm built purely from repeated
+-    dimx.MDE calls (no CCM, no apps.InteractionMatrix here). Per explicit
+-    direction, this searches a *generalized* (non-uniform, multi-delay)
+-    embedding rather than a single contemporaneous one: `expanded_df`
+-    (built by expand_delay_columns() in main(), from DELAY_SET) offers
+-    each raw observable at every delay in DELAY_SET as its own separate
+-    candidate column, so dimx.MDE's forward selection can pick specific
+-    (observable, delay) pairs -- e.g. CA1_55 at delay -5 and CA1_78 at
+-    delay -1 as two independent drivers of the same node, rather than
+-    every driver sharing one embedding depth/lag network-wide (Deyle &
+-    Sugihara 2011's generalized embedding theorem). `raw_columns` is the
+-    unexpanded observable list, needed to map a selected (possibly
+-    delay-suffixed) column name back to its underlying observable via
+-    observable_and_delay(), and to exclude a node's own raw+delayed
+-    variants from its own candidate pool.
+-
+-      Step 1 (depth 0): for each target, dimx.MDE selects up to
+-        `nested_n` (== MDE_D) distinct *real* observables from
+-        `expanded_columns` (excluding the target's own raw+delayed
+-        variants) -- the actual D handed to dimx.MDE is
+-        effective_mde_dimension(nested_n, candidate_pool, num_delays), not
+-        nested_n itself, since each real observable spans num_delays
+-        candidate columns; see that function's docstring. Reuses the
+-        caller's precomputed mde_results entry when available -- main()
+-        already ran this once per target for the MDE-only diagnostics
+-        (against the same expanded pool), so it isn't paid for twice.
+-      Step 2 (depth 1..nested_m): each driver selected *at delay 0* (see
+-        below for why only these) becomes a new MDE target in turn,
+-        again selecting up to `nested_n` real observables from the same
+-        expanded pool (excluding itself), for `nested_m` further rounds
+-        -- total graph depth from any target is 1 + nested_m levels.
+-        nested_m == 0 is a sentinel for "uncapped": the depth check is
+-        skipped entirely and nesting continues until it runs out on its
+-        own (every reachable real observable already visited, or one of
+-        the ordinary BFS termination conditions below), rather than
+-        stopping after a fixed number of rounds.
+-
+-    Per explicit direction, only delay=0 selections continue the nested
+-    search -- a driver selected at a nonzero delay is added to the graph
+-    as a terminal edge, never itself MDE'd as a new target. A delayed
+-    coordinate stands in for an unobserved dimension of the true state
+-    space (a "placeholder" for something the recording didn't directly
+-    measure, per generalized embedding theory), not a physical variable
+-    whose own drivers are worth discovering -- so nesting into it would
+-    search for the causal history of a lag, not of a real signal. Nodes
+-    reached only via delay!=0 edges still simulate fine in gmn: they
+-    always get an unconditional self-embedding (see build_network()'s
+-    self_delay_set docstring) even with zero further discovered drivers,
+-    the same fallback every driverless leaf node already relies on.
+-
+-    A branch's nesting stops before nested_m (or, when nested_m == 0,
+-    stops at all), as ordinary BFS termination, when:
+-      - A node's own dimx.MDE call selects zero drivers (embedDimRhoMin/
+-        crossMapRhoMin/the CCM slope gate rejected every candidate) --
+-        nothing gets enqueued for the next wave.
++    '''Two-stage nested-MDE network construction, unified into ONE BFS --
++    MODE='MDE-GMN' only. MODE='GMN' still uses the original CCM-across-the-
++    full-observable-pool path in build_network(), untouched.
++
++    REVISED 2026-08-25 (per explicit request -- see JOB_LOG.md for the
++    prior design this replaces, where Stage 1 fully completed before
++    Stage 2 ever ran once, over the final node set, and never recursed):
++    every node now gets BOTH kinds of MDE call, every wave, not once each
++    in two cleanly separate passes:
++      - Stage 1 (real-observable-only): `expanded_df`/`expanded_columns`
++        are typically just the raw, unexpanded observable pool for this
++        call (build_network() passes delay_set=[] here), so num_delays
++        below is always 1 and every Stage-1 edge necessarily has delay=0.
++        No notebook precedent: replaces "CCM over the union of each
++        target's MDE-selected columns" with an algorithm built purely
++        from repeated dimx.MDE calls (no CCM, no apps.InteractionMatrix
++        here). Per explicit direction, this searches a *generalized*
++        (non-uniform, multi-delay) embedding rather than a single
++        contemporaneous one -- see the historical docstring in JOB_LOG.md
++        for the full Deyle & Sugihara 2011 rationale, unchanged.
++      - Stage 2 (lagged, or lagged+real per `stage2_allow_real_observables`):
++        candidates span `lag_set` x *every* real observable in
++        `raw_columns` -- built once, before the wave loop (not per-wave,
++        not per-node), via expand_delay_columns(). Deliberately not
++        restricted to just a node's own real-observable identity's lags,
++        per explicit direction, so a node's best lagged predictor can
++        come from any real observable in the pool, not only ones Stage 1
++        already connected to it.
++
++    Per explicit direction, a delay=0 (real-observable) selection from
++    EITHER stage continues the nested search -- becomes a new MDE target
++    at depth+1, itself getting both a Stage-1-style and a Stage-2-style
++    call in turn -- while a delay!=0 (lagged) selection from either stage
++    is a terminal edge, never itself re-MDE'd. This is the actual fix:
++    previously only Stage 1's own selections could grow the backbone: a
++    Stage-2-selected real observable (only possible when
++    stage2_allow_real_observables=True) was accepted as a real edge but
++    never enqueued for its own further MDE round. Now it is, exactly like
++    a Stage-1 selection already was. Both stages share the same
++    `nested_m` depth budget (nested_m==0 = uncapped, same sentinel as
++    before -- the depth check is skipped entirely and nesting continues
++    until it runs out on its own) and the same ordinary BFS termination
++    conditions:
++      - A node's own dimx.MDE call (either stage) selects zero drivers.
+       - A selected driver's marginal MDE rho gain is NaN (a degenerate
+         correlation, not the same as dimx.MDE's own gates rejecting it --
+         it already passed those, or it wouldn't be in `cols`). Since this
+         function's graph IS the final network (build_network() hands it
+         to gmn.GMN directly -- no downstream re-filtering by weight), an
+         edge with no trustworthy strength must be rejected here or it
+-        becomes a real edge with a nonsensical weight; nesting deeper
+-        through it would also be wasted work. `driver` can still enter
+-        the graph later via a different, valid edge. If every driver a
+-        node selected is NaN, that node is terminal -- the same
+-        empty-enqueue outcome as above.
+-      - Every driver a node selected was picked at a nonzero delay (the
+-        new rule above) -- also the same empty-enqueue outcome.
+-
+-    Cycle/self-loop guarding happens eagerly during discovery: each
+-    proposed edge is added to a networkx.MultiDiGraph shared across this
+-    whole call, then checked with nx.is_directed_acyclic_graph()
+-    immediately -- a cycle-causing edge is removed by its specific key
+-    (MultiDiGraph.remove_edge() removes an arbitrary parallel edge if no
+-    key is given, which would risk removing a different, already-valid
+-    delay edge between the same driver/node pair). This is the only such
+-    guard for MODE='MDE-GMN' (no apps.CreateNetwork call follows), and
+-    dimx.MDE itself has no notion of the network being built around it,
+-    so a cycle has to be caught here or never. Self-loop exclusion is
+-    redundant with dimx.MDE's own removeColumns=[target]-equivalent
+-    exclusion (observable_and_delay()-filtered candidate pool) in the
+-    ordinary case, kept as an explicit guard anyway. A MultiDiGraph is
+-    used (rather than DiGraph) specifically so the same observable can
+-    drive one node at multiple delays simultaneously, each its own edge
+-    -- per explicit direction, this is expected and kept, not deduped.
+-
+-    Each unique node is MDE'd at most once (memoized via `visited`); it
+-    can still gain further incoming edges later (ordinary DAG
+-    driver-sharing), just isn't re-selected as an MDE target.
+-
+-    Parallelization: every node at the same BFS depth is MDE-independent
+-    of every other (each dimx.MDE call only reads the static
+-    expanded_df/expanded_columns pool). So each "wave" (not-yet-visited
+-    nodes newly discovered at one depth) is submitted concurrently via
+-    ProcessPoolExecutor, one process per node. Edge-acceptance/cycle-
+-    checking stays sequential once a wave's results are back -- cheap
+-    graph bookkeeping that genuinely needs one consistent MultiDiGraph,
+-    nothing to gain from parallelizing.
+-
+-    Outer (per-node) and inner (each node's own CrossMapColumns)
+-    parallelism are split adaptively per wave rather than both left at
+-    `cores` -- that would reproduce the outer x inner pool-squaring
+-    blowup this project hit once already (see the module docstring's
+-    FIXED section). outer_workers = min(len(wave), cores), inner_cores =
+-    max(1, cores // outer_workers): a wide wave leans on outer
+-    parallelism with each MDE call single-threaded; a narrow wave gives
+-    that one call the full remaining core budget. outer_workers *
+-    inner_cores never exceeds `cores`. dimx.MDE's own CCM validation is
+-    forced sequential by `_sequential_ccm_workers`, but that patch
+-    doesn't reliably survive into a ProcessPoolExecutor worker on its own
+-    (this cluster's 'forkserver' start method can predate the patch), so
+-    the wave pool passes `initializer=_mde_wave_worker_init` to reapply
+-    it inside every worker -- see that function's docstring for the
+-    crash this avoids.
++        becomes a real edge with a nonsensical weight. `driver` can still
++        enter the graph later via a different, valid edge.
++      - Every driver a node selected, across BOTH stages, was picked at a
++        nonzero delay.
++    A delayed coordinate stands in for an unobserved dimension of the
++    true state space (a "placeholder" for something the recording didn't
++    directly measure, per generalized embedding theory), not a physical
++    variable whose own drivers are worth discovering -- so nesting into
++    it would search for the causal history of a lag, not of a real
++    signal. Nodes reached only via delay!=0 edges still simulate fine in
++    gmn: they always get an unconditional self-embedding (see
++    build_network()'s self_delay_set docstring) even with zero further
++    discovered drivers, the same fallback every driverless leaf node
++    already relies on.
++
++    Cycle/self-loop guarding happens eagerly during discovery, via the
++    shared _accept_mde_result_edges() helper -- called once per stage per
++    node against the same networkx.MultiDiGraph, so acyclicity is checked
++    across BOTH stages' edges together (a structural graph property, not
++    something restricted to one stage), immediately as each edge is
++    proposed. This is the only such guard for MODE='MDE-GMN' (no
++    apps.CreateNetwork call follows), and dimx.MDE itself has no notion of
++    the network being built around it, so a cycle has to be caught here
++    or never. A MultiDiGraph is used (rather than DiGraph) specifically so
++    the same observable can drive one node at multiple delays
++    simultaneously, each its own edge -- per explicit direction, this is
++    expected and kept, not deduped.
++
++    Each unique node is MDE'd (both stages) at most once (memoized via
++    `visited`); it can still gain further incoming edges later (ordinary
++    DAG driver-sharing), just isn't re-selected as an MDE target.
++
++    Parallelization: within one wave, every node is independent of every
++    other for a given stage, so each stage's own set of calls for that
++    wave is submitted concurrently via its own ProcessPoolExecutor (one
++    process per node) -- two separate pools per wave (Stage 1's, then
++    Stage 2's), not one merged dispatch: lower risk, mirrors the exact
++    structure both stages already used independently before this change,
++    and there's no oversubscription risk since they run one after the
++    other, never concurrently. Outer (per-node) and inner (each node's
++    own CrossMapColumns) parallelism are split adaptively per wave, per
++    stage, from that stage's own actual node count for that wave --
++    outer_workers = min(node_count, cores), inner_cores = max(1, cores //
++    outer_workers), computed twice (once per stage) since Stage 1's
++    to_compute set (depth-0 nodes already cached are skipped -- see
++    below) and Stage 2's full wave-node set (never has a depth-0
++    shortcut) generally aren't the same size. This is the same
++    outer-x-inner split that avoided the pool-squaring blowup this
++    project hit once already (see the module docstring's FIXED section).
++    dimx.MDE's own CCM validation is forced sequential by
++    `_sequential_ccm_workers`, but that patch doesn't reliably survive
++    into a ProcessPoolExecutor worker on its own (this cluster's
++    'forkserver' start method can predate the patch), so both pools pass
++    `initializer=_mde_wave_worker_init` to reapply it inside every worker.
++
++    Depth-0 targets reuse the caller's precomputed `mde_results` entry for
++    Stage 1 only (main() already ran this once per target/group, against
++    the same CCM-pre-filtered pool this call also uses -- see main()'s own
++    depth-0 docstring for why that precompute step still exists even
++    though it duplicates this function's own first-wave logic in shape).
++    Stage 2 has never been precomputed for depth-0, before or after this
++    change -- every node, at every depth, always gets a fresh Stage-2
++    call.
+ 
+     Edge weight is the *marginal* MDE rho gain at the step that driver
+     was selected (gain_d = MDErho[d] - MDErho[d-1], MDErho[0] := 0) --
+@@ -1811,6 +1801,11 @@
+     The marginal gain isolates what that driver specifically added on
+     top of the previous d-1 -- what "edge strength" should mean here.
+ 
++    LEAKAGE: identical lib/pred window (prediction_start/prediction_length
++    = the MDE validation segment [A, B), never the Generate/Forecast
++    segment [B, end)) for both stages and every run_mde_for_target() call
++    -- see that function's own LEAKAGE docstring.
++
+     Returns (graph, edges_df, nested_mde_results):
+       graph      -- networkx.MultiDiGraph, acyclic, no self-loops. Every
+                  edge has 'delay' (<= 0) and 'weight' attributes. The
+@@ -1818,14 +1813,16 @@
+                  that function's docstring) -- apps.CreateNetwork is not
+                  involved.
+       edges_df   -- DataFrame with columns ['driver', 'node', 'delay',
+-                 'weight'], one row per edge -- an NxN interaction matrix
+-                 can't represent a node having multiple edges from the
+-                 same driver at different delays, so this replaces that
+-                 format. Exported to CSV by build_network() as a
+-                 human-readable record alongside the graph; not fed to
+-                 apps.CreateNetwork.
++                 'weight'], one row per edge from EITHER stage -- an NxN
++                 interaction matrix can't represent a node having
++                 multiple edges from the same driver at different
++                 delays, so this replaces that format. Exported to CSV by
++                 build_network() as a human-readable record alongside the
++                 graph; not fed to apps.CreateNetwork.
+       nested_mde_results -- {node: run_mde_for_target() result} for every
+-                 node this call ran dimx.MDE on. Kept separate from the
++                 node this call ran Stage 1 on (Stage 2's own per-node
++                 results were never returned even before this change,
++                 only their accepted edges). Kept separate from the
+                  caller's own mde_results so repeated separate-mode calls
+                  can't cross-contaminate a shared intermediate channel
+                  name.
+@@ -1833,24 +1830,37 @@
+     graph = nx.MultiDiGraph()
+     graph.add_nodes_from(targets)
+ 
+-    # expanded_columns is raw_columns with num_delays-1 extra columns
+-    # appended per real observable (see expand_delay_columns()) -- exact,
+-    # not approximate, so this recovers num_delays without needing
+-    # delay_set threaded through as its own parameter. Used by
+-    # effective_mde_dimension() below to convert nested_n (a real-
+-    # observable count) into the actual D handed to dimx.MDE.
+-    num_delays = len(expanded_columns) // len(raw_columns)
++    # Stage 1's own candidate-pool sizing -- expanded_columns is
++    # raw_columns with num_delays-1 extra columns appended per real
++    # observable (see expand_delay_columns()) -- exact, not approximate,
++    # so this recovers num_delays without needing delay_set threaded
++    # through as its own parameter. Used by effective_mde_dimension()
++    # below to convert nested_n (a real-observable count) into the actual
++    # D handed to dimx.MDE.
++    stage1_num_delays = len(expanded_columns) // len(raw_columns)
++
++    # Stage 2's own candidate universe, built once (not per wave, not per
++    # node) -- expand_delay_columns() always emits raw_columns (delay=0)
++    # first, then the lag-shifted columns in order, so slicing off the
++    # first len(raw_columns) entries cleanly isolates the lagged-only
++    # candidates without needing an observable_and_delay() scan.
++    stage2_df, stage2_expanded_columns = expand_delay_columns(expanded_df, raw_columns, lag_set)
++    stage2_lag_only_columns = stage2_expanded_columns[len(raw_columns):]
++    stage2_candidate_universe = (
++        stage2_expanded_columns if stage2_allow_real_observables else stage2_lag_only_columns
++    )
++    stage2_num_delays = len(lag_set) + (1 if stage2_allow_real_observables else 0)
+ 
+-    edges = []                # list of {driver, node, delay, weight} dicts
+-    nested_mde_results = {}   # node -> run_mde_for_target() result, this call only
++    edges = []                # list of {driver, node, delay, weight} dicts, both stages
++    nested_mde_results = {}   # node -> Stage 1's run_mde_for_target() result, this call only
+     visited = set()
+     current_wave = [(t, 0) for t in targets]
+ 
+     while current_wave:
+         # Dedup within the wave itself -- two different nodes discovered
+-        # in the *previous* wave can independently propose the same
+-        # not-yet-visited driver as their own new MDE target; each
+-        # unique node still only gets MDE'd once.
++        # in the *previous* wave (from either stage) can independently
++        # propose the same not-yet-visited driver as their own new MDE
++        # target; each unique node still only gets MDE'd once.
+         wave_nodes, seen = [], set()
+         for node, depth in current_wave:
+             if node in visited or node in seen:
+@@ -1861,12 +1871,13 @@
+         if not wave_nodes:
+             break
+ 
++        # ---- Stage 1 pass: real-observable-only ----
+         # Depth-0 targets reuse the caller's precomputed mde_results
+         # directly (see docstring) -- no need to pay for, or parallelize,
+         # that MDE call again.
+         to_compute = [(node, depth) for node, depth in wave_nodes
+                       if not (depth == 0 and node in mde_results)]
+-        wave_results = {
++        stage1_results = {
+             node: mde_results[node] for node, depth in wave_nodes
+             if depth == 0 and node in mde_results
+         }
+@@ -1874,7 +1885,7 @@
+         if to_compute:
+             outer_workers = min(len(to_compute), max(1, cores))
+             inner_cores = max(1, cores // outer_workers)
+-            print(f'nested MDE: wave of {len(to_compute)} node(s) at depth '
++            print(f'nested MDE (Stage 1): wave of {len(to_compute)} node(s) at depth '
+                   f'{to_compute[0][1]} -- {outer_workers} parallel worker(s) '
+                   f'x {inner_cores} core(s) each', flush=True)
+ 
+@@ -1885,7 +1896,7 @@
+                 for node, depth in to_compute:
+                     candidate_pool = [c for c in expanded_columns
+                                        if observable_and_delay(c, raw_columns)[0] != node]
+-                    effective_d = effective_mde_dimension(nested_n, candidate_pool, num_delays)
++                    effective_d = effective_mde_dimension(nested_n, candidate_pool, stage1_num_delays)
+                     fut = executor.submit(
+                         run_mde_for_target, node, expanded_df, candidate_pool,
+                         prediction_start, prediction_length, effective_d,
+@@ -1898,38 +1909,86 @@
+                 for fut in as_completed(futures):
+                     node = futures[fut]
+                     try:
+-                        wave_results[node] = fut.result()
++                        stage1_results[node] = fut.result()
+                     except Exception as exc:
+                         # See _failed_mde_result()'s own docstring -- a
+                         # single node's MDE call failing (dimx's own
+                         # internal code, not this pipeline's) must not
+                         # crash the rest of this wave or every already-
+                         # completed node in prior waves.
+-                        print(f'nested MDE: {node} MDE call FAILED: {exc!r} -- treating as a '
+-                              f'dead-end (zero drivers selected, no further nesting from this '
++                        print(f'nested MDE (Stage 1): {node} MDE call FAILED: {exc!r} -- treating '
++                              f'as a dead-end (zero drivers selected, no further nesting from this '
+                               f'node)', flush=True)
+-                        wave_results[node] = _failed_mde_result(node)
++                        stage1_results[node] = _failed_mde_result(node)
+ 
++        # ---- Stage 2 pass: lagged (+ optionally real) embedding -- every
++        # node in this wave, no depth-0 shortcut (see docstring) ----
++        outer_workers2 = min(len(wave_nodes), max(1, cores))
++        inner_cores2 = max(1, cores // outer_workers2)
++        print(f'nested MDE (Stage 2): wave of {len(wave_nodes)} node(s) at depth '
++              f'{wave_nodes[0][1]} -- {outer_workers2} parallel worker(s) '
++              f'x {inner_cores2} core(s) each, candidate pool size '
++              f'{len(stage2_candidate_universe)} (lag_set={lag_set}, '
++              f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
++
++        stage2_results = {}
++        with ProcessPoolExecutor(max_workers=outer_workers2,
++                                  mp_context=mp.get_context('fork'),
++                                  initializer=_mde_wave_worker_init) as executor:
++            futures = {}
++            for node, depth in wave_nodes:
++                candidate_pool = [c for c in stage2_candidate_universe
++                                   if observable_and_delay(c, raw_columns)[0] != node]
++                effective_d = effective_mde_dimension(nested_n, candidate_pool, stage2_num_delays)
++                fut = executor.submit(
++                    run_mde_for_target, node, stage2_df, candidate_pool,
++                    prediction_start, prediction_length, effective_d,
++                    embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                    inner_cores2, results_dir, lag_set, tp,
++                    reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
++                    code_fingerprint, 'stage2',
++                )
++                futures[fut] = node
++            for fut in as_completed(futures):
++                node = futures[fut]
++                try:
++                    stage2_results[node] = fut.result()
++                except Exception as exc:
++                    # See _failed_mde_result()'s own docstring -- a single
++                    # node's Stage-2 MDE call failing must not crash every
++                    # other node's already-completed edges in this same
++                    # wave.
++                    print(f'nested MDE (Stage 2): {node} MDE call FAILED: {exc!r} -- treating as '
++                          f'a dead-end (zero lagged drivers attached for this node)', flush=True)
++                    stage2_results[node] = _failed_mde_result(node)
++
++        # ---- Edge acceptance: Stage 1's result first, then Stage 2's --
++        # both via the same shared helper, against the same graph, so
++        # cycle-rejection sees both stages' edges together. Either
++        # stage's delay=0 discoveries feed the next wave -- the actual
++        # fix this restructuring makes (previously only Stage 1's did).
+         next_wave = []
+         for node, depth in wave_nodes:
+             visited.add(node)
+-            result = wave_results[node]
+-            nested_mde_results[node] = result
++            result1 = stage1_results[node]
++            nested_mde_results[node] = result1
+ 
+-            accepted = _accept_mde_result_edges(graph, edges, node, result, raw_columns)
++            accepted1 = _accept_mde_result_edges(graph, edges, node, result1, raw_columns)
++            for driver, delay in accepted1:
++                # nested_m == 0 is the "uncapped" sentinel -- see this
++                # function's docstring -- so the depth check is skipped
++                # entirely in that case and nesting only stops via the
++                # other ordinary BFS termination conditions.
++                if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited:
++                    next_wave.append((driver, depth + 1))
+ 
+-            for driver, delay in accepted:
+-                # Only a delay=0 (contemporaneous) selection continues the
+-                # nested search -- see this function's docstring for why a
+-                # delayed coordinate is a terminal placeholder, not a new
+-                # MDE target. nested_m == 0 is the "uncapped" sentinel --
+-                # see this function's docstring -- so the depth check is
+-                # skipped entirely in that case and nesting only stops via
+-                # the other ordinary BFS termination conditions (empty
+-                # wave once every reachable real observable is visited,
+-                # zero-driver/NaN/nonzero-delay/cycle rejections).
++            result2 = stage2_results[node]
++            accepted2 = _accept_mde_result_edges(graph, edges, node, result2, raw_columns)
++            for driver, delay in accepted2:
+                 if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited:
+                     next_wave.append((driver, depth + 1))
++                # delay != 0: leaf, same as before this restructuring --
++                # the edge is already added above, nothing further to do.
+ 
+         current_wave = next_wave
+ 
+@@ -1942,114 +2001,6 @@
+     return graph, edges_df, nested_mde_results
+ 
+ 
+-def attach_lag_embeddings(graph, raw_columns, df, prediction_start, prediction_length,
+-                           stage2_n, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+-                           cores, results_dir, lag_set, stage2_allow_real_observables, tp=1,
+-                           reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+-                           data_file=None, data_file_sha256=None, code_fingerprint=None):
+-    '''Stage 2 of two-stage nested-MDE network construction (MODE='MDE-GMN'
+-    only) -- attaches each Stage-1 node's own generalized (multi-lag)
+-    embedding coordinates, per explicit direction. Runs exactly one
+-    non-recursive dimx.MDE round per node already in `graph` (every node
+-    Stage 1 -- build_nested_mde_network() -- discovered, targets
+-    included). The candidate pool spans lag_set x *every* real observable
+-    in `raw_columns` -- deliberately not restricted to just the node's
+-    own real-observable identity's lags, per explicit direction, so a
+-    node's best lagged predictor can come from any real observable in the
+-    pool, not only ones Stage 1 already connected to it.
+-
+-    Never itself recurses -- Stage 1 alone owns which real observables
+-    become backbone/"main" nodes (see build_nested_mde_network()'s
+-    docstring). This holds even when stage2_allow_real_observables lets a
+-    delay=0 (real-observable) column into this stage's own candidate
+-    pool: such a driver is still accepted as a real edge (subject to the
+-    same eager cycle-rejection every edge gets, via
+-    _accept_mde_result_edges() -- acyclicity is a structural graph
+-    property, not something restricted to one stage), it just never gets
+-    enqueued for its own further MDE round the way a Stage-1 delay=0
+-    selection would. stage2_allow_real_observables=False (default) keeps
+-    Stage 2 lagged-columns-only, so Stage 1 remains the sole path by
+-    which a real observable can become an expandable backbone node -- see
+-    load_config()'s STAGE2_ALLOW_REAL_OBSERVABLES docstring for the full
+-    rationale.
+-
+-    `lag_set` is the fully-resolved nonzero-delay list (derive_lag_set())
+-    -- expanded into columns here (not by the caller) since Stage 2,
+-    unlike Stage 1, always needs the delay-expanded pool regardless of
+-    caller context. expand_delay_columns() always emits raw_columns
+-    (delay=0) first, then the lag-shifted columns in order (see that
+-    function's docstring), so slicing off the first len(raw_columns)
+-    entries cleanly isolates the lagged-only candidates without needing
+-    an observable_and_delay() scan.
+-
+-    LEAKAGE: identical lib/pred window (prediction_start/prediction_length
+-    = the MDE validation segment [A, B), never the Generate/Forecast
+-    segment [B, end)) as Stage 1 and every run_mde_for_target() call --
+-    see that function's own LEAKAGE docstring; nothing about being Stage
+-    2 changes that guarantee.
+-
+-    Mutates `graph` in place (the same MultiDiGraph Stage 1 built) and
+-    returns edges_df (only the rows this call itself added, same
+-    ['driver','node','delay','weight'] shape as
+-    build_nested_mde_network()'s own return) for the caller to
+-    concatenate/export alongside Stage 1's.'''
+-    expanded_df, expanded_columns = expand_delay_columns(df, raw_columns, lag_set)
+-    lag_only_columns = expanded_columns[len(raw_columns):]
+-    candidate_universe = expanded_columns if stage2_allow_real_observables else lag_only_columns
+-    num_delays = len(lag_set) + (1 if stage2_allow_real_observables else 0)
+-
+-    nodes = sorted(graph.nodes)
+-    edges = []
+-    if not nodes:
+-        return pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
+-
+-    outer_workers = min(len(nodes), max(1, cores))
+-    inner_cores = max(1, cores // outer_workers)
+-    print(f'lag embedding (Stage 2): {len(nodes)} node(s) -- {outer_workers} parallel '
+-          f'worker(s) x {inner_cores} core(s) each, candidate pool size '
+-          f'{len(candidate_universe)} (lag_set={lag_set}, '
+-          f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
+-
+-    results = {}
+-    with ProcessPoolExecutor(max_workers=outer_workers,
+-                              mp_context=mp.get_context('fork'),
+-                              initializer=_mde_wave_worker_init) as executor:
+-        futures = {}
+-        for node in nodes:
+-            candidate_pool = [c for c in candidate_universe
+-                               if observable_and_delay(c, raw_columns)[0] != node]
+-            effective_d = effective_mde_dimension(stage2_n, candidate_pool, num_delays)
+-            fut = executor.submit(
+-                run_mde_for_target, node, expanded_df, candidate_pool,
+-                prediction_start, prediction_length, effective_d,
+-                embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+-                inner_cores, results_dir, lag_set, tp,
+-                reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+-                code_fingerprint, 'stage2',
+-            )
+-            futures[fut] = node
+-        for fut in as_completed(futures):
+-            node = futures[fut]
+-            try:
+-                results[node] = fut.result()
+-            except Exception as exc:
+-                # See _failed_mde_result()'s own docstring -- a single
+-                # node's Stage-2 MDE call failing must not crash every
+-                # other node's already-completed lag-embedding attachment
+-                # in this same wave.
+-                print(f'lag embedding (Stage 2): {node} MDE call FAILED: {exc!r} -- treating as '
+-                      f'a dead-end (zero lagged drivers attached for this node)', flush=True)
+-                results[node] = _failed_mde_result(node)
+-
+-    for node in nodes:
+-        _accept_mde_result_edges(graph, edges, node, results[node], raw_columns)
+-
+-    edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
+-    print(f'lag embedding (Stage 2): {len(edges_df)} edges added across {len(nodes)} node(s) '
+-          f'(N={stage2_n})', flush=True)
+-    return edges_df
+-
+-
+ def _ccm_prefilter_worker(candidate, df_slice, targets, e, tp, exclusion_radius, lib_sizes):
+     '''One candidate's worth of ccm_prefilter_observables() work -- run in
+     an outer ProcessPoolExecutor worker (see that function's docstring for
+@@ -2105,15 +2056,14 @@
+                                prediction_length, rho_min, e, tp, exclusion_radius,
+                                libsize_ratios, cores):
+     '''Cheap CCM(observable -> target) pre-filter, run once per
+-    target_groups_for_mode() group right before either nested-MDE stage
+-    (build_network()'s own call site) -- shrinks REGION_CHANNEL_CAP's
+-    candidate pool down to only observables that cross-map at least one
+-    target in `targets` with skill >= `rho_min`, before Stage 1
+-    (build_nested_mde_network(), real observables) or Stage 2
+-    (attach_lag_embeddings(), their lags) ever see it. Since Stage 2 draws
+-    its lagged candidates from the same observable list Stage 1 uses, one
+-    filtering pass here covers both -- "both the real observables and
+-    their lags" per the original request.
++    target_groups_for_mode() group in main(), before that group's depth-0
++    MDE call -- shrinks REGION_CHANNEL_CAP's candidate pool down to only
++    observables that cross-map at least one target in `targets` with skill
++    >= `rho_min`, before depth-0 or either of build_nested_mde_network()'s
++    per-wave stages (Stage 1 real observables, Stage 2 their lags) ever see
++    it. Since Stage 2 draws its lagged candidates from the same observable
++    list Stage 1 uses, one filtering pass here covers both -- "both the
++    real observables and their lags" per the original request.
+ 
+     Every CCM-call parameter here is either reused from an existing config
+     value used elsewhere in this pipeline (Tp, exclusionRadius) or, where
+@@ -2178,20 +2128,20 @@
+                    lag_set=None, stage2_allow_real_observables=False, tp=1,
+                    threshold=0, fallback_node_dimension=4, max_node_dimension=15,
+                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+-                   data_file=None, data_file_sha256=None, code_fingerprint=None,
+-                   ccm_prefilter_rho_min=0, ccm_prefilter_e=3, libsize_ratios=()):
++                   data_file=None, data_file_sha256=None, code_fingerprint=None):
+     '''Build one network spanning `targets` and their driver candidates,
+     via one of two unrelated constructions depending on `mode`:
+       - mode == 'MDE-GMN': two-stage nested-MDE, no apps.CreateNetwork()
+-        call. Stage 1 (build_nested_mde_network()) runs real-observable-
+-        only nested-MDE straight against `df`/`observable_columns` (no
+-        delay expansion -- delay_set=[] is passed in) to discover the
+-        "main node" backbone DAG; Stage 2 (attach_lag_embeddings()) then
+-        runs once per Stage-1 node to attach each node's own lagged-
+-        embedding coordinates from `lag_set` x the whole observable
+-        universe. Both stages mutate the *same* MultiDiGraph in place, so
+-        the final graph -- handed to gmn.GMN directly -- already has
+-        every edge from both by the time either function returns. Per
++        call, both stages unified into build_nested_mde_network()'s own
++        BFS (see that function's docstring for the full algorithm,
++        including the 2026-08-25 revision letting Stage 2's own
++        real-observable selections recurse). `observable_columns` here is
++        already the CCM-pre-filtered pool -- main() runs the pre-filter
++        once per target_groups_for_mode() group before this function is
++        ever called, so this function no longer runs it itself. The
++        final graph -- handed to gmn.GMN directly -- already has every
++        edge from both stages by the time build_nested_mde_network()
++        returns. Per
+         explicit direction: nested-MDE already does the network-discovery
+         job CreateNetwork exists for (BFS out from targets, rejecting
+         cycles as edges are proposed), using real MDE-driven edge
+@@ -2271,8 +2221,6 @@
+             e_range, tau_range, prediction_start, prediction_length,
+             data_file, data_file_sha256, code_fingerprint,
+             stage2_allow_real_observables=stage2_allow_real_observables,
+-            ccm_prefilter_rho_min=ccm_prefilter_rho_min, ccm_prefilter_e=ccm_prefilter_e,
+-            libsize_ratios=libsize_ratios,
+         )
+         hit = find_cached(prev_runs_dir, cache_filename, fingerprint, load_one=_load_pickle_cache_entry)
+         if hit is not None:
+@@ -2290,47 +2238,26 @@
+             # CCM pre-filter (see ccm_prefilter_observables()'s docstring):
+             # shrinks the candidate pool BEFORE either nested-MDE stage
+             # sees it -- Stage 2 draws its lagged candidates from this same
+-            # filtered list, so one filtering pass covers both. Only run
+-            # on a cache miss (not before the cache check above) since the
+-            # fingerprint already covers ccm_prefilter_rho_min/
+-            # ccm_prefilter_e/libsize_ratios as their own fields against
+-            # the *raw* observable_columns -- the filtered list is a
+-            # deterministic function of those, so no need to pay for it
+-            # just to decide whether this stage can be skipped entirely.
+-            if ccm_prefilter_rho_min > 0:
+-                filtered_columns, _ = ccm_prefilter_observables(
+-                    df, observable_columns, targets, prediction_start, prediction_length,
+-                    ccm_prefilter_rho_min, ccm_prefilter_e, tp, exclusion_radius,
+-                    libsize_ratios, cores,
+-                )
+-                print(f'CCM pre-filter: kept {len(filtered_columns)}/{len(observable_columns)} '
+-                      f'observables (rho >= {ccm_prefilter_rho_min}) for {targets}', flush=True)
+-            else:
+-                filtered_columns = observable_columns
+-
+-            # Stage 1: real-observable-only nested-MDE -- expanded_df/
+-            # expanded_columns are just df/filtered_columns unchanged
+-            # (delay_set=[]), so num_delays inside build_nested_mde_network()
+-            # resolves to 1 and every edge it finds necessarily has
+-            # delay=0. See build_network()'s own docstring for the
+-            # two-stage split.
++            # filtered list, so one filtering pass covers both. Note:
++            # `observable_columns` here is ALREADY the CCM-pre-filtered
++            # pool -- main() now runs ccm_prefilter_observables() once per
++            # target_groups_for_mode() group *before* computing that
++            # group's own depth-0 MDE seed, so depth-0 itself only ever
++            # searches already-filtered observables too (see main()'s own
++            # depth-0 docstring for why the pre-filter had to move there
++            # rather than staying here).
++            #
++            # Both stages, interleaved per BFS wave, in one call -- see
++            # build_nested_mde_network()'s own docstring for the full
++            # algorithm (revised 2026-08-25: Stage 2's own real-observable
++            # selections now recurse exactly like Stage 1's, instead of
++            # always being terminal).
+             graph, _, _ = build_nested_mde_network(
+-                targets, df, filtered_columns, filtered_columns,
++                targets, df, observable_columns, observable_columns,
+                 prediction_start, prediction_length,
+                 nested_n, nested_m, embed_dim_rho_min, cross_map_rho_min, exclusion_radius, cores,
+                 results_dir, mde_results, [], tp,
+-                reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+-                code_fingerprint,
+-            )
+-            # Stage 2: attaches each Stage-1 node's own lagged-embedding
+-            # coordinates in place onto the same graph -- see
+-            # attach_lag_embeddings()'s docstring. Return value discarded
+-            # (not `_,`) since the edges CSV below is rebuilt straight
+-            # from `graph` regardless of which stage added which edge.
+-            attach_lag_embeddings(
+-                graph, filtered_columns, df, prediction_start, prediction_length,
+-                nested_n, embed_dim_rho_min, cross_map_rho_min, exclusion_radius, cores,
+-                results_dir, lag_set, stage2_allow_real_observables, tp,
++                lag_set, stage2_allow_real_observables,
+                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+                 code_fingerprint,
+             )
+@@ -2943,48 +2870,37 @@
+                                embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                                delay_set, e_range, tau_range, prediction_start,
+                                prediction_length, data_file, data_file_sha256, code_fingerprint,
+-                               stage2_allow_real_observables=False,
+-                               ccm_prefilter_rho_min=0, ccm_prefilter_e=3, libsize_ratios=()):
++                               stage2_allow_real_observables=False):
+     '''Everything that determines one group's network-construction outcome
+-    (build_nested_mde_network() Stage 1 + attach_lag_embeddings() Stage 2,
+-    or the CCM/apps.CreateNetwork path for MODE='GMN') -- unlike
++    (build_nested_mde_network()'s own unified two-stage BFS, or the
++    CCM/apps.CreateNetwork path for MODE='GMN') -- unlike
+     build_search_fingerprint() above, computable *before* that
+     construction runs, since the whole point is deciding whether to skip
+     it. Takes build_network()'s own already-resolved parameters directly
+-    (e.g. `observable_columns` -- REGION_CHANNEL_CAP's effect is already
+-    fully captured by exactly which channels ended up in that list, so
+-    the raw cap number doesn't need its own field; same for LIB_RATIO/
+-    MDE_VALIDATION_RATIO via prediction_start/prediction_length) rather
+-    than raw cfg knobs, so this needs no `cfg` dependency. `delay_set`
+-    here is Stage 2's own fully-*resolved* nonzero-delay list (whatever
+-    DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP produced, or the explicit
+-    MDE_GMN_DELAY_SET list) -- since it's the resolved list rather than
+-    the raw toggle settings, two different toggle combinations that
+-    happen to resolve to the identical list are (correctly) treated as
+-    the identical network-construction input; no separate field is
+-    needed for the toggles themselves. `stage2_allow_real_observables`
+-    IS its own separate field regardless, since it's an independent
+-    structural choice (whether Stage 2's candidate pool also includes
+-    delay=0 columns) that the resolved delay_set list alone can't imply.
+-    Skips build_search_fingerprint()'s network_nodes sanity check
+-    (nothing built yet to check) and GMN_MODE (irrelevant to one
+-    already-resolved `targets` group's own topology -- see
+-    target_groups_for_mode()). 'stage' is what keeps this from ever being
+-    confused with a theta_search/mde_selection fingerprint even if the
+-    remaining fields happened to collide.
+-
+-    ccm_prefilter_rho_min/ccm_prefilter_e/libsize_ratios are their own
+-    explicit fields rather than being left implicit in `observable_columns`
+-    -- deliberately: `observable_columns` here is the *raw*,
+-    REGION_CHANNEL_CAP-limited pool (build_network()'s own call site never
+-    actually runs the CCM pre-filter before computing this fingerprint --
+-    see that function's own comment for why it doesn't need to), not the
+-    filtered one, since the whole point of a fingerprint is to decide
+-    whether to skip expensive work without having to do any of it first.
+-    These three fields are what make that safe: any change to the
+-    threshold/E/libSize-ratio knobs invalidates the cache even though the
+-    raw observable_columns list itself is unchanged, same
+-    belt-and-suspenders reasoning as stage2_allow_real_observables above.'''
++    (e.g. `observable_columns` -- REGION_CHANNEL_CAP's effect, AND the CCM
++    pre-filter's own effect (main() runs it before this fingerprint is
++    ever computed -- see build_network()'s own docstring), are both
++    already fully captured by exactly which channels ended up in that
++    list, so neither the raw cap number nor the pre-filter's own
++    threshold/E/libSize-ratio knobs need their own field here; same for
++    LIB_RATIO/MDE_VALIDATION_RATIO via prediction_start/prediction_length)
++    rather than raw cfg knobs, so this needs no `cfg` dependency.
++    `delay_set` here is Stage 2's own fully-*resolved* nonzero-delay list
++    (whatever DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP produced, or the
++    explicit MDE_GMN_DELAY_SET list) -- since it's the resolved list
++    rather than the raw toggle settings, two different toggle
++    combinations that happen to resolve to the identical list are
++    (correctly) treated as the identical network-construction input; no
++    separate field is needed for the toggles themselves.
++    `stage2_allow_real_observables` IS its own separate field regardless,
++    since it's an independent structural choice (whether Stage 2's
++    candidate pool also includes delay=0 columns) that the resolved
++    delay_set list alone can't imply. Skips build_search_fingerprint()'s
++    network_nodes sanity check (nothing built yet to check) and GMN_MODE
++    (irrelevant to one already-resolved `targets` group's own topology --
++    see target_groups_for_mode()). 'stage' is what keeps this from ever
++    being confused with a theta_search/mde_selection fingerprint even if
++    the remaining fields happened to collide.'''
+     return {
+         'mode': mode,
+         'targets': sorted(targets),
+@@ -2997,9 +2913,6 @@
+         'exclusion_radius': exclusion_radius,
+         'delay_set': list(delay_set) if delay_set is not None else None,
+         'stage2_allow_real_observables': stage2_allow_real_observables,
+-        'ccm_prefilter_rho_min': ccm_prefilter_rho_min,
+-        'ccm_prefilter_e': ccm_prefilter_e,
+-        'libsize_ratios': list(libsize_ratios),
+         'e_vals': list(e_range),
+         'tau_vals': list(tau_range),
+         'prediction_start': prediction_start,
+@@ -3979,39 +3892,60 @@
+ 
+     # ---- MDE (or its full-channel-pool stand-in for MODE='GMN') -------
+     mde_results = {}
++    # Per-group CCM-pre-filtered candidate pool (see
++    # ccm_prefilter_observables()'s docstring), computed once per
++    # target_groups_for_mode() group and reused by the network-
++    # construction loop further below instead of recomputing --
++    # deliberately computed *before* depth-0's own MDE seed call now (not
++    # inside build_network(), where it used to live), so depth-0 only
++    # ever searches already-filtered observables too. Keyed by
++    # tuple(group) so both loops address it identically.
++    filtered_pools = {}
+     if cfg['MODE'] == 'MDE-GMN':
+         # Stage 1 seed: real-observable-only MDE, no delay expansion --
+         # matches build_nested_mde_network()'s own Stage-1 candidate pool
+-        # exactly (raw df/obs_cols, delay_set=[]), so its depth-0 reuse of
+-        # this result stays valid (same candidate_pool/effective_d/
+-        # fingerprint either way) -- see build_network()'s docstring for
+-        # the two-stage split, and derive_lag_set()/attach_lag_embeddings()
+-        # for Stage 2, which builds its own delay-expanded pool
+-        # separately.
+-        for target in cfg['TARGETS']:
+-            candidate_pool = [c for c in obs_cols if c != target]
+-            effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
+-            try:
+-                mde_results[target] = run_mde_for_target(
+-                    target, df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+-                    effective_d, cfg['EMBED_DIM_RHO_MIN'], cfg['CROSS_MAP_RHO_MIN'],
+-                    cfg['EXCLUSION_RADIUS_VALUE'], cfg['CORES'], cfg['RESULTS_DIR'], [],
+-                    tp=cfg['TP'],
+-                    reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
+-                    run_cache_dir=cfg['RUN_CACHE_DIR'],
+-                    data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
+-                    code_fingerprint=code_fingerprint,
++        # exactly (delay_set=[]), so its depth-0 reuse of this result
++        # stays valid (same candidate_pool/effective_d/fingerprint either
++        # way) -- see build_network()'s docstring for the two-stage
++        # split, and derive_lag_set() for Stage 2's own delay-expanded
++        # pool.
++        for group in target_groups_for_mode(cfg['TARGETS'], cfg['GMN_MODE']):
++            if cfg['CCM_PREFILTER_RHO_MIN'] > 0:
++                filtered_columns, _ = ccm_prefilter_observables(
++                    df, obs_cols, group, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
++                    cfg['CCM_PREFILTER_RHO_MIN'], cfg['CCM_PREFILTER_E'], cfg['TP'],
++                    cfg['EXCLUSION_RADIUS_VALUE'], cfg['LIBSIZE_RATIOS'], cfg['CORES'],
+                 )
+-            except Exception as exc:
+-                # Same failure mode _failed_mde_result() guards against in
+-                # build_nested_mde_network()/attach_lag_embeddings() below
+-                # (dimx's own internal code, e.g. an all-NaN EmbedDimension
+-                # column) -- this is the depth-0 seed for that same Stage-1
+-                # BFS, so it needs the identical guard or the exact crash
+-                # just relocates one level up.
+-                print(f'{target}: top-level MDE call FAILED: {exc!r} -- treating as a dead-end '
+-                      f'(zero drivers selected for this target)', flush=True)
+-                mde_results[target] = _failed_mde_result(target)
++                print(f'CCM pre-filter: kept {len(filtered_columns)}/{len(obs_cols)} '
++                      f'observables (rho >= {cfg["CCM_PREFILTER_RHO_MIN"]}) for {group}', flush=True)
++            else:
++                filtered_columns = obs_cols
++            filtered_pools[tuple(group)] = filtered_columns
++
++            for target in group:
++                candidate_pool = [c for c in filtered_columns if c != target]
++                effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
++                try:
++                    mde_results[target] = run_mde_for_target(
++                        target, df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
++                        effective_d, cfg['EMBED_DIM_RHO_MIN'], cfg['CROSS_MAP_RHO_MIN'],
++                        cfg['EXCLUSION_RADIUS_VALUE'], cfg['CORES'], cfg['RESULTS_DIR'], [],
++                        tp=cfg['TP'],
++                        reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
++                        run_cache_dir=cfg['RUN_CACHE_DIR'],
++                        data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
++                        code_fingerprint=code_fingerprint,
++                    )
++                except Exception as exc:
++                    # Same failure mode _failed_mde_result() guards against
++                    # in build_nested_mde_network() below (dimx's own
++                    # internal code, e.g. an all-NaN EmbedDimension column)
++                    # -- this is the depth-0 seed for that same Stage-1
++                    # BFS, so it needs the identical guard or the exact
++                    # crash just relocates one level up.
++                    print(f'{target}: top-level MDE call FAILED: {exc!r} -- treating as a dead-end '
++                          f'(zero drivers selected for this target)', flush=True)
++                    mde_results[target] = _failed_mde_result(target)
+ 
+         if cfg['RUN_MDE_DIAGNOSTICS']:
+             plot_mde_rho_vs_dimension(
+@@ -4036,7 +3970,8 @@
+             group, mde_results, df, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+             cfg['MODE'], cfg['E_RANGE'], cfg['TAU_RANGE'], cfg['RESULTS_DIR'], cfg['CORES'],
+             cfg['INTERACTION_MATRIX_OUTER_CORES'],
+-            observable_columns=obs_cols, nested_n=cfg['MDE_D'], nested_m=cfg['NESTED_M'],
++            observable_columns=filtered_pools.get(tuple(group), obs_cols),
++            nested_n=cfg['MDE_D'], nested_m=cfg['NESTED_M'],
+             embed_dim_rho_min=cfg['EMBED_DIM_RHO_MIN'], cross_map_rho_min=cfg['CROSS_MAP_RHO_MIN'],
+             exclusion_radius=cfg['EXCLUSION_RADIUS_VALUE'],
+             lag_set=cfg['LAG_SET'], stage2_allow_real_observables=cfg['STAGE2_ALLOW_REAL_OBSERVABLES'],
+@@ -4045,8 +3980,6 @@
+             run_cache_dir=cfg['RUN_CACHE_DIR'],
+             data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
+             code_fingerprint=code_fingerprint,
+-            ccm_prefilter_rho_min=cfg['CCM_PREFILTER_RHO_MIN'], ccm_prefilter_e=cfg['CCM_PREFILTER_E'],
+-            libsize_ratios=cfg['LIBSIZE_RATIOS'],
+         )
+         draw_colored_network(
+             net_result, cfg['TARGET_COLORS'],
+```
+
+---
+
+
+## Job 39656077
+
+Generated: 2026-08-25T11:14:15+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39655804**
+
+### Plain-language summary
+
+Resubmission of job_39655804 (same config, unchanged) after it failed in
+1 second on `/bucket` being read-only from its compute node
+(`mkdir: cannot create directory '.../tsls_mde_gmn_cache/job_39655804':
+Read-only file system`). Confirmed via direct `srun` probes that this
+isn't a one-off blip this time: `deigo010901`/`010903`/`010909` all
+reproduced the same read-only error, while `deigo011126` (where
+job_39655803, this batch's simple-mde-gmn sibling, landed and is
+currently RUNNING) is healthy -- looks like a partial recurrence of the
+outage from 2026-08-23, affecting a subset of nodes rather than one
+unlucky one. Resubmitted anyway (normal scheduling has a real chance of
+landing on a healthy node, as job_39655803 already did); if this also
+fails on the same error, the next step is the same wait-and-retry
+monitor approach that resolved the earlier, longer outage rather than
+manually excluding nodes one at a time.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39655804
+
+Generated: 2026-08-25T11:10:12+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39605473**
+
+### Plain-language summary
+
+Resubmission of job_39605473 (same medium-scale config, unchanged) after
+it crashed 3m35s in with `ValueError: invalid literal for int() with base
+10: 'CA1_12_tsls'` inside `observable_and_delay()`. Root cause: the CCM
+pre-filter shrinks the `raw_columns` a given `build_nested_mde_network()`
+call sees, but a depth-0 target's `mde_results` entry was computed once
+in `main()` against the *full*, unfiltered pool, before the pre-filter
+ever ran -- so a depth-0-selected real observable can legitimately be
+absent from Stage 1's own (filtered) `raw_columns`, and the old
+membership-only classification (`if column_name in raw_columns: ... else:
+parse as delay-suffixed`) crashed trying to parse it as one instead of
+recognizing it as its own real, delay=0 name. Fixed by adding a
+marker-presence fallback to `observable_and_delay()` (only reached when
+membership fails): a real channel name never contains the literal
+`DELAY_MARKER` (`'::delay'`) substring, so this is a safe, general
+classification rule, not a special case for the pre-filter specifically.
+Verified directly (unit-level, both files) against the exact crash
+scenario plus two regression checks (delay-suffixed names still parse;
+membership still wins when available) before this resubmission. Same
+fix applied identically to simple-mde-gmn.py (job_39655803's own entry).
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_39605473/tsls-mde-gmn.py
++++ job_39655804/tsls-mde-gmn.py
+@@ -1080,10 +1080,31 @@
+     underlying (observable, delay) pair. Delay=0 candidates are just the
+     raw observable name itself (see expand_delay_columns()'s docstring for
+     why that delay isn't also given a suffixed alias) -- checked against
+-    `raw_columns` rather than by string shape alone, in case a real channel
+-    name were ever to collide with the delay-suffix marker.'''
++    `raw_columns` FIRST rather than by string shape alone, in case a real
++    channel name were ever to collide with the delay-suffix marker
++    (membership is the authoritative signal whenever available).
++
++    Falls back to a marker-presence check (bug found 2026-08-25, job
++    39605472/39605473 -- ported from simple-mde-gmn.py's own identical
++    fix) when `column_name` isn't in `raw_columns` at all:
++    ccm_prefilter_observables() can shrink the `raw_columns` a given
++    build_nested_mde_network()/attach_lag_embeddings() call sees, but a
++    depth-0 node's mde_results entry was computed once in main(), against
++    the *full*, unfiltered candidate pool, before that filtering ever ran
++    -- so a depth-0-selected real observable can legitimately be absent
++    from this call's own (filtered) `raw_columns` while still being a
++    perfectly valid delay=0 column. Without this fallback,
++    _parse_delayed_column_name() crashes on any such name (confirmed:
++    `ValueError: invalid literal for int() with base 10: 'CA1_12_tsls'`)
++    since it has no delay marker to parse. Residual risk is unchanged from
++    before this fallback existed: only a real channel name that is BOTH
++    missing from `raw_columns` AND happens to contain the literal
++    `DELAY_MARKER` substring would still be misclassified -- this
++    codebase's actual naming scheme never produces that.'''
+     if column_name in raw_columns:
+         return column_name, 0
++    if DELAY_MARKER not in column_name:
++        return column_name, 0
+     return _parse_delayed_column_name(column_name)
+ 
+ 
+```
+
+---
+
+
+## Job 39655803
+
+Generated: 2026-08-25T11:10:06+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39605472**
+
+### Plain-language summary
+
+Resubmission of job_39605472 (same medium-scale config, unchanged) after
+it crashed 1m20s in with `ValueError: invalid literal for int() with base
+10: 'CA1_22'` inside `observable_and_delay()`. Same root cause and fix as
+job_39655804's own entry (tsls-mde-gmn.py) -- see that entry for the full
+diagnosis. Log excerpt confirming exactly where this happened: "CCM
+pre-filter: kept 36/90 observables (rho >= 0.2) for ['head_position_x']"
+printed successfully, then the very next step (Stage 1's own
+`build_nested_mde_network()`, processing `head_position_x`'s depth-0
+result) crashed on `CA1_22` -- a real driver MDE had selected against the
+full 90-observable pool in `main()`, before the pre-filter narrowed the
+36-observable pool Stage 1 itself searches.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+```diff
+--- job_39605472/simple-mde-gmn.py
++++ job_39655803/simple-mde-gmn.py
+@@ -1222,11 +1222,31 @@
+     underlying (observable, delay) pair. Delay=0 candidates are just the
+     raw observable name itself (see expand_delay_columns()'s docstring
+     for why that delay isn't also given a suffixed alias) -- checked
+-    against `raw_columns` rather than by string shape alone, in case a
+-    real channel name were ever to collide with the delay-suffix marker.
+-    '''
++    against `raw_columns` FIRST rather than by string shape alone, in case
++    a real channel name were ever to collide with the delay-suffix marker
++    (membership is the authoritative signal whenever available).
++
++    Falls back to a marker-presence check (bug found 2026-08-25, job
++    39605472/39605473) when `column_name` isn't in `raw_columns` at all:
++    ccm_prefilter_observables() can shrink the `raw_columns` a given
++    build_nested_mde_network()/attach_lag_embeddings() call sees, but a
++    depth-0 node's mde_results entry was computed once in main(), against
++    the *full*, unfiltered candidate pool, before that filtering ever ran
++    -- so a depth-0-selected real observable can legitimately be absent
++    from this call's own (filtered) `raw_columns` while still being a
++    perfectly valid delay=0 column. Without this fallback,
++    _parse_delayed_column_name() crashes on any such name (confirmed:
++    `ValueError: invalid literal for int() with base 10: 'CA1_22'`) since
++    it has no delay marker to parse. Residual risk is unchanged from
++    before this fallback existed: only a real channel name that is BOTH
++    missing from `raw_columns` AND happens to contain the literal
++    `DELAY_MARKER` substring would still be misclassified -- this
++    codebase's actual naming scheme (CA1_N/mPFC_N/OFC_N/head_position_*)
++    never produces that.'''
+     if column_name in raw_columns:
+         return column_name, 0
++    if DELAY_MARKER not in column_name:
++        return column_name, 0
+     return _parse_delayed_column_name(column_name)
+ 
+ 
+```
+
+---
+
+
+## Job 39605473
+
+Generated: 2026-08-25T00:35:46+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39183731**
+
+### Plain-language summary
+
+First test of the new CCM pre-filter (`ccm_prefilter_observables()`,
+`CCM_PREFILTER_RHO_MIN`/`CCM_PREFILTER_E`/`LIBSIZE_RATIOS` -- see this
+job's own Python diff below) at "medium scale," per explicit request:
+`REGION_CHANNEL_CAP=30`/`MDE_D=10`/`NESTED_M=5`/`GENERATE_LENGTH=40`/
+`TP=10` -- the exact config job_39024490/job_39025340 (this pipeline's
+own earlier smoke-test scale) used before it was cancelled/OOM'd. Two
+goals: (1) confirm the pipeline runs correctly end-to-end with the new
+pre-filter wired in (only smoke-tested on tiny local slices so far, never
+a real cluster job); (2) test whether the pre-filter's candidate-pool
+reduction alone -- not a memory bump -- is enough to keep this config
+inside its *original* resource budget, now that the earlier OOM's real
+root cause (pyEDM warning-spam, see job_39354205's own entry) is also
+already fixed. `--mem`/`--cpus-per-task`/`--time` (128G/64/4 days) left
+at this pipeline's own already-configured values -- job_39025340's OOM
+was on the simple-mde-gmn side; this pipeline was never confirmed to OOM
+at this scale specifically (job_39024490 was cancelled for other
+reasons), so there's no "original OOM'd budget" to revert to here.
+`CCM_PREFILTER_E=7`/`LIBSIZE_RATIOS` are this pipeline's own new
+defaults, set in the previous session (7, not simple-mde-gmn's 3 --
+deliberately different, see that parameter's own sbatch comment for the
+40Hz-vs-1Hz reasoning).
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_39183731 | job_39605473 |
+|---|---|---|
+| CCM_PREFILTER_E | _(unset)_ | 7 |
+| CCM_PREFILTER_RHO_MIN | _(unset)_ | 0.2 |
+| GENERATE_LENGTH | 15 | 40 |
+| LIBSIZE_RATIOS | _(unset)_ | 0.05,0.10,0.20,0.40,0.6,0.8,0.9 |
+| MDE_D | 5 | 10 |
+| NESTED_M | 4 | 5 |
+| REGION_CHANNEL_CAP | 20 | 30 |
+| TP | 1 | 10 |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_39183731/tsls-mde-gmn.sbatch
++++ job_39605473/tsls-mde-gmn.sbatch
+@@ -221,6 +221,9 @@
+ export TSLS_MDE_GMN_TP="${TP}"
+ export TSLS_MDE_GMN_EMBED_DIM_RHO_MIN="${EMBED_DIM_RHO_MIN}"
+ export TSLS_MDE_GMN_CROSS_MAP_RHO_MIN="${CROSS_MAP_RHO_MIN}"
++export TSLS_MDE_GMN_CCM_PREFILTER_RHO_MIN="${CCM_PREFILTER_RHO_MIN}"
++export TSLS_MDE_GMN_CCM_PREFILTER_E="${CCM_PREFILTER_E}"
++export TSLS_MDE_GMN_LIBSIZE_RATIOS="${LIBSIZE_RATIOS}"
+ export TSLS_MDE_GMN_MULTI_MDE_E="${MULTI_MDE_E}"
+ export TSLS_MDE_GMN_MULTI_MDE_TARGET_AGGREGATE="${MULTI_MDE_TARGET_AGGREGATE}"
+ export TSLS_MDE_GMN_EXCLUSION_RADIUS="${EXCLUSION_RADIUS}"
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_39183731/tsls-mde-gmn.py
++++ job_39605473/tsls-mde-gmn.py
+@@ -753,6 +753,41 @@
+     cfg['TP'] = int(os.environ.get('TSLS_MDE_GMN_TP', 1))
+     cfg['EMBED_DIM_RHO_MIN'] = float(os.environ.get('TSLS_MDE_GMN_EMBED_DIM_RHO_MIN', 0.2))
+     cfg['CROSS_MAP_RHO_MIN'] = float(os.environ.get('TSLS_MDE_GMN_CROSS_MAP_RHO_MIN', 0.2))
++    # CCM pre-filter (see ccm_prefilter_observables()'s docstring): a cheap
++    # CCM(observable -> target) skill check run once per target group,
++    # right before either nested-MDE stage, to shrink REGION_CHANNEL_CAP's
++    # candidate pool down to only observables that cross-map at least one
++    # target above this threshold -- cuts cost on both Stage 1 (real
++    # observables) and Stage 2 (their lags, since Stage 2 draws from the
++    # same filtered pool) for free. 0 disables the filter entirely (pool
++    # passed through unchanged); >0 enables it as the rho cutoff.
++    cfg['CCM_PREFILTER_RHO_MIN'] = float(os.environ.get('TSLS_MDE_GMN_CCM_PREFILTER_RHO_MIN', 0.2))
++    # Static embedding dimension for the CCM pre-filter's own CCM calls --
++    # its OWN parameter, deliberately NOT a reuse of MULTI_MDE_E below: this
++    # pipeline's data is TSLS-converted from a 40 Hz recording vs.
++    # simple-mde-gmn.py's 1 Hz input (40x more rows per unit of real time),
++    # and both pipelines fix tau=-1 (one sample step), so one embedding
++    # step here covers only 1/40th the real time one step covers in
++    # simple-mde-gmn.py -- matching that in raw sample-count terms would
++    # need an impractical E. See simple-mde-gmn.sbatch's own
++    # CCM_PREFILTER_E comment for the full simple-mde-gmn-side reasoning.
++    # 7 here is a deliberately modest compromise: the middle value of this
++    # pipeline's own already-team-vetted E_RANGE search below (E_MIN=3/
++    # E_MAX=13/E_STEP=4 -> 3,7,11), not an untested extrapolation, and
++    # still leaves large margin against the CCM_WINDOW_ROWS/LIBSIZE_RATIOS
++    # -driven smallest-libSize-vs-E feasibility ceiling.
++    cfg['CCM_PREFILTER_E'] = int(os.environ.get('TSLS_MDE_GMN_CCM_PREFILTER_E', 7))
++    # Library sizes for the CCM pre-filter, as fractions of the same
++    # CCM_WINDOW_ROWS-bounded window (see that parameter's own docstring
++    # below) every other CCM call in this pipeline already uses, rather
++    # than absolute row counts -- that window's actual row count depends on
++    # CCM_WINDOW_ROWS/the data itself. Converted to actual libSizes (deduped,
++    # floored at 10 rows, same floor convention build_interaction_matrix()'s
++    # own CCM_LIB_SIZE_PCTS conversion uses) once the window is known -- see
++    # ccm_prefilter_observables()'s own docstring.
++    cfg['LIBSIZE_RATIOS'] = _env_float_list(
++        'TSLS_MDE_GMN_LIBSIZE_RATIOS', (0.05, 0.10, 0.20, 0.40, 0.6, 0.8, 0.9),
++    )
+     # Only consulted when GMN_MODE='combined' (see target_groups_for_mode()
+     # and main()'s own MDE block): in that mode, the depth-0 (top-level,
+     # per-TARGETS) MDE selection runs once via
+@@ -1903,6 +1938,101 @@
+     return edges_df
+ 
+ 
++def _ccm_prefilter_pair(candidate, target, targets, windowed, e, tp, metric, target_metric,
++                         gamma_delta, exclusion_radius, ccm_sample, lib_sizes):
++    '''One (candidate, target) pair's worth of ccm_prefilter_observables()
++    work -- run in an outer ThreadPoolExecutor worker (see that function's
++    docstring for why threads: proper_ccm's compiled pyEDM/KDTree calls
++    release the GIL, already established for run_mde_for_target()'s own
++    inner_workers pool). `targets` (the full group, not just `target`) is
++    passed straight through to _metric_for() so it correctly classifies any
++    column that happens to be one of the group's own targets, matching
++    build_interaction_matrix()'s own usage. Returns (candidate, target,
++    rho) -- rho is NaN on any failure (degenerate column, etc.), same
++    spirit as _failed_mde_result() elsewhere in this file.'''
++    try:
++        c2t, _, _ = tsls.proper_ccm(
++            windowed, libSizes=lib_sizes, sample=ccm_sample, tau=-1, Tp=tp, E=e,
++            target=target, columns=candidate,
++            target_measurement=_metric_for(target, targets, metric, target_metric),
++            columns_measurement=_metric_for(candidate, targets, metric, target_metric),
++            exclusionRadius=exclusion_radius, gammaDelta=gamma_delta,
++        )
++        rho = float(np.nanmean(c2t, axis=0)[-1])
++    except Exception:
++        rho = float('nan')
++    return candidate, target, rho
++
++
++def ccm_prefilter_observables(df, candidate_columns, targets, prediction_start,
++                               rho_min, e, tp, metric, target_metric, gamma_delta,
++                               exclusion_radius, ccm_window_rows, ccm_sample,
++                               libsize_ratios, cores):
++    '''TSLS-flavored counterpart of simple-mde-gmn.py's own
++    ccm_prefilter_observables() -- see that function's docstring for the
++    full rationale (identical here: cheap CCM(observable -> target)
++    pre-filter, run once per target_groups_for_mode() group right before
++    either nested-MDE stage, covering both Stage 1's real observables and
++    Stage 2's lags in one pass since Stage 2 draws from this same filtered
++    list).
++
++    Every CCM-call parameter here is either reused from an existing config
++    value used elsewhere in this pipeline (Tp, metric/target_metric/
++    gamma_delta via the existing _metric_for() convention, exclusionRadius,
++    sample via CCM_SAMPLE) or, where nothing existing fits, either matches
++    proper_mde's own unoverridden default (`tau`: confirmed "tau is simply
++    no longer passed -- proper_mde's own default (-1) applies",
++    run_mde_for_target()'s own docstring) or is its own new, deliberately
++    pipeline-specific parameter (`e`, from CCM_PREFILTER_E -- NOT a reuse of
++    MULTI_MDE_E: this pipeline's 40 Hz-sampled data needs a genuinely
++    different static E than simple-mde-gmn.py's 1 Hz data for a comparable
++    real-time embedding window at the same tau=-1 -- see
++    load_config()'s own CCM_PREFILTER_E docstring for the full reasoning).
++
++    `windowed` mirrors build_interaction_matrix()'s own windowing exactly:
++    `df.iloc[:prediction_start]` (the same leakage-safe MDE library slice
++    build_network()'s own `data_after_mde_lib` uses, just computed directly
++    from the raw candidate pool here since `selected_union` doesn't exist
++    yet at this point in build_network()) through `_ccm_window(..., 0.5,
++    ccm_window_rows)` -- the *same* CCM_WINDOW_ROWS-bounded sub-window every
++    other CCM call in this pipeline already goes through. `libsize_ratios`
++    (fractions of `len(windowed)`, i.e. of this same bounded window) are
++    converted to actual row-count libSizes here, deduped and floored at 10
++    rows -- same floor convention build_interaction_matrix()'s own
++    CCM_LIB_SIZE_PCTS conversion uses.
++
++    Parallelism: one outer ThreadPoolExecutor (sized by `cores`) over
++    (candidate, target) pairs -- see _ccm_prefilter_pair()'s own docstring
++    for why threads are safe/effective here.
++
++    Returns (kept_columns, scores) -- `kept_columns` is `candidate_columns`
++    (with `targets` excluded) filtered down to those scoring >= `rho_min`,
++    in original order; `scores` is {candidate: mean_rho} for every
++    candidate considered (including dropped ones), for diagnostics.'''
++    candidates = [c for c in candidate_columns if c not in targets]
++    if not candidates:
++        return [], {}
++
++    usable_df = df.iloc[:prediction_start].reset_index(drop=True)
++    windowed, _ = _ccm_window(usable_df, 0.5, ccm_window_rows)
++    lib_sizes = sorted({max(10, round(r * len(windowed))) for r in libsize_ratios})
++
++    per_candidate_scores = {c: [] for c in candidates}
++    with ThreadPoolExecutor(max_workers=max(1, cores)) as executor:
++        futures = [
++            executor.submit(_ccm_prefilter_pair, c, t, targets, windowed, e, tp, metric,
++                             target_metric, gamma_delta, exclusion_radius, ccm_sample, lib_sizes)
++            for c in candidates for t in targets
++        ]
++        for fut in as_completed(futures):
++            candidate, _target, rho = fut.result()
++            per_candidate_scores[candidate].append(rho)
++
++    scores = {c: float(np.nanmean(v)) if v else float('nan') for c, v in per_candidate_scores.items()}
++    kept = [c for c in candidates if scores.get(c, float('nan')) >= rho_min]
++    return kept, scores
++
++
+ def build_network(targets, mde_results, df, prediction_start, prediction_length,
+                    mode, e_range, tau_range, results_dir, cores,
+                    metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
+@@ -1913,7 +2043,8 @@
+                    threshold=0, fallback_node_dimension=4, max_node_dimension=15,
+                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                    data_file=None, data_file_sha256=None, code_fingerprint=None,
+-                   gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None):
++                   gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
++                   ccm_prefilter_rho_min=0, ccm_prefilter_e=7, libsize_ratios=()):
+     '''Build one network spanning `targets` and their driver candidates, via
+     one of two unrelated constructions depending on `mode` -- same
+     mode-branch restructuring as simple-mde-gmn.py's own build_network():
+@@ -1951,6 +2082,8 @@
+             stage2_allow_real_observables=stage2_allow_real_observables,
+             gmn_mode=gmn_mode, multi_mde_e=multi_mde_e,
+             multi_mde_target_aggregate=multi_mde_target_aggregate,
++            ccm_prefilter_rho_min=ccm_prefilter_rho_min, ccm_prefilter_e=ccm_prefilter_e,
++            libsize_ratios=libsize_ratios,
+         )
+         hit = find_cached(prev_runs_dir, cache_filename, fingerprint, load_one=_load_pickle_cache_entry)
+         if hit is not None:
+@@ -1965,8 +2098,28 @@
+         if cache_hit is not None:
+             graph = cache_hit['graph']
+         else:
++            # CCM pre-filter (see ccm_prefilter_observables()'s docstring):
++            # shrinks the candidate pool BEFORE either nested-MDE stage
++            # sees it -- Stage 2 draws its lagged candidates from this same
++            # filtered list, so one filtering pass covers both. Only run
++            # on a cache miss -- the fingerprint above already covers
++            # ccm_prefilter_rho_min/ccm_prefilter_e/libsize_ratios as their
++            # own fields against the *raw* observable_columns, so no need
++            # to pay for this just to decide whether the stage can be
++            # skipped.
++            if ccm_prefilter_rho_min > 0:
++                filtered_columns, _ = ccm_prefilter_observables(
++                    df, observable_columns, targets, prediction_start,
++                    ccm_prefilter_rho_min, ccm_prefilter_e, tp, metric, target_metric, gamma_delta,
++                    exclusion_radius, ccm_window_rows, ccm_sample, libsize_ratios, cores,
++                )
++                print(f'CCM pre-filter: kept {len(filtered_columns)}/{len(observable_columns)} '
++                      f'observables (rho >= {ccm_prefilter_rho_min}) for {targets}', flush=True)
++            else:
++                filtered_columns = observable_columns
++
+             graph, _, _ = build_nested_mde_network(
+-                targets, df, observable_columns, observable_columns,
++                targets, df, filtered_columns, filtered_columns,
+                 prediction_start, prediction_length,
+                 nested_n, nested_m, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                 results_dir, mde_results, [], tp,
+@@ -1976,7 +2129,7 @@
+                 code_fingerprint,
+             )
+             attach_lag_embeddings(
+-                graph, observable_columns, df, prediction_start, prediction_length,
++                graph, filtered_columns, df, prediction_start, prediction_length,
+                 nested_n, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                 results_dir, lag_set, stage2_allow_real_observables, tp,
+                 metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
+@@ -2461,7 +2614,8 @@
+                                ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
+                                data_file, data_file_sha256, code_fingerprint,
+                                stage2_allow_real_observables=False,
+-                               gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None):
++                               gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
++                               ccm_prefilter_rho_min=0, ccm_prefilter_e=7, libsize_ratios=()):
+     '''Everything that determines one group's network-construction outcome
+     -- ported from simple-mde-gmn.py, TSLS scoring/CCM-calibration knobs
+     folded in. Computable *before* that construction runs, since the whole
+@@ -2475,12 +2629,27 @@
+     this fingerprint too -- otherwise switching GMN_MODE (or its
+     multi_proper_mde knobs) between two REUSE_BEST_PARAMS runs wouldn't
+     invalidate a stale cached network built from the other mode's
+-    mde_results.'''
++    mde_results.
++
++    ccm_prefilter_rho_min/ccm_prefilter_e/libsize_ratios: their own explicit
++    fields for the same reason simple-mde-gmn.py's own
++    build_network_fingerprint() gives them one -- `observable_columns` here
++    is the *raw* pool (build_network()'s own MDE-GMN branch never actually
++    runs the CCM pre-filter before computing this fingerprint), so these
++    fields are what make a threshold/E/libSize-ratio change invalidate a
++    stale cache entry even though the raw pool itself is unchanged.
++    ccm_prefilter_e is its own field (NOT a reuse of multi_mde_e, despite
++    both being "a static E somewhere in this pipeline") -- see
++    ccm_prefilter_observables()'s own docstring for why the two must be
++    independently tunable.'''
+     return {
+         'mode': mode,
+         'gmn_mode': gmn_mode,
+         'multi_mde_e': multi_mde_e,
+         'multi_mde_target_aggregate': multi_mde_target_aggregate,
++        'ccm_prefilter_rho_min': ccm_prefilter_rho_min,
++        'ccm_prefilter_e': ccm_prefilter_e,
++        'libsize_ratios': list(libsize_ratios),
+         'targets': sorted(targets),
+         'observable_columns': sorted(observable_columns),
+         'mde_d': nested_n,
+@@ -3439,6 +3608,8 @@
+             code_fingerprint=code_fingerprint,
+             gmn_mode=cfg['GMN_MODE'], multi_mde_e=cfg['MULTI_MDE_E'],
+             multi_mde_target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
++            ccm_prefilter_rho_min=cfg['CCM_PREFILTER_RHO_MIN'], ccm_prefilter_e=cfg['CCM_PREFILTER_E'],
++            libsize_ratios=cfg['LIBSIZE_RATIOS'],
+         )
+         draw_colored_network(
+             net_result, cfg['TARGET_COLORS'],
+```
+
+---
+
+
+## Job 39605472
+
+Generated: 2026-08-25T00:35:40+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39354398**
+
+### Plain-language summary
+
+First test of the new CCM pre-filter (`ccm_prefilter_observables()`,
+`CCM_PREFILTER_RHO_MIN`/`CCM_PREFILTER_E`/`LIBSIZE_RATIOS`) at "medium
+scale," per explicit request: `REGION_CHANNEL_CAP=30`/`MDE_D=10`/
+`NESTED_M=5`/`GENERATE_LENGTH=40`/`TP=10` -- job_39025340's own original
+config, the one that OOM'd (see job_39354205's own entry for the full
+diagnosis: real root cause was runaway pyEDM warning-spam, already fixed
+in `sitecustomize.py`, independent of this pre-filter). Two goals: (1)
+confirm the pipeline runs correctly end-to-end with the pre-filter wired
+in on a real cluster job (only smoke-tested on tiny local slices so far);
+(2) test whether the pre-filter's own candidate-pool reduction, on top of
+the warning-spam fix, is enough to fit this config back inside its
+*original* `--mem=300G` -- deliberately reverted here from the 450G this
+job's own predecessor chain carried (job_39354398's own headroom bump
+during the OOM-recovery attempt, never actually tested end-to-end since
+every resubmission in that batch hit the `/bucket` outage instead) --
+rather than testing at 450G, which wouldn't distinguish "the pre-filter
+worked" from "the extra headroom alone was enough." If this OOMs again at
+300G even with both fixes in place, that's a real, informative result
+(pre-filter's reduction wasn't sufficient on its own) rather than a
+wasted run either way. `--cpus-per-task`/`--time` (64/4 days) unchanged.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_39354398 | job_39605472 |
+|---|---|---|
+| CCM_PREFILTER_E | _(unset)_ | 3 |
+| CCM_PREFILTER_RHO_MIN | _(unset)_ | 0.2 |
+| GENERATE_LENGTH | 300 | 40 |
+| LIBSIZE_RATIOS | _(unset)_ | 0.05,0.10,0.20,0.40,0.6,0.8,0.9 |
+| MDE_D | 30 | 10 |
+| NESTED_M | 3 | 5 |
+| REGION_CHANNEL_CAP | 999 | 30 |
+| TP | 30 | 10 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_39354398/simple-mde-gmn.sbatch
++++ job_39605472/simple-mde-gmn.sbatch
+@@ -2,7 +2,7 @@
+ #SBATCH --job-name=run_simple_mde_gmn
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+-#SBATCH --mem=450G
++#SBATCH --mem=300G
+ #SBATCH --cpus-per-task=64
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell)
+@@ -292,6 +292,9 @@
+ export MDE_GMN_TP="${TP}"
+ export MDE_GMN_EMBED_DIM_RHO_MIN="${EMBED_DIM_RHO_MIN}"
+ export MDE_GMN_CROSS_MAP_RHO_MIN="${CROSS_MAP_RHO_MIN}"
++export MDE_GMN_CCM_PREFILTER_RHO_MIN="${CCM_PREFILTER_RHO_MIN}"
++export MDE_GMN_CCM_PREFILTER_E="${CCM_PREFILTER_E}"
++export MDE_GMN_LIBSIZE_RATIOS="${LIBSIZE_RATIOS}"
+ export MDE_GMN_EXCLUSION_RADIUS="${EXCLUSION_RADIUS}"
+ export MDE_GMN_NESTED_M="${NESTED_M}"
+ export MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES="${STAGE2_ALLOW_REAL_OBSERVABLES}"
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+```diff
+--- job_39354398/simple-mde-gmn.py
++++ job_39605472/simple-mde-gmn.py
+@@ -150,7 +150,7 @@
+ from apps.CreateNetwork import CreateNetwork
+ from pyEDM import (
+     Simplex, ComputeError, EmbedDimension,
+-    PredictNonlinear, PredictInterval,
++    PredictNonlinear, PredictInterval, CCM,
+ )
+ 
+ 
+@@ -961,6 +961,30 @@
+     cfg['TP'] = int(os.environ.get('MDE_GMN_TP', 1))
+     cfg['EMBED_DIM_RHO_MIN'] = float(os.environ.get('MDE_GMN_EMBED_DIM_RHO_MIN', 0.2))
+     cfg['CROSS_MAP_RHO_MIN'] = float(os.environ.get('MDE_GMN_CROSS_MAP_RHO_MIN', 0.2))
++    # CCM pre-filter (see ccm_prefilter_observables()'s docstring): a cheap
++    # CCM(observable -> target) skill check run once per target group,
++    # right before either nested-MDE stage, to shrink REGION_CHANNEL_CAP's
++    # candidate pool down to only observables that cross-map at least one
++    # target above this threshold -- cuts cost on both Stage 1 (real
++    # observables) and Stage 2 (their lags, since Stage 2 draws from the
++    # same filtered pool) for free. 0 disables the filter entirely (pool
++    # passed through unchanged); >0 enables it as the rho cutoff.
++    cfg['CCM_PREFILTER_RHO_MIN'] = float(os.environ.get('MDE_GMN_CCM_PREFILTER_RHO_MIN', 0.2))
++    # Static embedding dimension for the CCM pre-filter's own CCM calls --
++    # no per-candidate EmbedDimension auto-select here (would defeat the
++    # point of a *cheap* pre-filter), matching TSLS_MDE_GMN_MULTI_MDE_E's
++    # own rationale in tsls-mde-gmn.sbatch for the identical situation
++    # (default value 3 matches that parameter's own default too, for
++    # cross-pipeline consistency).
++    cfg['CCM_PREFILTER_E'] = int(os.environ.get('MDE_GMN_CCM_PREFILTER_E', 3))
++    # Library sizes for the CCM pre-filter, as fractions of PREDICTION_START
++    # (the leakage-safe MDE library window -- see main()'s three-way A/B/end
++    # split) rather than absolute row counts, since that window's size is
++    # data-dependent. Converted to actual libSizes (deduped, floored at 10
++    # rows) once PREDICTION_START is known -- see ccm_prefilter_observables().
++    cfg['LIBSIZE_RATIOS'] = _env_float_list(
++        'MDE_GMN_LIBSIZE_RATIOS', (0.05, 0.10, 0.20, 0.40, 0.6, 0.8, 0.9),
++    )
+     # 'auto' (default): dynamic per-dimx.Run()-call exclusion radius --
+     # see _dynamic_exclusion_radius()'s docstring near this file's
+     # monkeypatch block (just above _sequential_ccm_api) for the full
+@@ -2006,6 +2030,127 @@
+     return edges_df
+ 
+ 
++def _ccm_prefilter_worker(candidate, df_slice, targets, e, tp, exclusion_radius, lib_sizes):
++    '''One candidate's worth of ccm_prefilter_observables() work -- run in
++    an outer ProcessPoolExecutor worker (see that function's docstring for
++    why this stays a single parallelism layer). Returns (candidate,
++    mean_rho_across_targets) -- mean because `targets` is already one
++    target_groups_for_mode() group (all targets for GMN_MODE=combined, one
++    target for GMN_MODE=separate), so "mean across targets" already
++    collapses to the right thing for either mode with no branching needed
++    here.
++
++    `df_slice` is already row-truncated to the leakage-safe MDE library/
++    validation window by the caller -- pyEDM.CCM (unlike Simplex) has no
++    `lib=`/`pred=` parameters at all (confirmed against its actual
++    signature), so the *only* way to keep it from ever seeing rows past B
++    is to physically exclude them from the DataFrame it's given, exactly
++    the same mechanism run_mde_for_target()'s own LEAKAGE docstring already
++    relies on for dimx.MDE's internal CCM() call.
++
++    `parallel=False` is passed explicitly, not left to sitecustomize.py's
++    `_resolve_workers` patch alone: empirically confirmed (direct A/B timing
++    test, this same call site, 0.02s with parallel=False explicit vs. 28s+
++    with it omitted and 40 "No module named 'kedm'" reimport-spam lines --
++    os.cpu_count() on this machine) that `_resolve_workers` does NOT
++    reliably intercept this specific call path once dimx/gmn have already
++    been imported (as they always are here) -- the patch alone is
++    insufficient for this call site, unlike CCM calls reached through
++    dimx.Run's own code. This is very likely the same still-unexplained
++    mechanism behind the "MODE=GMN jobs STILL stuck" residual case recorded
++    in this project's own pyEDM-Pool-bug history -- flagged for the user,
++    out of scope to chase further here since this pipeline's own
++    apps.InteractionMatrix/dimx.Run CCM call sites are untouched by this
++    change.'''
++    scores = []
++    for target in targets:
++        try:
++            ccm_df = CCM(
++                dataFrame=df_slice, columns=candidate, target=target,
++                libSizes=lib_sizes, sample=20, E=e, Tp=tp, tau=-1,
++                exclusionRadius=exclusion_radius, noTime=False, parallel=False,
++            )
++            scores.append(float(ccm_df[f'{target}:{candidate}'].to_numpy()[-1]))
++        except Exception:
++            # A single candidate/target CCM call failing (e.g. degenerate
++            # all-NaN column) must not crash the whole pre-filter -- treat
++            # it as "no skill" for this pair, same spirit as
++            # _failed_mde_result() elsewhere in this file.
++            scores.append(float('nan'))
++    mean_rho = float(np.nanmean(scores)) if scores else float('nan')
++    return candidate, mean_rho
++
++
++def ccm_prefilter_observables(df, candidate_columns, targets, prediction_start,
++                               prediction_length, rho_min, e, tp, exclusion_radius,
++                               libsize_ratios, cores):
++    '''Cheap CCM(observable -> target) pre-filter, run once per
++    target_groups_for_mode() group right before either nested-MDE stage
++    (build_network()'s own call site) -- shrinks REGION_CHANNEL_CAP's
++    candidate pool down to only observables that cross-map at least one
++    target in `targets` with skill >= `rho_min`, before Stage 1
++    (build_nested_mde_network(), real observables) or Stage 2
++    (attach_lag_embeddings(), their lags) ever see it. Since Stage 2 draws
++    its lagged candidates from the same observable list Stage 1 uses, one
++    filtering pass here covers both -- "both the real observables and
++    their lags" per the original request.
++
++    Every CCM-call parameter here is either reused from an existing config
++    value used elsewhere in this pipeline (Tp, exclusionRadius) or, where
++    nothing existing fits (E, sample, tau), matches dimx.MDE's own
++    unoverridden default (run_mde_for_target()'s dx.MDE(...) call never
++    sets tau= or sample=, so this mirrors that by hardcoding pyEDM's own
++    defaults: tau=-1, sample=20) rather than inventing new arbitrary
++    values -- see load_config()'s own CCM_PREFILTER_RHO_MIN/CCM_PREFILTER_E
++    docstrings for the two knobs that genuinely have no existing analog.
++
++    `df_slice` (`df.iloc[:prediction_start+prediction_length]`) mirrors
++    run_mde_for_target()'s own leakage-safe MDE library/validation window
++    (`prediction_start`/`prediction_length`, the A/B segment from main()'s
++    three-way split) -- no delay-shift warm-up trim needed here (real
++    observables only, delay=0, no leading-NaN rows the way
++    expand_delay_columns() produces for Stage 2's own candidates).
++    `libsize_ratios` (fractions of `prediction_start`, i.e. of this same
++    leakage-safe window) are converted to actual row-count libSizes here,
++    deduped and floored at 10 rows -- mirrors
++    build_interaction_matrix()-style floor conventions elsewhere in this
++    codebase's sibling pipeline against requesting a degenerately small
++    library.
++
++    Parallelism: one outer ProcessPoolExecutor (fork context, sized by
++    `cores`) over candidates -- each worker computes every target's CCM
++    score for its one candidate sequentially (pyEDM.CCM's own inner Pool
++    is already forced sequential venv-wide, so this is the only
++    parallelism layer, matching every other wave-style pool in this file).
++
++    Returns (kept_columns, scores) -- `kept_columns` is `candidate_columns`
++    (with `targets` excluded) filtered down to those scoring >= `rho_min`,
++    in original order; `scores` is {candidate: mean_rho} for every
++    candidate considered (including dropped ones), for diagnostics.'''
++    candidates = [c for c in candidate_columns if c not in targets]
++    if not candidates:
++        return [], {}
++
++    df_slice = df.iloc[:prediction_start + prediction_length]
++    lib_sizes = sorted({max(10, round(r * prediction_start)) for r in libsize_ratios})
++
++    scores = {}
++    with ProcessPoolExecutor(max_workers=max(1, min(cores, len(candidates))),
++                              mp_context=mp.get_context('fork'),
++                              initializer=_mde_wave_worker_init) as executor:
++        futures = {
++            executor.submit(_ccm_prefilter_worker, c, df_slice, targets, e, tp,
++                             exclusion_radius, lib_sizes): c
++            for c in candidates
++        }
++        for fut in as_completed(futures):
++            candidate, mean_rho = fut.result()
++            scores[candidate] = mean_rho
++
++    kept = [c for c in candidates if scores.get(c, float('nan')) >= rho_min]
++    return kept, scores
++
++
+ def build_network(targets, mde_results, df, prediction_start, prediction_length,
+                    mode, e_range, tau_range, results_dir, cores, interaction_matrix_outer_cores,
+                    observable_columns=None, nested_n=None, nested_m=None,
+@@ -2013,7 +2158,8 @@
+                    lag_set=None, stage2_allow_real_observables=False, tp=1,
+                    threshold=0, fallback_node_dimension=4, max_node_dimension=15,
+                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+-                   data_file=None, data_file_sha256=None, code_fingerprint=None):
++                   data_file=None, data_file_sha256=None, code_fingerprint=None,
++                   ccm_prefilter_rho_min=0, ccm_prefilter_e=3, libsize_ratios=()):
+     '''Build one network spanning `targets` and their driver candidates,
+     via one of two unrelated constructions depending on `mode`:
+       - mode == 'MDE-GMN': two-stage nested-MDE, no apps.CreateNetwork()
+@@ -2105,6 +2251,8 @@
+             e_range, tau_range, prediction_start, prediction_length,
+             data_file, data_file_sha256, code_fingerprint,
+             stage2_allow_real_observables=stage2_allow_real_observables,
++            ccm_prefilter_rho_min=ccm_prefilter_rho_min, ccm_prefilter_e=ccm_prefilter_e,
++            libsize_ratios=libsize_ratios,
+         )
+         hit = find_cached(prev_runs_dir, cache_filename, fingerprint, load_one=_load_pickle_cache_entry)
+         if hit is not None:
+@@ -2119,14 +2267,35 @@
+         if cache_hit is not None:
+             graph = cache_hit['graph']
+         else:
++            # CCM pre-filter (see ccm_prefilter_observables()'s docstring):
++            # shrinks the candidate pool BEFORE either nested-MDE stage
++            # sees it -- Stage 2 draws its lagged candidates from this same
++            # filtered list, so one filtering pass covers both. Only run
++            # on a cache miss (not before the cache check above) since the
++            # fingerprint already covers ccm_prefilter_rho_min/
++            # ccm_prefilter_e/libsize_ratios as their own fields against
++            # the *raw* observable_columns -- the filtered list is a
++            # deterministic function of those, so no need to pay for it
++            # just to decide whether this stage can be skipped entirely.
++            if ccm_prefilter_rho_min > 0:
++                filtered_columns, _ = ccm_prefilter_observables(
++                    df, observable_columns, targets, prediction_start, prediction_length,
++                    ccm_prefilter_rho_min, ccm_prefilter_e, tp, exclusion_radius,
++                    libsize_ratios, cores,
++                )
++                print(f'CCM pre-filter: kept {len(filtered_columns)}/{len(observable_columns)} '
++                      f'observables (rho >= {ccm_prefilter_rho_min}) for {targets}', flush=True)
++            else:
++                filtered_columns = observable_columns
++
+             # Stage 1: real-observable-only nested-MDE -- expanded_df/
+-            # expanded_columns are just df/observable_columns unchanged
++            # expanded_columns are just df/filtered_columns unchanged
+             # (delay_set=[]), so num_delays inside build_nested_mde_network()
+             # resolves to 1 and every edge it finds necessarily has
+             # delay=0. See build_network()'s own docstring for the
+             # two-stage split.
+             graph, _, _ = build_nested_mde_network(
+-                targets, df, observable_columns, observable_columns,
++                targets, df, filtered_columns, filtered_columns,
+                 prediction_start, prediction_length,
+                 nested_n, nested_m, embed_dim_rho_min, cross_map_rho_min, exclusion_radius, cores,
+                 results_dir, mde_results, [], tp,
+@@ -2139,7 +2308,7 @@
+             # (not `_,`) since the edges CSV below is rebuilt straight
+             # from `graph` regardless of which stage added which edge.
+             attach_lag_embeddings(
+-                graph, observable_columns, df, prediction_start, prediction_length,
++                graph, filtered_columns, df, prediction_start, prediction_length,
+                 nested_n, embed_dim_rho_min, cross_map_rho_min, exclusion_radius, cores,
+                 results_dir, lag_set, stage2_allow_real_observables, tp,
+                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+@@ -2754,7 +2923,8 @@
+                                embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                                delay_set, e_range, tau_range, prediction_start,
+                                prediction_length, data_file, data_file_sha256, code_fingerprint,
+-                               stage2_allow_real_observables=False):
++                               stage2_allow_real_observables=False,
++                               ccm_prefilter_rho_min=0, ccm_prefilter_e=3, libsize_ratios=()):
+     '''Everything that determines one group's network-construction outcome
+     (build_nested_mde_network() Stage 1 + attach_lag_embeddings() Stage 2,
+     or the CCM/apps.CreateNetwork path for MODE='GMN') -- unlike
+@@ -2781,7 +2951,20 @@
+     already-resolved `targets` group's own topology -- see
+     target_groups_for_mode()). 'stage' is what keeps this from ever being
+     confused with a theta_search/mde_selection fingerprint even if the
+-    remaining fields happened to collide.'''
++    remaining fields happened to collide.
++
++    ccm_prefilter_rho_min/ccm_prefilter_e/libsize_ratios are their own
++    explicit fields rather than being left implicit in `observable_columns`
++    -- deliberately: `observable_columns` here is the *raw*,
++    REGION_CHANNEL_CAP-limited pool (build_network()'s own call site never
++    actually runs the CCM pre-filter before computing this fingerprint --
++    see that function's own comment for why it doesn't need to), not the
++    filtered one, since the whole point of a fingerprint is to decide
++    whether to skip expensive work without having to do any of it first.
++    These three fields are what make that safe: any change to the
++    threshold/E/libSize-ratio knobs invalidates the cache even though the
++    raw observable_columns list itself is unchanged, same
++    belt-and-suspenders reasoning as stage2_allow_real_observables above.'''
+     return {
+         'mode': mode,
+         'targets': sorted(targets),
+@@ -2794,6 +2977,9 @@
+         'exclusion_radius': exclusion_radius,
+         'delay_set': list(delay_set) if delay_set is not None else None,
+         'stage2_allow_real_observables': stage2_allow_real_observables,
++        'ccm_prefilter_rho_min': ccm_prefilter_rho_min,
++        'ccm_prefilter_e': ccm_prefilter_e,
++        'libsize_ratios': list(libsize_ratios),
+         'e_vals': list(e_range),
+         'tau_vals': list(tau_range),
+         'prediction_start': prediction_start,
+@@ -3839,6 +4025,8 @@
+             run_cache_dir=cfg['RUN_CACHE_DIR'],
+             data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
+             code_fingerprint=code_fingerprint,
++            ccm_prefilter_rho_min=cfg['CCM_PREFILTER_RHO_MIN'], ccm_prefilter_e=cfg['CCM_PREFILTER_E'],
++            libsize_ratios=cfg['LIBSIZE_RATIOS'],
+         )
+         draw_colored_network(
+             net_result, cfg['TARGET_COLORS'],
+```
+
+---
+
+
+## Job 39417809
+
+Not a pipeline job -- no JOB_LOG entry was ever auto-generated for it
+(it wasn't submitted via `scripts/batch/submit.sh`), so this entry is
+reconstructed after the fact from `sacct` at the user's request, rather
+than following the usual parameter-diff format above/below.
+
+`sacct`: `JobName=bash`, `Partition=compute`, `NodeList=deigo010901`,
+`ReqMem=1G`, `Submit=2026-08-23T13:44:06`, `Elapsed=00:01:24`,
+`State=TIMEOUT`. This is one of a long, automated series of ad-hoc
+`srun --nodelist=<node> ... bash -c "..."` diagnostic probes (`sacct`
+shows ~15 more, every ~10 minutes, alternating across
+`deigo010901`/`010904`/`010905`/`010911`, spanning at least
+2026-08-23T13:03 through 17:21+) checking whether `/bucket` had
+recovered from a read-only outage on specific compute nodes -- this is
+the "2026-08-23 outage" job_39656077's own entry later refers back to.
+
+### Outcome
+
+**TIMEOUT**, and notably *not* a fast failure like its 15+ sibling
+probes (which all `FAILED` in 0-56 seconds, consistent with `/bucket`
+returning a fast `Read-only file system` error). This one instead hung
+for its own full ~1m24s time limit before being killed -- suggesting
+`/bucket` was genuinely unresponsive on `deigo010901` at that specific
+moment (13:44), not just cleanly read-only, a distinct and slightly more
+severe symptom than the surrounding probes. No `.out`/`.err` file
+survives to confirm the exact command run (ad-hoc `srun`, not archived
+by this project's usual pipeline output-preservation convention).
+
+---
+
+
+## Job 39354398
+
+Generated: 2026-08-23T01:44:07+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39354345**
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_39354345 | job_39354398 |
+|---|---|---|
+| GENERATE_LENGTH | 40 | 300 |
+| MDE_D | 10 | 30 |
+| NESTED_M | 5 | 3 |
+| REGION_CHANNEL_CAP | 30 | 999 |
+| TP | 10 | 30 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39354345
+
+Generated: 2026-08-23T01:41:58+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39354311**
+
+### Plain-language summary
+
+Sixth and last of the OOM-recovery batch (see job_39354205's own
+summary for the full diagnosis/fix). Resumes job_39025340 -- the
+validation-scale smoke test (`REGION_CHANNEL_CAP=30`/`MDE_D=10`/
+`NESTED_M=5`/`GENERATE_LENGTH=40`/`TP=10`), not part of the
+production-scale `Tp`-sweep family the other 5 jobs in this batch
+belong to, but OOM-killed the same way (23GB `.err`, same repeated
+pyEDM warning, MaxRSS ~312GB) so covered by the same fix.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_39354311 | job_39354345 |
+|---|---|---|
+| GENERATE_LENGTH | 300 | 40 |
+| MDE_D | 30 | 10 |
+| NESTED_M | 3 | 5 |
+| REGION_CHANNEL_CAP | 999 | 30 |
+| TP | 20 | 10 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39354311
+
+Generated: 2026-08-23T01:41:31+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39354260**
+
+### Plain-language summary
+
+Fifth of the 6-job OOM-recovery batch (see job_39354205's own summary
+for the full diagnosis/fix). Resumes job_38883556 (`TP=20`) -- the last
+member of the production-scale `Tp`-sweep family in this batch (the
+sweep's own `TP=8`/`TP=40` siblings, job_38883554/38883557, weren't
+reported as failed and so aren't part of this recovery batch).
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_39354260 | job_39354311 |
+|---|---|---|
+| TP | 5 | 20 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39354260
+
+Generated: 2026-08-23T01:41:23+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39354259**
+
+### Plain-language summary
+
+Fourth of the 6-job OOM-recovery batch (see job_39354205's own summary
+for the full diagnosis/fix). Resumes job_38883551 (`TP=5`).
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_39354259 | job_39354260 |
+|---|---|---|
+| TP | 2 | 5 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39354259
+
+Generated: 2026-08-23T01:41:15+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39354256**
+
+### Plain-language summary
+
+Third of the 6-job OOM-recovery batch (see job_39354205's own summary
+for the full diagnosis/fix). Resumes job_38883549 (`TP=2`).
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_39354256 | job_39354259 |
+|---|---|---|
+| TP | 1 | 2 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39354256
+
+Generated: 2026-08-23T01:41:09+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39354205**
+
+### Plain-language summary
+
+Second of the 6-job OOM-recovery batch (see job_39354205's own summary
+for the full diagnosis/fix). Resumes job_38883548 (`TP=1`) -- the only
+change from job_39354205 is `TP`, matching that job's own original
+config exactly.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_39354205 | job_39354256 |
+|---|---|---|
+| TP | 30 | 1 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39354205
+
+Generated: 2026-08-23T01:40:58+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39183767**
+
+### Plain-language summary
+
+First of 6 resubmissions recovering the production-scale `Tp` sweep
+(job_38871293, job_38883548/49/51/56 -- this job resumes job_38871293,
+`TP=30`) plus the separate validation-scale smoke test job_39025340
+(resumed by job_39354345), all of which failed. Diffed here against
+job_39183767 (a newer, unrelated smoke-test-scale job at 20/5/4) purely
+because that's the immediately-preceding simple-mde-gmn.sbatch
+submission -- every actual parameter below was restored to
+job_38871293's own original value, reconstructed from JOB_LOG.md's full
+diff chain (traced parameter-by-parameter all the way back to
+job_36515744/job_37939058, cross-checked two independent ways), not
+inherited from job_39183767's own smoke-test config.
+
+**Diagnosis, corrected from the initial "OOM" report:** `sacct`'s
+`.batch`-step-level data confirms all 6 original jobs were genuinely
+OOM-killed (MaxRSS ~311-313GB against `--mem=300G` on every one of
+them, including job_39025340 at a 33x-smaller `REGION_CHANNEL_CAP` --
+memory usage tracked wall-clock exposure, not problem size, which is the
+first clue something other than "the computation needs N GB" was going
+on). 5 of the 6 additionally show job-level `TIMEOUT` rather than `OOM`
+-- `slurmstepd`'s own log line resolves this: `Detected 1 oom_kill event
+in StepId=38871293.batch` fired mid-run, then the job kept running
+(minus whatever got killed) until the separate 4-day wall clock also
+expired, so both labels are true of the same underlying event, just
+timestamped differently by Slurm's own accounting.
+
+**Root cause, found by inspecting the actual `.err` files still on
+`/flash`:** each is 68-71GB (23GB for job_39025340), essentially all one
+repeated pyEDM `UserWarning` -- `Simplex: FindNeighbors() : Failed to
+find knn outside exclusionRadius X for some predictions. Consider
+reducing knn Y.` -- fired by `pyEDM/Neighbors.py` every time a
+prediction has fewer valid neighbors than requested outside the current
+exclusionRadius (purely informational; the prediction still runs).
+`EXCLUSION_RADIUS=auto` deliberately varies exclusionRadius per call, so
+X/Y differ every time, which means the interpolated message text is
+"new" to Python's default per-message warning dedup on every single
+occurrence -- nothing in this pipeline had ever added a `warnings`
+filter, so literally every occurrence got printed and flushed. That
+volume of buffered/flushed stdio across a multi-day run is a plausible,
+well-evidenced driver of both the OOM-killed subprocess and the
+eventual timeout; it isn't a hypothetical -- the same class of pyEDM-
+warning-spam problem was already flagged once before (JOB_LOG.md's
+job_38870714 entry, `.err` at ~23MB for a tiny smoke test) but never
+actually fixed at the source, only relocated (/home -> /flash) as the
+volume kept growing.
+
+**Fix applied** (per user direction, before any of these 6
+resubmissions): `.venv/lib/python3.11/site-packages/sitecustomize.py`
+(the same venv-wide, auto-imported-at-interpreter-startup file already
+used for the earlier pyEDM Pool-spawn fix -- see that section of this
+same file) now also registers
+`warnings.filterwarnings('ignore', category=UserWarning,
+message=r'.*FindNeighbors\(\)\s*:')`. Verified directly against the
+exact message-construction code in `pyEDM/Neighbors.py` (both warning
+variants share the `<name>: FindNeighbors() :` prefix) and against a
+synthetic `warnings.warn()` call reproducing the real message text --
+confirmed suppressed, with an unrelated warning left untouched as a
+negative control. This file isn't part of JOB_LOG.md's own
+Python/sbatch diffing (it lives in the venv, not this repo), so it
+won't show up as a code change below despite being the actual fix this
+resubmission is testing.
+
+**Resources**: `--mem` 300G->450G (real headroom above the ~313GB
+observed peak, still comfortably under this partition's 500G
+whole-node ceiling that's previously caused `Priority`-reason queuing
+delays -- see job_38871293's own entry). `--cpus-per-task`/`--time`
+left unchanged (64 cores wasn't the failure mode; 4-00:00:00 is already
+this partition's hard cap, no higher value exists to move to).
+`REUSE_BEST_PARAMS=true` was already on for every original job, and
+writes its cache artifacts to bucket storage immediately as each stage
+completes (not just at job end) -- confirmed those artifacts already
+exist under `/bucket/.../mde_gmn_cache/job_38871293/` etc. from before
+the OOM, so this resubmission should skip whatever stages the original
+run already finished rather than recomputing them.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_39183767 | job_39354205 |
+|---|---|---|
+| GENERATE_LENGTH | 15 | 300 |
+| GENERATE_START_MAX_OFFSET | 1 | 20 |
+| MDE_D | 5 | 30 |
+| NESTED_M | 4 | 3 |
+| REGION_CHANNEL_CAP | 20 | 999 |
+| TP | 1 | 30 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_39183767/simple-mde-gmn.sbatch
++++ job_39354205/simple-mde-gmn.sbatch
+@@ -2,7 +2,7 @@
+ #SBATCH --job-name=run_simple_mde_gmn
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+-#SBATCH --mem=300G
++#SBATCH --mem=450G
+ #SBATCH --cpus-per-task=64
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell)
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39183767
+
+Generated: 2026-08-21T11:34:43+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39183765**
+
+### Plain-language summary
+
+Fourth and last of the 4-job batch (see job_39183729's own summary for
+the full rationale). This job: `GMN_MODE=separate` -- the only change
+from job_39183765, completing the 2-pipeline x 2-GMN_MODE matrix at this
+new 20/5/4 scale.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_39183765 | job_39183767 |
+|---|---|---|
+| GMN_MODE | combined | separate |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39183765
+
+Generated: 2026-08-21T11:34:32+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39090699**
+
+### Plain-language summary
+
+Third of the 4-job batch (see job_39183729's own summary on
+tsls-mde-gmn.sbatch for the full scale-up/resource-sizing rationale,
+which applies identically here). This job: simple-mde-gmn.py,
+`GMN_MODE=combined` (its existing value -- unchanged). Same scale-up as
+job_39183729's own copy of these parameters: `REGION_CHANNEL_CAP` 8->20,
+`MDE_D` 3->5, `NESTED_M` 1->4. `--cpus-per-task`/`--mem`/`--time`
+(64/300G/4 days) left unchanged -- this pipeline's own prior-batch
+baseline (job_39090699: 22m at 8/3/1) has even more headroom relative to
+its existing budget than tsls-mde-gmn's own baseline does, so the same
+"no change needed" reasoning applies with extra margin here.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_39090699 | job_39183765 |
+|---|---|---|
+| MDE_D | 3 | 5 |
+| NESTED_M | 1 | 4 |
+| REGION_CHANNEL_CAP | 8 | 20 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39183731
+
+Generated: 2026-08-21T11:34:04+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39183729**
+
+### Plain-language summary
+
+Second of the 4-job batch (see job_39183729's own summary for the full
+scale-up/resource-sizing rationale). This job: `GMN_MODE=separate` -- the
+only change from job_39183729, isolating combined- vs. separate-mode cost
+at this new 20/5/4 scale, same pairing pattern as the previous batch's own
+job_39090701/job_39126001 pair.
+
+### Outcome
+
+**TIMEOUT** at the full 4-day walltime (`sacct`: `Elapsed=4-00:00:12`),
+never completed. Not memory-bound: `.batch`-step `MaxRSS` only ~15.9GB
+against the `--mem=128G` request (`16698142K`), well within budget --
+purely a wall-clock limitation, `GMN_MODE=separate`'s own per-target
+sequential loop (vs. `GMN_MODE=combined`'s one joint call) plausibly
+costing more real time here even at the same nominal scale. This exact
+`REGION_CHANNEL_CAP=20`/`MDE_D=5`/`NESTED_M=4` scale was not retried
+again in this session -- the investigation instead moved on to the CCM
+pre-filter feature (added 2026-08-24) as the actual fix for this class
+of runaway search-space cost, rather than continuing to just add more
+walltime.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_39183729 | job_39183731 |
+|---|---|---|
+| GMN_MODE | combined | separate |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39183729
+
+Generated: 2026-08-21T11:33:52+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39126001**
+
+### Plain-language summary
+
+First of a 4-job batch (39183729, 39183731 here; 39183765, 39183767 on
+simple-mde-gmn.sbatch), covering both pipelines x both `GMN_MODE` settings
+again, one step up in scale from the previous 4-job batch
+(39090698/39090699/39090701/39126001) -- per explicit request, "a bit more
+compute": `REGION_CHANNEL_CAP` 8->20 (24->60 real observables across the 3
+regions), `MDE_D` 3->5, `NESTED_M` 1->4. This job: `GMN_MODE=combined`.
+
+**Resource request: left unchanged** (`--time=4-00:00:00`/`--mem=128G`/
+`--cpus-per-task=64`, same as the prior batch), a deliberate decision, not
+an oversight -- reasoning: Stage 1's BFS can never visit more real
+observables than exist in the candidate pool (`REGION_CHANNEL_CAP` x 3
+regions), regardless of `NESTED_M`, since a node is never revisited once
+seen. Going 8->20 only grows that hard ceiling ~2.5x; `NESTED_M` 1->4
+mainly raises how much of that pool actually gets explored before
+stopping, not an unbounded multiplier on top of the 2.5x. The prior
+batch's own measured baseline at 8/3/1 (job_39090701: 2h54m combined;
+job_39126001: 3h23m separate, both with the new inner-pool parallelism
+already active) gives real grounding: even a generous 10-15x slowdown
+estimate from that baseline lands around 30-50h, comfortably inside the
+existing 96h ceiling. job_39083467 (still RUNNING at 18h38m+ at the time
+of this submission, at the much larger `REGION_CHANNEL_CAP=30`/`MDE_D=10`/
+`NESTED_M=5` config) is a useful upper-bound data point in the same
+direction -- this batch's own 20/5/4 sits well below that scale on every
+axis. `--mem`/`--cpus-per-task` unchanged for the same reason: no OOM has
+been observed at any scale tested so far this session, and 64 cores
+already gives the outer (per-wave)/inner (per-node, via the
+`ThreadPoolExecutor` pool added in job_39083467) parallelism real room
+regardless of exactly how wide a given wave turns out to be.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_39126001 | job_39183729 |
+|---|---|---|
+| GMN_MODE | separate | combined |
+| MDE_D | 3 | 5 |
+| NESTED_M | 1 | 4 |
+| REGION_CHANNEL_CAP | 8 | 20 |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39126001
+
+Generated: 2026-08-20T22:37:42+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39090703**
+
+### Plain-language summary
+
+Resubmission of job_39090703's own config (unchanged -- see empty
+parameter table below, the 4th of the 4-job smoke-test batch: this
+pipeline, `GMN_MODE=separate`) after it FAILED in 2 seconds for an
+infrastructure reason unrelated to any code or config: `/bucket` was
+momentarily read-only at the exact moment it started (`mkdir: cannot
+create directory '.../tsls_mde_gmn_cache/job_39090703': Read-only file
+system`), killing it under `set -euo pipefail` before a single line of
+Python ran -- the same failure mode, same target directory family, as
+job_39025341's own transient Lustre blip earlier today. Confirmed
+`/bucket` writable again before this resubmission (`df -h` shows the
+mount healthy; a direct test `mkdir`/write to the same
+`tsls_mde_gmn_cache/` directory both succeeded).
+
+The other 3 jobs in this same smoke-test batch (39090698, 39090699,
+39090701) all COMPLETED cleanly at this same small-scale config
+(22-33 minutes for both simple-mde-gmn.py runs, ~2h54m for
+tsls-mde-gmn.py's own `GMN_MODE=combined` run) -- so this resubmission
+is only recovering the one batch member lost to the transient outage,
+not chasing an unresolved timeout/resource issue the way job_39069787's
+own resubmission was.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39090703
+
+Generated: 2026-08-20T16:47:38+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39090701**
+
+### Plain-language summary
+
+Fourth and last of the 4-job smoke-test batch (see job_39090698's own
+summary for the full rationale). This job: `GMN_MODE=separate` -- the
+only change from job_39090701, isolating combined- vs. separate-mode
+cost on tsls-mde-gmn.py the same way job_39090699 does on
+simple-mde-gmn.py.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_39090701 | job_39090703 |
+|---|---|---|
+| GMN_MODE | combined | separate |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39090701
+
+Generated: 2026-08-20T16:47:30+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39083467**
+
+### Plain-language summary
+
+Third of the 4-job smoke-test batch (see job_39090698's own summary on
+simple-mde-gmn.sbatch for the full 4-job rationale). This job:
+tsls-mde-gmn.py, `GMN_MODE=combined` (its existing value -- unchanged
+here). Same scale-down as job_39090698, applied to this pipeline's own
+copy of the same parameters: `REGION_CHANNEL_CAP` 30->8, `MDE_D` 10->3,
+`NESTED_M` 5->1, `TP` 10->1, `GENERATE_LENGTH` 40->15;
+`GENERATE_START_MAX_OFFSET` was already 1 here (this pipeline's own
+NOTE-driven sweep was already narrow), so no change needed on that axis.
+
+Also exercises this pipeline's own recently-added per-node
+`ThreadPoolExecutor` inner pool (`inner_workers`, see
+`run_mde_for_target()`'s INNER POOL docstring in tsls-mde-gmn.py) for the
+first time at a scale small enough to plausibly finish and report a
+result -- `--cpus-per-task`/`--mem`/`--time` (64/128G/4 days) left
+unchanged from the file's current values as the requested headroom,
+same reasoning as job_39090698.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_39083467 | job_39090701 |
+|---|---|---|
+| GENERATE_LENGTH | 40 | 15 |
+| MDE_D | 10 | 3 |
+| NESTED_M | 5 | 1 |
+| REGION_CHANNEL_CAP | 30 | 8 |
+| TP | 10 | 1 |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39090699
+
+Generated: 2026-08-20T16:47:26+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39090698**
+
+### Plain-language summary
+
+Second of the 4-job smoke-test batch (see job_39090698's own summary for
+the full rationale/scale). This job: `GMN_MODE=combined` (one network
+spanning both `head_position_x`/`head_position_y` targets and the union
+of their drivers, vs. job_39090698's two fully independent per-target
+networks) -- the only change from job_39090698, so any wall-time/memory
+difference between the two isolates the cost of combined- vs.
+separate-mode network construction at this scale specifically.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_39090698 | job_39090699 |
+|---|---|---|
+| GMN_MODE | separate | combined |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39090698
+
+Generated: 2026-08-20T16:47:18+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39025340**
+
+### Plain-language summary
+
+First of a planned batch of 4 small-scale smoke-test jobs (39090698,
+39090699 here; 39090701, 39090703 on tsls-mde-gmn.sbatch), covering both
+pipelines x both `GMN_MODE` settings (`combined`/`separate`), submitted
+per explicit request to confirm the current pipeline code runs cleanly
+end-to-end within a few hours rather than at the much larger scale the
+sbatch files had been left at (which produced job_39024490 -- cancelled
+before finishing even at 24h -- and, further back, job_38976891 timing
+out at 4h on a single depth-1 wave). This job: `GMN_MODE=separate`.
+
+Every pipeline-shape parameter was cut well below both of those prior
+reference points, not just back to them, since the real Stage-1 cost
+driver behind those earlier failures was never isolated (see
+job_39025341's own carried-forward recommendation) and a repeat at
+similar scale wouldn't by itself prove the current code is actually
+faster: `REGION_CHANNEL_CAP` 30->8 (per region, ~24 real observables
+total across the 3 regions vs. ~45 before), `MDE_D` 10->3, `NESTED_M`
+5->1 (one nested-MDE round beyond each target's own depth-0 selection,
+same depth as the previously-timed-out job_38976891's own config, but at
+a smaller candidate pool), `TP` 10->1 (dimx.MDE's own cheap default,
+matching that same reference job rather than the untested TP=10), and
+`GENERATE_LENGTH` 40->15 plus `GENERATE_START_MAX_OFFSET` 20->1 (single
+start-point instead of a 10-point sweep -- Generate() is this pipeline's
+single most expensive call type, so this is the highest-leverage cut for
+wall time specifically).
+
+`--cpus-per-task`/`--mem`/`--time` (64/300G/4 days) were deliberately
+left unchanged from the file's existing values rather than shrunk to
+match -- per explicit instruction, this is the requested headroom in
+case a run needs more than "several hours" or more memory than this
+small a config should need; `REUSE_BEST_PARAMS=true` (already on) means
+a resubmission at identical settings would also resume from whatever
+this run already cached rather than restarting cold.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_39025340 | job_39090698 |
+|---|---|---|
+| GENERATE_LENGTH | 40 | 15 |
+| GENERATE_START_MAX_OFFSET | 20 | 1 |
+| MDE_D | 10 | 3 |
+| NESTED_M | 5 | 1 |
+| REGION_CHANNEL_CAP | 30 | 8 |
+| TP | 10 | 1 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39083467
+
+Generated: 2026-08-20T14:57:31+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39069787**
+
+### Plain-language summary
+
+First real cluster exercise of a new **inner** parallelism layer inside
+`proper_mde()`, on top of the outer (per-node, per-wave)
+`ProcessPoolExecutor` this pipeline already had. Same validation-scale
+config as job_39025341/job_39069787 (`MDE_D=10`/`REGION_CHANNEL_CAP=30`/
+`NESTED_M=5`/`TP=10`/`GENERATE_LENGTH=40`, unchanged -- see the parameter
+table below) -- this job tests the parallelism change itself, not a new
+science configuration.
+
+**The gap this closes:** `build_nested_mde_network()`'s/
+`attach_lag_embeddings()`'s own outer pool already adapts
+`outer_workers = min(wave size, cores)` per wave, but until now that was
+the only lever -- `cleaned_helper_functions.proper_mde` had no
+multiprocessing of its own at all (module docstring's own prior NOTE), so
+a narrow wave (e.g. the 2-target depth-0 seed) could never use more than
+2 of this job's 64 cores, and a single node's own forward-selection
+(ranking loop + CCM gate) ran single-core regardless of wave width.
+
+**What changed:**
+- `cleaned_helper_functions.py`: `proper_mde()`, `proper_ccm()`, and
+  `proper_embed_dimension()` each take a new optional `pool` argument.
+  When given, `proper_mde()`'s per-dimension ranking loop (one
+  `_simplex_metric` call per remaining candidate), `proper_ccm()`'s
+  `sample x libSize` convergence grid, and `proper_embed_dimension()`'s
+  `E=1..maxE` sweep all dispatch across it instead of running the plain
+  Python `for` loop inline -- `None` (default) is byte-for-byte the old
+  sequential behavior, so every other caller (`tsls_example.py`, direct
+  notebook use) is unaffected. `_crossmap_predict()` no longer draws its
+  own random library subsample internally (that always ran on the CPU,
+  not really parallelizable-with-a-shared-rng); `proper_ccm()` now draws
+  every `(sample, libSize)` cell's library indices sequentially, in the
+  exact original order, *before* dispatching the now RNG-free KDTree
+  build/query/score work to `pool` -- this is what keeps a given
+  `ccmSeed` reproducible bit-for-bit regardless of whether `pool` is
+  given, confirmed locally (synthetic data, `ThreadPoolExecutor(4)` vs
+  sequential: identical `MDEcolumns`/`MDErho` and identical
+  `proper_ccm` output arrays). `multi_proper_mde`'s own two
+  `_crossmap_predict` call sites were updated to the new signature
+  (draw-then-call) to keep GMN_MODE=combined's depth-0 seed working --
+  behavior there is unchanged, no `pool` wired in (out of scope for this
+  change; that call site isn't part of the per-node BFS this was aimed
+  at).
+- `tsls-mde-gmn.py`: `run_mde_for_target()` takes a new `inner_workers`
+  argument (default 1 -- no pool, unchanged behavior) and opens exactly
+  ONE `ThreadPoolExecutor(max_workers=inner_workers)` for that node's
+  whole `proper_mde()` call, closed when the call returns -- not
+  reopened per candidate. Threads, not another process pool: every hot
+  loop this reaches (`pyEDM.Simplex`, the KDTree work behind
+  `proper_ccm`) is a compiled extension that releases the GIL, so this
+  gets real parallelism without nesting a second multiprocessing pool
+  inside the outer one -- sidestepping the pool-squaring failure mode
+  simple-mde-gmn.sbatch's own FIXED CAVEAT documents
+  (`apps.InteractionMatrix` x `pyEDM.CCM`'s nested pools once producing
+  ~90 processes from an 8-core request). `build_nested_mde_network()`
+  and `attach_lag_embeddings()` each compute
+  `inner_workers = max(1, cores // outer_workers)` right alongside their
+  existing `outer_workers`, fresh per wave from that wave's own real
+  size, and pass it down per node -- so `outer_workers * inner_workers`
+  never exceeds `cores`, and every sibling outer worker lands on the
+  same inner budget independently (same `cores`/wave-size inputs) with
+  no coordination needed between them. The `GMN_MODE=separate` depth-0
+  seed (sequential over `TARGETS`, no outer pool competing) gets
+  `inner_workers=cores` outright.
+- `tsls-mde-gmn.sbatch`: `--cpus-per-task` 32->64 for this submission
+  specifically, so the new inner pool has real headroom to show up on a
+  wave that's likely still narrower than 64 nodes at this validation
+  scale, rather than mostly landing on outer parallelism alone the way
+  32 would. `--mem` left at 128G -- threads share their outer worker's
+  own process memory rather than each needing a fresh copy, so this
+  bump doesn't scale memory the way another process pool would have.
+
+**Cache note:** `REUSE_BEST_PARAMS=true` is set, but the code fingerprint
+now differs from job_39025341/job_39069787 (real logic changed, not just
+docstrings), so this run will NOT reuse their Stage-1 cache -- it's a
+genuine cold run of the new code path, which is the point here.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_39069787 | job_39083467 |
+|---|---|---|
+| MULTI_MDE_E | _(unset)_ | 3 |
+| MULTI_MDE_TARGET_AGGREGATE | _(unset)_ | mean |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_39069787/tsls-mde-gmn.sbatch
++++ job_39083467/tsls-mde-gmn.sbatch
+@@ -3,7 +3,7 @@
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+ #SBATCH --mem=128G
+-#SBATCH --cpus-per-task=32
++#SBATCH --cpus-per-task=64
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell) runs,
+ # so no shell variable expansion happens here. Pointed directly at
+@@ -221,6 +221,8 @@
+ export TSLS_MDE_GMN_TP="${TP}"
+ export TSLS_MDE_GMN_EMBED_DIM_RHO_MIN="${EMBED_DIM_RHO_MIN}"
+ export TSLS_MDE_GMN_CROSS_MAP_RHO_MIN="${CROSS_MAP_RHO_MIN}"
++export TSLS_MDE_GMN_MULTI_MDE_E="${MULTI_MDE_E}"
++export TSLS_MDE_GMN_MULTI_MDE_TARGET_AGGREGATE="${MULTI_MDE_TARGET_AGGREGATE}"
+ export TSLS_MDE_GMN_EXCLUSION_RADIUS="${EXCLUSION_RADIUS}"
+ export TSLS_MDE_GMN_NESTED_M="${NESTED_M}"
+ export TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES="${STAGE2_ALLOW_REAL_OBSERVABLES}"
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_39069787/tsls-mde-gmn.py
++++ job_39083467/tsls-mde-gmn.py
+@@ -113,6 +113,18 @@
+     build_interaction_matrix()'s) to this pipeline's much larger row counts
+     -- see load_config()'s own docstring for the two production failures
+     (empty networks / zero selected drivers) this calibration fixed.
++  - GMN_MODE='combined' (MODE='MDE-GMN' only): the top-level, per-TARGETS
++    MDE selection itself (main()'s own MDE block) runs ONCE via
++    cleaned_helper_functions.multi_proper_mde -- forward-selecting drivers
++    that jointly predict every TARGETS entry at once, via
++    run_multi_mde_for_targets() -- instead of GMN_MODE='separate's one
++    independent proper_mde call per target (run_mde_for_target(), unchanged
++    from before multi_proper_mde was wired in). MULTI_MDE_E/MULTI_MDE_
++    TARGET_AGGREGATE (see load_config()) configure that joint call; both
++    are no-ops under GMN_MODE='separate'. GMN_MODE already independently
++    controlled whether network construction spans one shared graph or one
++    graph per target (target_groups_for_mode()) -- this extends that same
++    "combined" meaning to the MDE stage feeding it.
+ 
+ Everything else (differences from the notebook it mirrors) matches
+ simple-mde-gmn.py's own module docstring: subprocess.run instead of
+@@ -144,8 +156,9 @@
+ import pickle
+ import sys
+ import types
+-from concurrent.futures import ProcessPoolExecutor, as_completed
++from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+ from configparser import ConfigParser
++from contextlib import nullcontext
+ from pathlib import Path
+ 
+ import matplotlib
+@@ -740,6 +753,27 @@
+     cfg['TP'] = int(os.environ.get('TSLS_MDE_GMN_TP', 1))
+     cfg['EMBED_DIM_RHO_MIN'] = float(os.environ.get('TSLS_MDE_GMN_EMBED_DIM_RHO_MIN', 0.2))
+     cfg['CROSS_MAP_RHO_MIN'] = float(os.environ.get('TSLS_MDE_GMN_CROSS_MAP_RHO_MIN', 0.2))
++    # Only consulted when GMN_MODE='combined' (see target_groups_for_mode()
++    # and main()'s own MDE block): in that mode, the depth-0 (top-level,
++    # per-TARGETS) MDE selection runs once via
++    # cleaned_helper_functions.multi_proper_mde -- forward-selecting drivers
++    # that jointly predict every TARGETS column at once -- instead of the
++    # GMN_MODE='separate' behaviour of one independent
++    # cleaned_helper_functions.proper_mde call per target. multi_proper_mde
++    # has no per-candidate EmbedDimension auto-select path (that's a
++    # single-target, Pearson-rho-only pyEDM routine), so it requires a
++    # static, explicit E > 0 -- MULTI_MDE_E supplies it. MULTI_MDE_TARGET_
++    # AGGREGATE picks how per-target scores are combined at both the ranking
++    # and CCM-gate stages ('mean': avoid penalizing a driver that's strong
++    # for one target and weak for another; 'min': only accept drivers that
++    # are simultaneously good for every target).
++    cfg['MULTI_MDE_E'] = int(os.environ.get('TSLS_MDE_GMN_MULTI_MDE_E', 3))
++    cfg['MULTI_MDE_TARGET_AGGREGATE'] = os.environ.get('TSLS_MDE_GMN_MULTI_MDE_TARGET_AGGREGATE', 'mean')
++    if cfg['MULTI_MDE_TARGET_AGGREGATE'] not in ('mean', 'min'):
++        raise ValueError(
++            f"TSLS_MDE_GMN_MULTI_MDE_TARGET_AGGREGATE must be 'mean' or 'min': "
++            f"{cfg['MULTI_MDE_TARGET_AGGREGATE']!r}"
++        )
+     # Theiler-window / neighbor-exclusion radius for every proper_mde/
+     # proper_ccm/proper_simplex/proper_embed_dimension call this pipeline
+     # makes for MDE forward-selection. UNLIKE simple-mde-gmn.py, this is a
+@@ -1108,7 +1142,7 @@
+                         ccm_sample=20, ccm_slope=0.01,
+                         reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                         data_file=None, data_file_sha256=None, code_fingerprint=None,
+-                        cache_stage='stage1', max_e=None):
++                        cache_stage='stage1', max_e=None, inner_workers=1):
+     '''Run cleaned_helper_functions.proper_mde's forward selection for a
+     single target variable -- TSLS-flavored equivalent of
+     simple-mde-gmn.py's own run_mde_for_target() (dimx.MDE), matching that
+@@ -1167,7 +1201,29 @@
+     'm' namespace shape from a pickled dict instead of calling proper_mde
+     at all. `cache_stage` ('stage1' default, 'stage2' from
+     attach_lag_embeddings()) keeps the two stages' cache files distinct,
+-    same as simple-mde-gmn.py.'''
++    same as simple-mde-gmn.py.
++
++    INNER POOL (inner_workers, default 1 -- no pool at all): this call's
++    own proper_mde() forward-selection is otherwise entirely single-core
++    (see this module's own docstring -- proper_mde has no multiprocessing
++    of its own). `inner_workers` opens exactly ONE ThreadPoolExecutor here,
++    for this node's whole proper_mde() call -- reused across every
++    dimension's ranking loop and every CCM-gate candidate inside that one
++    call, then closed when this function returns -- and passes it down as
++    proper_mde's own `pool` argument (see that function's docstring for
++    why threads, not another process pool: every hot loop it reaches is a
++    compiled pyEDM/scipy call that releases the GIL). Callers
++    (build_nested_mde_network()/attach_lag_embeddings()) size this as
++    `max(1, cores // outer_workers)`, recomputed fresh per wave from that
++    wave's own actual size -- see those functions' own docstrings -- which
++    is what keeps outer_workers * inner_workers <= cores always: the same
++    invariant that kept simple-mde-gmn.py's own outer x inner CCM
++    parallelism (see that file's own module docstring's FIXED section)
++    from repeating the pool-squaring blowup apps.InteractionMatrix x
++    pyEDM.CCM's nested pools caused once, before that fix. No TSLS-side
++    equivalent of that bug ever existed here (proper_mde never had any
++    multiprocessing at all until this parameter) -- this inner pool is
++    new, sized the same careful way from the start.'''
+     # Fallback only -- every real call site (main()'s depth-0 seed,
+     # build_nested_mde_network(), attach_lag_embeddings()) passes this
+     # explicitly as the raw TSLS_MDE_GMN_MDE_D value. Falls back to mde_d
+@@ -1221,21 +1277,155 @@
+     lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
+     ccm_df, ccm_lib_end = _ccm_window(usable_df, lib_ratio, ccm_window_rows)
+ 
+-    result = tsls.proper_mde(
+-        ccm_df, target=target, columns=observable_columns, D=mde_d,
++    # One inner pool for this node's WHOLE proper_mde() call -- opened
++    # once here, reused across every dimension's ranking loop and every
++    # CCM-gate candidate inside that one call, closed on exit. See this
++    # function's own INNER POOL docstring above for the outer_workers *
++    # inner_workers <= cores invariant this relies on, and why threads
++    # (nullcontext()/None when inner_workers <= 1, so this is a no-op
++    # for any caller that doesn't pass it -- identical to before this
++    # parameter existed).
++    inner_pool_ctx = (
++        ThreadPoolExecutor(max_workers=inner_workers) if inner_workers > 1
++        else nullcontext()
++    )
++    with inner_pool_ctx as inner_pool:
++        result = tsls.proper_mde(
++            ccm_df, target=target, columns=observable_columns, D=mde_d,
++            lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)],
++            Tp=tp, E=0, maxE=max_e, exclusionRadius=exclusion_radius,
++            pLibSizes=ccm_lib_size_pcts, sample=ccm_sample, ccmSlope=ccm_slope,
++            crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
++            metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
++            verbose=True, pool=inner_pool,
++        )
++
++    mde_out = pd.DataFrame({'rho': result['MDErho']})
++    mde_out.to_csv(results_dir / f'mde_output_{cache_stage}_{target}.csv', index=False)
++
++    selected_columns = list(result['MDEcolumns'])
++    print(f'MDE selected columns for {target}:', selected_columns, flush=True)
++
++    m = types.SimpleNamespace(
++        MDEcolumns=selected_columns,
++        MDErho=np.asarray(result['MDErho']),
++        MDEOut=mde_out,
++        args=types.SimpleNamespace(
++            lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)], tau=-1, Tp=tp,
++        ),
++    )
++
++    if fingerprint is not None:
++        save_pickle_to_cache(
++            cache_filename,
++            {
++                'fingerprint': fingerprint,
++                'MDEcolumns': m.MDEcolumns, 'MDErho': m.MDErho, 'MDEOut': m.MDEOut,
++                'lib': m.args.lib, 'pred': m.args.pred, 'tau': m.args.tau, 'Tp': m.args.Tp,
++            },
++            results_dir, run_cache_dir,
++        )
++
++    return {
++        'target': target,
++        'mde_df': ccm_df,
++        'm': m,
++        'SELECTED_COLUMNS': selected_columns,
++    }
++
++
++def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start, prediction_length,
++                               mde_d, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                               results_dir, delay_set, tp=1,
++                               metric='f1', target_metric='correlation', gamma_delta=2,
++                               ccm_window_rows=800, ccm_lib_size_pcts=(2, 3, 5, 8, 12, 20, 30, 50),
++                               ccm_sample=20, ccm_slope=0.01,
++                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
++                               data_file=None, data_file_sha256=None, code_fingerprint=None,
++                               cache_stage='stage1', E=3, target_aggregate='mean'):
++    '''Multi-target counterpart of run_mde_for_target() -- GMN_MODE='combined'
++    only (see load_config()'s MULTI_MDE_E docstring and main()'s own MDE
++    block). Runs cleaned_helper_functions.multi_proper_mde's forward
++    selection ONCE for the whole `targets` group, picking drivers that
++    jointly predict every target at once, instead of one independent
++    proper_mde call per target. Every other argument has the identical
++    meaning to run_mde_for_target()'s own; `E` (static, required -- see
++    multi_proper_mde's own docstring for why no auto-select path exists)
++    and `target_aggregate` are the two genuinely new knobs.
++
++    Returns the same dict shape as run_mde_for_target() except keyed by
++    `'targets'` (list) instead of a single `'target'` -- main() builds one
++    per-target *view* of this single shared result (same 'm'/'mde_df'/
++    'SELECTED_COLUMNS', just re-keyed with a 'target' entry) so every
++    downstream consumer that indexes mde_results[target] (network
++    construction's depth-0 seed, the MDE diagnostics plots/sweeps) keeps
++    working completely unchanged -- see main()'s own MDE block. This is
++    also why `mde_df`/`SELECTED_COLUMNS`/edge weights end up identical
++    (shared) across every target in the group: the joint selection doesn't
++    produce a per-target breakdown, by design (it's the same drivers,
++    accepted because they predict the *group*, not any one target alone).'''
++    mde_df = df[list(targets) + list(observable_columns)].iloc[:prediction_start + prediction_length]
++
++    # See run_mde_for_target()'s own LEAKAGE docstring -- identical windowing
++    # rationale, just against a dataFrame carrying every target column
++    # instead of one.
++    warmup = max((abs(d) for d in delay_set), default=0)
++    usable_end = prediction_start + prediction_length - tp
++
++    targets_tag = '_'.join(targets)
++    fingerprint = None
++    cache_filename = f'mde_selection_{cache_stage}_multi_{targets_tag}.pkl'
++    if reuse_cache:
++        fingerprint = build_multi_mde_selection_fingerprint(
++            targets, observable_columns, mde_d, tp, embed_dim_rho_min, cross_map_rho_min,
++            exclusion_radius, delay_set, prediction_start, prediction_length,
++            metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
++            ccm_sample, ccm_slope,
++            data_file, data_file_sha256, code_fingerprint, cache_stage, E, target_aggregate,
++        )
++        hit = find_cached(prev_runs_dir, cache_filename, fingerprint,
++                           load_one=_load_pickle_cache_entry)
++        if hit is not None:
++            entry, source = hit
++            print(f'{targets_tag}: TSLS_MDE_GMN_REUSE_BEST_PARAMS matched cached joint MDE '
++                  f'selection {source} -- skipping forward-selection entirely', flush=True)
++            m = types.SimpleNamespace(
++                MDEcolumns=entry['MDEcolumns'], MDErho=entry['MDErho'], MDEOut=entry['MDEOut'],
++                args=types.SimpleNamespace(lib=entry['lib'], pred=entry['pred'],
++                                            tau=entry['tau'], Tp=entry['Tp']),
++            )
++            m.MDEOut.to_csv(results_dir / f'mde_output_{cache_stage}_multi_{targets_tag}.csv', index=False)
++            selected_columns = list(m.MDEcolumns)
++            print(f'Joint MDE selected columns for {list(targets)}:', selected_columns, flush=True)
++            return {
++                'targets': list(targets),
++                'mde_df': mde_df,
++                'm': m,
++                'SELECTED_COLUMNS': selected_columns,
++            }
++        print(f'{targets_tag}: TSLS_MDE_GMN_REUSE_BEST_PARAMS set but no matching cached joint '
++              f'MDE selection found under {prev_runs_dir} -- running forward-selection.', flush=True)
++
++    usable_df = mde_df.iloc[warmup:usable_end].reset_index(drop=True)
++    lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
++    ccm_df, ccm_lib_end = _ccm_window(usable_df, lib_ratio, ccm_window_rows)
++
++    result = tsls.multi_proper_mde(
++        ccm_df, targets=list(targets), columns=observable_columns, D=mde_d,
+         lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)],
+-        Tp=tp, E=0, maxE=max_e, exclusionRadius=exclusion_radius,
++        Tp=tp, E=E, exclusionRadius=exclusion_radius,
+         pLibSizes=ccm_lib_size_pcts, sample=ccm_sample, ccmSlope=ccm_slope,
+         crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
+         metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
++        target_aggregate=target_aggregate,
+         verbose=True,
+     )
+ 
+     mde_out = pd.DataFrame({'rho': result['MDErho']})
+-    mde_out.to_csv(results_dir / f'mde_output_{cache_stage}_{target}.csv', index=False)
++    mde_out.to_csv(results_dir / f'mde_output_{cache_stage}_multi_{targets_tag}.csv', index=False)
+ 
+     selected_columns = list(result['MDEcolumns'])
+-    print(f'MDE selected columns for {target}:', selected_columns, flush=True)
++    print(f'Joint MDE selected columns for {list(targets)}:', selected_columns, flush=True)
+ 
+     m = types.SimpleNamespace(
+         MDEcolumns=selected_columns,
+@@ -1258,7 +1448,7 @@
+         )
+ 
+     return {
+-        'target': target,
++        'targets': list(targets),
+         'mde_df': ccm_df,
+         'm': m,
+         'SELECTED_COLUMNS': selected_columns,
+@@ -1460,6 +1650,22 @@
+     }
+ 
+ 
++def _failed_multi_mde_result(targets):
++    '''Multi-target counterpart of _failed_mde_result() -- same shape as
++    run_multi_mde_for_targets()'s own return (``'targets'`` list instead of
++    a single ``'target'``), used when GMN_MODE='combined''s joint
++    multi_proper_mde call raises instead of returning normally.'''
++    return {
++        'targets': list(targets),
++        'mde_df': None,
++        'm': types.SimpleNamespace(
++            MDEcolumns=[], MDErho=np.array([]), MDEOut=None,
++            args=types.SimpleNamespace(lib=None, pred=None, tau=None, Tp=None),
++        ),
++        'SELECTED_COLUMNS': [],
++    }
++
++
+ def _accept_mde_result_edges(graph, edges, node, result, raw_columns):
+     '''Shared MDE-edge-acceptance rules -- self-loop guard, NaN
+     marginal-gain rejection, eager cycle rejection -- ported unchanged from
+@@ -1516,15 +1722,21 @@
+     targets, real-observable-only, cycle/self-loop/NaN-gain rejection,
+     delay=0-only nesting continuation) -- identical here, data-agnostic.
+ 
+-    Two differences from simple-mde-gmn.py, both consequences of
+-    proper_mde having no multiprocessing of its own (see this module's own
+-    docstring): (1) run_mde_for_target() calls here take no `cores`
+-    argument at all -- `cores` is only used to size this function's own
+-    OUTER (per-node) ProcessPoolExecutor, with no INNER cores-per-worker
+-    split (nothing to feed it into); (2) the wave pool passes no
++    Two differences from simple-mde-gmn.py: (1) the wave pool passes no
+     `initializer=` -- simple-mde-gmn.py's own _mde_wave_worker_init()
+     reapplies dimx.Run monkeypatches inside every worker, which has no
+-    TSLS-side equivalent (no dimx.Run to monkeypatch at all).'''
++    TSLS-side equivalent (no dimx.Run to monkeypatch at all); (2) the
++    outer/inner split is computed the same way (outer_workers = min(wave
++    size, cores), inner_workers = cores // outer_workers, recomputed
++    fresh every wave from that wave's own real size) but fed to a
++    different layer than simple-mde-gmn.py's dx.MDE(cores=...) -- here
++    inner_workers becomes a ThreadPoolExecutor opened once per node
++    inside run_mde_for_target() itself (see that function's own INNER
++    POOL docstring), since proper_mde has no multiprocessing of its own
++    to hand a bare core count to. Every outer worker computes
++    inner_workers from the same (cores, len(to_compute)) this wave
++    already fixed, so siblings never need to coordinate to stay within
++    outer_workers * inner_workers <= cores.'''
+     graph = nx.MultiDiGraph()
+     graph.add_nodes_from(targets)
+ 
+@@ -1555,9 +1767,10 @@
+ 
+         if to_compute:
+             outer_workers = min(len(to_compute), max(1, cores))
++            inner_workers = max(1, cores // outer_workers)
+             print(f'nested MDE: wave of {len(to_compute)} node(s) at depth '
+-                  f'{to_compute[0][1]} -- {outer_workers} parallel worker(s), '
+-                  f'no inner split (proper_mde has no multiprocessing of its own)', flush=True)
++                  f'{to_compute[0][1]} -- {outer_workers} parallel worker(s) '
++                  f'x {inner_workers} inner thread(s) each', flush=True)
+ 
+             with ProcessPoolExecutor(max_workers=outer_workers,
+                                       mp_context=mp.get_context('fork')) as executor:
+@@ -1575,7 +1788,7 @@
+                         ccm_lib_size_pcts, ccm_sample, ccm_slope,
+                         reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+                         code_fingerprint,
+-                        max_e=nested_n,
++                        max_e=nested_n, inner_workers=inner_workers,
+                     )
+                     futures[fut] = node
+                 for fut in as_completed(futures):
+@@ -1626,9 +1839,15 @@
+     only) -- ported from simple-mde-gmn.py's own attach_lag_embeddings();
+     see that function's docstring for the full algorithm (one non-recursive
+     MDE round per Stage-1 node, candidate pool spans lag_set x every real
+-    observable, never itself recurses). Same outer-only-parallelism/no-
+-    initializer difference from simple-mde-gmn.py as build_nested_mde_
+-    network() above -- see that function's own docstring.'''
++    observable, never itself recurses). Same outer/inner split as
++    build_nested_mde_network() above -- see that function's own docstring
++    for why inner_workers becomes a ThreadPoolExecutor inside each node's
++    own run_mde_for_target() call rather than a bare `cores` argument here
++    (proper_mde has no multiprocessing of its own to hand one to). This is
++    Stage 2's own single wave (every Stage-1 node at once, not a BFS), so
++    outer_workers/inner_workers are computed once here rather than
++    per-wave -- but from this call's own real `len(nodes)`, same as
++    Stage 1's per-wave recomputation, not a guessed constant.'''
+     expanded_df, expanded_columns = expand_delay_columns(df, raw_columns, lag_set)
+     lag_only_columns = expanded_columns[len(raw_columns):]
+     candidate_universe = expanded_columns if stage2_allow_real_observables else lag_only_columns
+@@ -1640,8 +1859,9 @@
+         return pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
+ 
+     outer_workers = min(len(nodes), max(1, cores))
++    inner_workers = max(1, cores // outer_workers)
+     print(f'lag embedding (Stage 2): {len(nodes)} node(s) -- {outer_workers} parallel '
+-          f'worker(s), no inner split, candidate pool size '
++          f'worker(s) x {inner_workers} inner thread(s) each, candidate pool size '
+           f'{len(candidate_universe)} (lag_set={lag_set}, '
+           f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
+ 
+@@ -1662,7 +1882,7 @@
+                 ccm_lib_size_pcts, ccm_sample, ccm_slope,
+                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+                 code_fingerprint, 'stage2',
+-                max_e=stage2_n,
++                max_e=stage2_n, inner_workers=inner_workers,
+             )
+             futures[fut] = node
+         for fut in as_completed(futures):
+@@ -1692,7 +1912,8 @@
+                    lag_set=None, stage2_allow_real_observables=False, tp=1,
+                    threshold=0, fallback_node_dimension=4, max_node_dimension=15,
+                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+-                   data_file=None, data_file_sha256=None, code_fingerprint=None):
++                   data_file=None, data_file_sha256=None, code_fingerprint=None,
++                   gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None):
+     '''Build one network spanning `targets` and their driver candidates, via
+     one of two unrelated constructions depending on `mode` -- same
+     mode-branch restructuring as simple-mde-gmn.py's own build_network():
+@@ -1728,6 +1949,8 @@
+             ccm_sample, ccm_slope,
+             data_file, data_file_sha256, code_fingerprint,
+             stage2_allow_real_observables=stage2_allow_real_observables,
++            gmn_mode=gmn_mode, multi_mde_e=multi_mde_e,
++            multi_mde_target_aggregate=multi_mde_target_aggregate,
+         )
+         hit = find_cached(prev_runs_dir, cache_filename, fingerprint, load_one=_load_pickle_cache_entry)
+         if hit is not None:
+@@ -2197,6 +2420,8 @@
+         'gmn_mode': cfg['GMN_MODE'],
+         'targets': sorted(net_result['targets']),
+         'mde_d': cfg['MDE_D'],
++        'multi_mde_e': cfg['MULTI_MDE_E'],
++        'multi_mde_target_aggregate': cfg['MULTI_MDE_TARGET_AGGREGATE'],
+         'tp': cfg['TP'],
+         'embed_dim_rho_min': cfg['EMBED_DIM_RHO_MIN'],
+         'cross_map_rho_min': cfg['CROSS_MAP_RHO_MIN'],
+@@ -2235,13 +2460,27 @@
+                                prediction_length, metric, target_metric, gamma_delta,
+                                ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
+                                data_file, data_file_sha256, code_fingerprint,
+-                               stage2_allow_real_observables=False):
++                               stage2_allow_real_observables=False,
++                               gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None):
+     '''Everything that determines one group's network-construction outcome
+     -- ported from simple-mde-gmn.py, TSLS scoring/CCM-calibration knobs
+     folded in. Computable *before* that construction runs, since the whole
+-    point is deciding whether to skip it.'''
++    point is deciding whether to skip it.
++
++    gmn_mode/multi_mde_e/multi_mde_target_aggregate: this function itself
++    doesn't consume these (the depth-0 `mde_results` it's handed is already
++    computed upstream in main() -- see run_multi_mde_for_targets()'s
++    docstring), but they determine that upstream mde_results just as much
++    as mde_d/tp/embed_dim_rho_min/etc. below do, so they must be part of
++    this fingerprint too -- otherwise switching GMN_MODE (or its
++    multi_proper_mde knobs) between two REUSE_BEST_PARAMS runs wouldn't
++    invalidate a stale cached network built from the other mode's
++    mde_results.'''
+     return {
+         'mode': mode,
++        'gmn_mode': gmn_mode,
++        'multi_mde_e': multi_mde_e,
++        'multi_mde_target_aggregate': multi_mde_target_aggregate,
+         'targets': sorted(targets),
+         'observable_columns': sorted(observable_columns),
+         'mde_d': nested_n,
+@@ -2315,6 +2554,46 @@
+     }
+ 
+ 
++def build_multi_mde_selection_fingerprint(targets, candidate_pool, mde_d, tp, embed_dim_rho_min,
++                                           cross_map_rho_min, exclusion_radius, delay_set,
++                                           prediction_start, prediction_length,
++                                           metric, target_metric, gamma_delta,
++                                           ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
++                                           data_file, data_file_sha256, code_fingerprint,
++                                           cache_stage='stage1', E=3, target_aggregate='mean'):
++    '''Multi-target counterpart of build_mde_selection_fingerprint() -- same
++    fields, `targets` (list, kept in the group's own order -- see that
++    function's own candidate_pool-ordering rationale, identical here) in
++    place of a single `node`, plus `E`/`target_aggregate`
++    (multi_proper_mde's own extra required/optional arguments, with no
++    proper_mde equivalent -- see run_multi_mde_for_targets()'s docstring).'''
++    return {
++        'targets': list(targets),
++        'candidate_pool': list(candidate_pool),
++        'mde_d': mde_d,
++        'E': E,
++        'target_aggregate': target_aggregate,
++        'tp': tp,
++        'embed_dim_rho_min': embed_dim_rho_min,
++        'cross_map_rho_min': cross_map_rho_min,
++        'exclusion_radius': exclusion_radius,
++        'delay_set': list(delay_set),
++        'metric': metric,
++        'target_metric': target_metric,
++        'gamma_delta': gamma_delta,
++        'ccm_window_rows': ccm_window_rows,
++        'ccm_lib_size_pcts': list(ccm_lib_size_pcts),
++        'ccm_sample': ccm_sample,
++        'ccm_slope': ccm_slope,
++        'prediction_start': prediction_start,
++        'prediction_length': prediction_length,
++        'data_file': data_file,
++        'data_file_sha256': data_file_sha256,
++        'code_fingerprint': code_fingerprint,
++        'stage': f'mde_selection_multi_{cache_stage}',
++    }
++
++
+ def _load_json_cache_entry(path):
+     with open(path) as f:
+         return json.load(f)
+@@ -3046,12 +3325,24 @@
+         # Stage 1 seed: real-observable-only MDE, no delay expansion --
+         # matches build_nested_mde_network()'s own Stage-1 candidate pool
+         # exactly, so its depth-0 reuse of this result stays valid.
+-        for target in cfg['TARGETS']:
+-            candidate_pool = [c for c in obs_cols if c != target]
++        if cfg['GMN_MODE'] == 'combined':
++            # One joint multi_proper_mde call across every target, instead
++            # of GMN_MODE='separate's per-target proper_mde loop below --
++            # see run_multi_mde_for_targets()'s and load_config()'s own
++            # MULTI_MDE_E docstrings. The single shared result is fanned out
++            # into one per-target *view* below (same 'm'/'mde_df'/
++            # 'SELECTED_COLUMNS' object, just re-keyed with a 'target' entry
++            # each) so every downstream consumer that indexes
++            # mde_results[target] -- build_nested_mde_network()'s depth-0
++            # reuse (adds the SAME joint drivers as edges into every target
++            # node in the group, which is the intended "combined" MDE
++            # behaviour), and the diagnostics plots/sweeps below -- keeps
++            # working completely unchanged.
++            candidate_pool = [c for c in obs_cols if c not in cfg['TARGETS']]
+             effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
+             try:
+-                mde_results[target] = run_mde_for_target(
+-                    target, df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
++                shared_result = run_multi_mde_for_targets(
++                    cfg['TARGETS'], df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+                     effective_d, cfg['EMBED_DIM_RHO_MIN'], cfg['CROSS_MAP_RHO_MIN'],
+                     cfg['EXCLUSION_RADIUS_VALUE'], cfg['RESULTS_DIR'], [],
+                     tp=cfg['TP'],
+@@ -3063,17 +3354,55 @@
+                     run_cache_dir=cfg['RUN_CACHE_DIR'],
+                     data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
+                     code_fingerprint=code_fingerprint,
+-                    max_e=cfg['MDE_D'],
++                    E=cfg['MULTI_MDE_E'], target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
+                 )
+             except Exception as exc:
+-                # Same failure mode _failed_mde_result() guards against in
+-                # build_nested_mde_network()/attach_lag_embeddings() below
+-                # -- this is the depth-0 seed for that same Stage-1 BFS, so
+-                # it needs the identical guard or the exact crash just
+-                # relocates one level up.
+-                print(f'{target}: top-level MDE call FAILED: {exc!r} -- treating as a dead-end '
+-                      f'(zero drivers selected for this target)', flush=True)
+-                mde_results[target] = _failed_mde_result(target)
++                # Same failure mode _failed_mde_result() guards against below
++                # -- this is the depth-0 seed for the Stage-1 BFS (shared
++                # across every target in the group), so it needs the
++                # identical guard or the exact crash just relocates one
++                # level up.
++                print(f"{cfg['TARGETS']}: joint (multi-target) MDE call FAILED: {exc!r} -- "
++                      f'treating as a dead-end (zero drivers selected for every target)', flush=True)
++                shared_result = _failed_multi_mde_result(cfg['TARGETS'])
++            for target in cfg['TARGETS']:
++                mde_results[target] = {**shared_result, 'target': target}
++        else:
++            for target in cfg['TARGETS']:
++                candidate_pool = [c for c in obs_cols if c != target]
++                effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
++                try:
++                    mde_results[target] = run_mde_for_target(
++                        target, df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
++                        effective_d, cfg['EMBED_DIM_RHO_MIN'], cfg['CROSS_MAP_RHO_MIN'],
++                        cfg['EXCLUSION_RADIUS_VALUE'], cfg['RESULTS_DIR'], [],
++                        tp=cfg['TP'],
++                        metric=cfg['METRIC'], target_metric=cfg['TARGET_METRIC'],
++                        gamma_delta=cfg['GAMMA_DELTA'],
++                        ccm_window_rows=cfg['CCM_WINDOW_ROWS'], ccm_lib_size_pcts=cfg['CCM_LIB_SIZE_PCTS'],
++                        ccm_sample=cfg['CCM_SAMPLE'], ccm_slope=cfg['CCM_SLOPE'],
++                        reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
++                        run_cache_dir=cfg['RUN_CACHE_DIR'],
++                        data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
++                        code_fingerprint=code_fingerprint,
++                        max_e=cfg['MDE_D'],
++                        # This loop is sequential over cfg['TARGETS'] (one
++                        # target computed at a time, no outer pool sharing
++                        # cores with it) -- so unlike build_nested_mde_
++                        # network()/attach_lag_embeddings()'s per-wave
++                        # outer_workers-based split, this depth-0 seed call
++                        # gets the FULL core budget for its own inner pool.
++                        inner_workers=max(1, cfg['CORES']),
++                    )
++                except Exception as exc:
++                    # Same failure mode _failed_mde_result() guards against
++                    # in build_nested_mde_network()/attach_lag_embeddings()
++                    # below -- this is the depth-0 seed for that same
++                    # Stage-1 BFS, so it needs the identical guard or the
++                    # exact crash just relocates one level up.
++                    print(f'{target}: top-level MDE call FAILED: {exc!r} -- treating as a dead-end '
++                          f'(zero drivers selected for this target)', flush=True)
++                    mde_results[target] = _failed_mde_result(target)
+ 
+         if cfg['RUN_MDE_DIAGNOSTICS']:
+             plot_mde_rho_vs_dimension(
+@@ -3108,6 +3437,8 @@
+             run_cache_dir=cfg['RUN_CACHE_DIR'],
+             data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
+             code_fingerprint=code_fingerprint,
++            gmn_mode=cfg['GMN_MODE'], multi_mde_e=cfg['MULTI_MDE_E'],
++            multi_mde_target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
+         )
+         draw_colored_network(
+             net_result, cfg['TARGET_COLORS'],
+```
+
+---
+
+
+## Job 39069787
+
+Generated: 2026-08-20T10:25:01+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39025341**
+
+### Plain-language summary
+
+Resubmission of job_39025341's own config (`MDE_D=10`/`REGION_CHANNEL_CAP=30`/
+`NESTED_M=5`/`TP=10`/`GENERATE_LENGTH=40`, unchanged -- see the empty
+parameter table below) after that job FAILED in 2 seconds for an
+infrastructure reason unrelated to any code or config: `/bucket` was
+momentarily read-only at the exact moment it started (`mkdir: cannot
+create directory '.../tsls_mde_gmn_cache/job_39025341': Read-only file
+system`), killing it under `set -euo pipefail` before a single line of
+Python ran. Confirmed `/bucket` writable again before this resubmission
+(`df -h` shows `rw`; a direct test-file write to the same target
+directory succeeded) -- a transient Lustre blip, not an ongoing problem.
+
+Also the first real cluster exercise of the `proper_mde` auto-select-E
+change (see the Python diff below -- `run_mde_for_target()` now takes
+`max_e`): job_39025341 staged its own source copy at start time, before
+that change was made, and then failed immediately -- so it never actually
+ran the old *or* new CCM-gate code. This submission stages current
+canonical source fresh, so it's genuinely testing the new
+`proper_embed_dimension`-based auto-select path (E=0, maxE=TSLS_MDE_GMN_MDE_D)
+on real cluster data for the first time, on top of being the smoke test's
+own intended REGION_CHANNEL_CAP=30/MDE_D=10/NESTED_M=5/TP=10 scale-up.
+Validated beforehand on synthetic data only (both 'correlation' and 'f1'
+metrics, both selecting correctly and running in ~1-2s) -- this is the
+first exposure to real TSLS-converted data and to the pipeline's own wave
+pooling/caching machinery.
+
+### Outcome
+
+**TIMEOUT** at the full 4-day walltime (`sacct`: `Elapsed=4-00:00:25`),
+never completed. Not an OOM despite coming close: `.batch`-step `MaxRSS`
+reached ~113.9GB against the `--mem=128G` request (`119404690K`,
+`CANCELLED` step state -- killed by the walltime running out, not by the
+memory manager) -- a genuine close call, but the cap itself was never
+actually exceeded. This job predates several fixes that likely
+contributed to that high figure: it ran without the per-node inner-pool
+`ThreadPoolExecutor` parallelism (added in the very next submission,
+job_39083467, alongside a `--cpus-per-task` 32->64 bump), without the
+CCM pre-filter (added 2026-08-24, only 90/90 real observables ever
+considered, never narrowed), and without this session's Stage 1/Stage 2
+BFS unification. Superseded by job_39083467 at the identical
+`REGION_CHANNEL_CAP=30`/`MDE_D=10`/`NESTED_M=5`/`TP=10` scale, which
+also timed out at 4 days but with `MaxRSS` only ~11.4GB -- a striking
+drop not fully explained by any single one of that submission's changes
+alone.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_39025341/tsls-mde-gmn.py
++++ job_39069787/tsls-mde-gmn.py
+@@ -1108,7 +1108,7 @@
+                         ccm_sample=20, ccm_slope=0.01,
+                         reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                         data_file=None, data_file_sha256=None, code_fingerprint=None,
+-                        cache_stage='stage1'):
++                        cache_stage='stage1', max_e=None):
+     '''Run cleaned_helper_functions.proper_mde's forward selection for a
+     single target variable -- TSLS-flavored equivalent of
+     simple-mde-gmn.py's own run_mde_for_target() (dimx.MDE), matching that
+@@ -1118,14 +1118,35 @@
+     _failed_mde_result(), plot_mde_rho_vs_dimension(),
+     run_tp_vs_rho_sweep(), run_univariate_e_tau_grid()) works completely
+     unchanged. `mde_d` here is already the *effective* dimension count (see
+-    effective_mde_dimension()).
++    effective_mde_dimension()) -- NOT what `max_e` should be capped at (see
++    below), since Stage 2 inflates `mde_d` by num_delays for a completely
++    unrelated reason (candidate-pool breadth, not per-candidate embedding
++    depth).
++
++    E/tau are no longer hardcoded at this call site (previously E=3,
++    tau=-1, a workaround for proper_mde's E<=0 auto-select path being
++    blocked for non-'correlation' metrics -- see
++    cleaned_helper_functions.proper_mde's own E docstring for the fix:
++    proper_embed_dimension, a metric-aware EmbedDimension replacement,
++    already existed in that file but proper_mde's own E<=0 branch never
++    called it). Now: E=0 (auto-select per candidate, per dimension, scored
++    with whichever metric that call already uses -- matching
++    simple-mde-gmn.py's own dx.MDE call, which never overrides E/tau
++    either and lets dimx.MDE auto-select natively) and maxE=`max_e`, the
++    RAW (un-scaled-by-num_delays) TSLS_MDE_GMN_MDE_D value -- the per-node
++    driver-count budget this pipeline already exposes, reused here rather
++    than inventing a separate hardcoded ceiling, per explicit direction.
++    tau is simply no longer passed -- proper_mde's own default (-1) applies,
++    same numeric value as before, just not redundantly re-pinned here.
+ 
+     metric vs. ccmMetric passed to proper_mde: `target_metric` scores the
+     RANKING stage (predictions of `target`, a continuous TARGETS column --
+-    never `metric`); `metric` scores the CCM causality gate (predictions of
+-    each CANDIDATE column, a TSLS-converted neuron series) -- see
+-    load_config()'s TARGET_METRIC docstring and this file's _metric_for();
+-    proper_mde's own docstring anticipates exactly this split.
++    never `metric`) AND the E-auto-select sweep above (same reasoning: it
++    also predicts `target`); `metric` scores the CCM causality gate
++    (predictions of each CANDIDATE column, a TSLS-converted neuron series)
++    -- see load_config()'s TARGET_METRIC docstring and this file's
++    _metric_for(); proper_mde's own docstring anticipates exactly this
++    split.
+ 
+     LEAKAGE (see load_config()'s three-way A/B/end window docstring,
+     identical rationale to simple-mde-gmn.py's own run_mde_for_target()):
+@@ -1147,6 +1168,15 @@
+     at all. `cache_stage` ('stage1' default, 'stage2' from
+     attach_lag_embeddings()) keeps the two stages' cache files distinct,
+     same as simple-mde-gmn.py.'''
++    # Fallback only -- every real call site (main()'s depth-0 seed,
++    # build_nested_mde_network(), attach_lag_embeddings()) passes this
++    # explicitly as the raw TSLS_MDE_GMN_MDE_D value. Falls back to mde_d
++    # (the effective, possibly num_delays-scaled dimension) only if a
++    # caller genuinely omits it, matching this function's own pre-max_e
++    # behavior for that edge case rather than raising.
++    if max_e is None:
++        max_e = mde_d
++
+     mde_df = df[[target] + observable_columns].iloc[:prediction_start + prediction_length]
+ 
+     # See this function's own LEAKAGE docstring above for why both trims
+@@ -1162,7 +1192,7 @@
+             exclusion_radius, delay_set, prediction_start, prediction_length,
+             metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
+             ccm_sample, ccm_slope,
+-            data_file, data_file_sha256, code_fingerprint, cache_stage,
++            data_file, data_file_sha256, code_fingerprint, cache_stage, max_e,
+         )
+         hit = find_cached(prev_runs_dir, cache_filename, fingerprint,
+                            load_one=_load_pickle_cache_entry)
+@@ -1194,7 +1224,7 @@
+     result = tsls.proper_mde(
+         ccm_df, target=target, columns=observable_columns, D=mde_d,
+         lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)],
+-        tau=-1, Tp=tp, E=3, exclusionRadius=exclusion_radius,
++        Tp=tp, E=0, maxE=max_e, exclusionRadius=exclusion_radius,
+         pLibSizes=ccm_lib_size_pcts, sample=ccm_sample, ccmSlope=ccm_slope,
+         crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
+         metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
+@@ -1545,6 +1575,7 @@
+                         ccm_lib_size_pcts, ccm_sample, ccm_slope,
+                         reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+                         code_fingerprint,
++                        max_e=nested_n,
+                     )
+                     futures[fut] = node
+                 for fut in as_completed(futures):
+@@ -1631,6 +1662,7 @@
+                 ccm_lib_size_pcts, ccm_sample, ccm_slope,
+                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+                 code_fingerprint, 'stage2',
++                max_e=stage2_n,
+             )
+             futures[fut] = node
+         for fut in as_completed(futures):
+@@ -2244,17 +2276,24 @@
+                                      metric, target_metric, gamma_delta,
+                                      ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
+                                      data_file, data_file_sha256, code_fingerprint,
+-                                     cache_stage='stage1'):
++                                     cache_stage='stage1', max_e=None):
+     '''Everything that determines one run_mde_for_target() call's outcome,
+     computable before that call runs -- ported from simple-mde-gmn.py, TSLS
+     scoring/CCM-calibration knobs folded in. `candidate_pool` is kept in
+     order rather than sorted -- forward selection can tie-break on column
+     order, so the same columns in a different order aren't guaranteed to
+-    select the same result.'''
++    select the same result. `max_e` (the raw MDE_D-derived auto-select
++    ceiling proper_embed_dimension's own sweep is capped at, distinct from
++    `mde_d`'s possibly num_delays-scaled value -- see run_mde_for_target's
++    own docstring) is a real input to the outcome now that E is
++    auto-selected rather than a hardcoded constant, so it must be part of
++    the fingerprint too: a run with a different max_e can select a
++    different E, hence different candidates, for the same everything else.'''
+     return {
+         'node': node,
+         'candidate_pool': list(candidate_pool),
+         'mde_d': mde_d,
++        'max_e': max_e,
+         'tp': tp,
+         'embed_dim_rho_min': embed_dim_rho_min,
+         'cross_map_rho_min': cross_map_rho_min,
+@@ -3024,6 +3063,7 @@
+                     run_cache_dir=cfg['RUN_CACHE_DIR'],
+                     data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
+                     code_fingerprint=code_fingerprint,
++                    max_e=cfg['MDE_D'],
+                 )
+             except Exception as exc:
+                 # Same failure mode _failed_mde_result() guards against in
+```
+
+---
+
+
+## Job 39025341
+
+Generated: 2026-08-19T14:46:06+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39024490**
+
+### Plain-language summary
+
+Per explicit instruction: job_39024490 (the `REGION_CHANNEL_CAP=30`/
+`MDE_D=10`/`NESTED_M=5`/`TP=10` smoke test, flagged at submission time as
+carrying real timeout risk given job_38976891's own history) was
+`scancel`'d before finishing and resubmitted here at increased resources.
+No pipeline parameters changed -- same smoke-test config as job_39024490,
+resources only.
+
+Second resource escalation in a row for this pipeline, same evidence
+chain: job_38976891 (`REGION_CHANNEL_CAP=15`/`MDE_D=4`/`NESTED_M=1`)
+TIMED OUT at 4h with a single depth-1 wave (3 nodes) still short of
+finishing; job_39024490 was cancelled before proving whether 24h/96G/16
+cores would have been enough at a config 2-2.5x larger on every axis that
+plausibly drove that cost. `--cpus-per-task` 16->32 (a wider `MDE_D=10`
+selection cap can plausibly produce wider waves than the 3-node one that
+bottlenecked before). `--mem` 96G->128G (`REGION_CHANNEL_CAP` doubling
+the candidate pool, plus more concurrent workers). `--time` 24h->4 days --
+deliberately capped at parity with simple-mde-gmn.sbatch's own
+proven-sufficient production budget (currently running clean at
+`REGION_CHANNEL_CAP=999`, 33x this config's own 30) rather than escalated
+further into open-ended territory.
+
+**Recommendation carried forward, not acted on here:** the real Stage-1
+cost driver is still unisolated after two resubmissions. If this run also
+needs to be rescued mid-flight, profiling a single depth-1 `proper_mde`
+call in isolation (docs/tsls-mde-gmn-pipeline.pdf's Future Directions,
+item 1) is likely more effective than a third resource bump.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_39024490/tsls-mde-gmn.sbatch
++++ job_39025341/tsls-mde-gmn.sbatch
+@@ -1,9 +1,9 @@
+ #!/bin/bash
+ #SBATCH --job-name=run_tsls_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=24:00:00
+-#SBATCH --mem=96G
+-#SBATCH --cpus-per-task=16
++#SBATCH --time=4-00:00:00
++#SBATCH --mem=128G
++#SBATCH --cpus-per-task=32
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell) runs,
+ # so no shell variable expansion happens here. Pointed directly at
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39025340
+
+Generated: 2026-08-19T14:46:00+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39024423**
+
+### Plain-language summary
+
+Per explicit instruction: job_39024423 was `scancel`'d (alongside its
+tsls sibling, job_39024490) and resubmitted here. No parameter or resource
+change on this side -- `simple-mde-gmn.sbatch`'s existing
+`--time=4-00:00:00`/`--mem=300G`/`--cpus-per-task=64` budget was already
+assessed as ample headroom for this smoke-test config
+(`REGION_CHANNEL_CAP=30`/`MDE_D=10`) when job_39024423 was first
+submitted, since that same budget is already proven sufficient for
+`simple-mde-gmn`'s own production-scale runs at `REGION_CHANNEL_CAP=999`
+(33x larger) -- resubmitted as-is rather than bumped just for symmetry
+with its tsls sibling, which had genuine, evidence-based cause to
+increase (see job_39025341's own entry).
+
+### Outcome
+
+**OOM-killed.** Unlike job_38883551/38883556 above, this one shows
+`OUT_OF_MEMORY` directly at the job level (not relabeled as `TIMEOUT`) --
+`sacct`: `Elapsed=2-08:30:51`, `.batch`-step `MaxRSS` ~297.6GB against
+the `--mem=300G` request (`312111364K`). Same root cause as the
+production-scale `Tp`-sweep OOMs above (see job_39354205's own entry for
+the full diagnosis): the unfiltered pyEDM `FindNeighbors()` warning-spam
+bug, confirmed here too via a 23GB `.err` file (smaller than the
+production-scale siblings' 68-71GB ones, consistent with this job's much
+smaller `REGION_CHANNEL_CAP=30` vs. their `999`, but the same underlying
+issue -- memory usage tracked wall-clock exposure, not problem size).
+Fixed via a `sitecustomize.py` warning filter; resumed (same config) by
+job_39354345 after the fix.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39024490
+
+Generated: 2026-08-19T14:30:01+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39010375**
+
+### Plain-language summary
+
+Explicit-instruction smoke test: 5 named pipeline-scale parameters set
+together (`MDE_D=10`, `NESTED_M=5`, `REGION_CHANNEL_CAP=30`,
+`GENERATE_LENGTH=40`, `TP=10`), every other parameter left untouched --
+including the resource directives (`--time=24:00:00`/`--mem=96G`/
+`--cpus-per-task=16`), still exactly as sized for job_39010375's own
+smaller-scale resubmission (job_38976891's REGION_CHANNEL_CAP=15/MDE_D=4
+config, which alone timed out at the prior 4h budget -- see that job's own
+JOB_LOG entry).
+
+**Flagged, not silently adjusted:** this configuration is larger on every
+axis that plausibly drove job_38976891's timeout except `GENERATE_LENGTH`
+(which actually drops, 100->40, helping Stage 2's lag-candidate bound) --
+`REGION_CHANNEL_CAP` 15->30 (2x candidate pool), `MDE_D` 4->10 (2.5x
+per-round selection cap), `NESTED_M` 1->5 (up to 5x nesting depth, though
+real depth depends on how many rounds keep finding real drivers), `TP`
+1->10 (10x the prediction interval every `proper_mde` ranking/validation
+call uses). Given job_38976891's own single depth-1 wave alone consumed
+its entire 4h budget at the *smaller* REGION_CHANNEL_CAP=15/MDE_D=4/
+NESTED_M=1 scale, this run inherits real, concrete risk of hitting the
+24h budget too -- submitted as explicitly instructed rather than
+preemptively resized, since the instruction was to change only the 5
+named parameters.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_39010375 | job_39024490 |
+|---|---|---|
+| GENERATE_LENGTH | 100 | 40 |
+| MDE_D | 4 | 10 |
+| NESTED_M | 1 | 5 |
+| REGION_CHANNEL_CAP | 15 | 30 |
+| TP | 1 | 10 |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39024423
+
+Generated: 2026-08-19T14:29:43+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_38883557**
+
+### Plain-language summary
+
+Companion smoke test to job_39024490 (tsls-mde-gmn's own copy of this
+exact same sweep) -- same 5 named parameters (`MDE_D=10`, `NESTED_M=5`,
+`REGION_CHANNEL_CAP=30`, `GENERATE_LENGTH=40`, `TP=10`), every other
+parameter (including `--time=4-00:00:00`/`--mem=300G`/
+`--cpus-per-task=64`) left exactly as it was. `job_38883557` was one of
+the recent `run_simple_mde_gmn_tpNN` TP-sweep jobs at production scale
+(`MDE_D=30`/`REGION_CHANNEL_CAP=999`); this run is meaningfully smaller on
+every axis except `NESTED_M` (3->5) and stays comfortably inside the
+existing 4-day/300G budget given that production-scale sizing already
+covers a much larger `REGION_CHANNEL_CAP`/`MDE_D` -- no resource concern
+here, unlike its tsls sibling job (job_39024490's own entry).
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_38883557 | job_39024423 |
+|---|---|---|
+| GENERATE_LENGTH | 300 | 40 |
+| MDE_D | 30 | 10 |
+| NESTED_M | 3 | 5 |
+| REGION_CHANNEL_CAP | 999 | 30 |
+| TP | 40 | 10 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_38883557/simple-mde-gmn.sbatch
++++ job_39024423/simple-mde-gmn.sbatch
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-#SBATCH --job-name=run_simple_mde_gmn_tp40
++#SBATCH --job-name=run_simple_mde_gmn
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+ #SBATCH --mem=300G
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39024423
+
+Generated: 2026-08-19T14:29:46+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_35678071**
+
+### Parameter changes (slurm_script)
+
+| Parameter | job_35678071 | job_39024423 |
+|---|---|---|
+| CCM_LIB_SIZE_PCTS | 2,3,5,8,12,20,30,50 | _(unset)_ |
+| CCM_SAMPLE | 20 | _(unset)_ |
+| CCM_SLOPE | 0.01 | _(unset)_ |
+| CCM_WINDOW_ROWS | 800 | _(unset)_ |
+| CROSS_MAP_RHO_MIN | 0.2 | 0.1 |
+| DATA_FILE | J1620210605_epoch_8_freq_40_Hz.csv | J1620210605_epoch_8_freq_1_Hz.csv |
+| DELAY_SET | _(unset)_ | 0,-1,-3,-5,-10 |
+| DELAY_SOURCE | _(unset)_ | lag_mode |
+| EMBED_DIM_RHO_MIN | 0.2 | 0.1 |
+| EXCLUSION_RADIUS | _(unset)_ | auto |
+| E_MAX | 13 | 16 |
+| E_STEP | 4 | 2 |
+| FORECAST_PLOT_RANGE | _(unset)_ | windowed |
+| GAMMA_DELTA | 2 | _(unset)_ |
+| GENERATE_LENGTH | _(unset)_ | 40 |
+| GENERATE_START_MAX_OFFSET | _(unset)_ | 20 |
+| GENERATE_START_MIN_OFFSET | _(unset)_ | 0 |
+| GENERATE_START_STEP | _(unset)_ | 2 |
+| GMN_EXCLUSION_RADIUS | _(unset)_ | 0 |
+| GMN_MODE | combined | separate |
+| INTERACTION_MATRIX_OUTER_CORES | _(unset)_ | 4 |
+| LAG_DENSITY | _(unset)_ | strided |
+| LAG_MODE | _(unset)_ | generation_length_adjusted |
+| LAG_STEP | _(unset)_ | 1 |
+| LIB_RATIO | 0.7 | 0.75 |
+| MDE_D | 4 | 10 |
+| MDE_VALIDATION_RATIO | _(unset)_ | 0.5 |
+| METRIC | f1 | _(unset)_ |
+| NESTED_M | _(unset)_ | 5 |
+| REGION_CHANNEL_CAP | 15 | 30 |
+| REUSE_BEST_PARAMS | _(unset)_ | true |
+| SMAP_SEARCH_MODE | coarse_retune | _(unset)_ |
+| STAGE2_ALLOW_REAL_OBSERVABLES | _(unset)_ | false |
+| TARGET_METRIC | correlation | _(unset)_ |
+| TAU_MIN | -9 | -15 |
+| TAU_STEP | 4 | 2 |
+| TP | _(unset)_ | 10 |
+
+### Batch script design changes (slurm_script, excludes parameter block above)
+
+```diff
+--- job_35678071/slurm_script
++++ job_39024423/slurm_script
+@@ -1,13 +1,17 @@
+ #!/bin/bash
+-#SBATCH --job-name=run_tsls_mde_gmn
++#SBATCH --job-name=run_simple_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=2-00:00:00
+-#SBATCH --mem=48G
+-#SBATCH --cpus-per-task=32
+-# ADJUST: must be a literal absolute path, not $HOME/$PROJ_DIR -- Slurm
++#SBATCH --time=4-00:00:00
++#SBATCH --mem=300G
++#SBATCH --cpus-per-task=64
++# ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell)
+-# runs, so no shell variable expansion happens here. Pointed directly at
+-# results/ (a fixed path that already exists) rather than results/job_%j/
++# runs, so no shell variable expansion happens here (this is why this
++# can't just read $FLASH_BASE/pao_rotation_results below, even though
++# that's the exact same literal value). Pointed directly at
++# /flash/FukaiU/j-tominaga/pao_rotation_results/ (a fixed path that must
++# already exist -- created once via `mkdir -p`, persists across jobs the
++# same way $FLASH_BASE itself already does) rather than .../job_%j/
+ # because Slurm opens these files before the job starts, i.e. before
+ # $SLURM_JOB_ID is known and before this script's own `mkdir -p
+ # "$OUT_DIR"` below could create that subdirectory -- a per-job
+@@ -15,12 +19,16 @@
+ # since Slurm doesn't create missing directories. The EXIT trap further
+ # down (search SLURM LOG RELOCATION) moves these into $OUT_DIR once it
+ # exists, so they still end up alongside the rest of that job's output.
+-# Same fix as simple-mde-gmn.sbatch -- its original %x-%j.out/.err
+-# (relative to whatever directory `sbatch` was invoked from, not
+-# $OUT_DIR) is why old logs ended up scattered across the repo root and
+-# scripts/batch/ instead of under results/.
+-#SBATCH --output=/home/j/j-tominaga/pao_rotation/results/%x-%j.out
+-#SBATCH --error=/home/j/j-tominaga/pao_rotation/results/%x-%j.err
++# On /flash, not /home (per explicit direction: home storage is limited,
++# so every output this pipeline produces -- not just scratch -- now
++# lands on /flash instead; see OUT_DIR/MDE_GMN_RESULTS_DIR below for the
++# rest of that change) -- these two files alone can reach tens of MB per
++# job on their own (job 37939058's .err was ~23MB, almost entirely
++# pyEDM UserWarning spam from Stage 2's exhaustive per-node candidate
++# pools), which was a real, measured contributor to the home-quota
++# problem, not a hypothetical one.
++#SBATCH --output=/flash/FukaiU/j-tominaga/pao_rotation_results/%x-%j.out
++#SBATCH --error=/flash/FukaiU/j-tominaga/pao_rotation_results/%x-%j.err
+ #SBATCH --mail-user=j-tominaga@oist.jp
+ #SBATCH --mail-type=END,FAIL
+ 
+@@ -32,7 +40,10 @@
+ 
+ module purge
+ # ADJUST: only needed if the cluster doesn't expose Python 3 in PATH by
+-# default on compute nodes.
++# default on compute nodes. If your uv venv bundles its own Python
++# interpreter (created with `uv python install` / `uv venv --python ...`)
++# you may not need this line at all -- try commenting it out if you get
++# "module not found" errors.
+ module load python/3.11
+ 
+ # ADJUST: absolute path to your uv venv directory.
+@@ -42,37 +53,152 @@
+ export MPLBACKEND=Agg
+ # dimx.MDE / apps.InteractionMatrix / pyEDM's EmbedDimension and
+ # PredictNonlinear already parallelize across SLURM_CPUS_PER_TASK worker
+-# *processes* (passed through as TSLS_MDE_GMN_CORES below); leaving
+-# BLAS/OpenMP free to also multithread within each worker oversubscribes
+-# the node, so pin those to 1 (same reasoning as simple-mde-gmn.sbatch).
++# *processes* (passed through as MDE_GMN_CORES below); leaving BLAS/OpenMP
++# free to also multithread within each worker oversubscribes the node, so
++# pin those to 1 rather than mirroring SLURM_CPUS_PER_TASK the way a
++# single-process job would.
+ export OMP_NUM_THREADS=1
+ export MKL_NUM_THREADS=1
+ export OPENBLAS_NUM_THREADS=1
+ 
++# FIXED CAVEAT (root-caused after several full jobs each ran ~2 days
++# regardless of dataset size, MODE, or MDE_D): apps.InteractionMatrix's
++# own outer worker pool (sized by MDE_GMN_INTERACTION_MATRIX_OUTER_CORES
++# below) calls pyEDM.CCM() once per channel pair (dimx.MDE similarly once
++# per candidate column), and CCM() used to spawn its *own* fresh
++# multiprocessing pool sized to the full visible cpu_count() on every
++# call, for work that only ever amounts to 4-8 tiny KDTree tasks -- an
++# 8-core request could produce ~90 live processes, not 8, since the two
++# pools didn't coordinate (peak processes was outer-cores x cpu_count()).
++# With REGION_CHANNEL_CAP uncapped (~470 real channels) that's ~100k+
++# CCM() calls each paying a full spawn-and-reimport cost -- process-spawn
++# overhead dominating actual compute by orders of magnitude, which is why
++# cutting DATA_FILE resolution or MDE_D didn't help wall time.
++# scripts/src/simple-mde-gmn.py now monkeypatches pyEDM.CCM's inner pool
++# away entirely (`_sequential_ccm_workers`), so this is no longer live --
++# kept here for provenance. MDE_GMN_INTERACTION_MATRIX_OUTER_CORES
++# (default 2) is still a separate knob from --cpus-per-task since it's
++# the one thing sizing real parallelism across column pairs now.
++#
++# REMAINING CAVEAT (unfixed, just made avoidable): even with the above
++# fixed, the per-node theta search in run_theta_search() -- one
++# GENERATE_LENGTH-step recursive Generate() call across every node -- is
++# still the single most expensive part of this pipeline. That cost is
++# unavoidable the *first* time a given network/data combination is
++# searched, but resubmitting the identical combination used to redo it
++# every time regardless. REUSE_BEST_PARAMS below skips it on an exact
++# repeat -- see that parameter's own comment. (This used to also include
++# a len(E) x len(tau) grid on top of the per-node theta retuning --
++# removed per explicit direction once E and each driver's delay started
++# coming from nested-MDE's own network instead of a separate search; see
++# scripts/backup/simple-mde-gmn_pre-delay-embedding.py for that version.)
++
+ # ADJUST: project checkout location and lab/group allocation on this cluster.
+ PROJ_DIR="$HOME/pao_rotation"
+-OUT_DIR="$PROJ_DIR/results/job_${SLURM_JOB_ID}"
++
++# ADJUST: <GROUP> to this lab's actual flash allocation. Defined here
++# (rather than down in the /flash scratch setup section below, where it
++# used to live) because OUT_DIR now needs it too -- per explicit
++# direction, ALL of this pipeline's output now lands on /flash, not
++# /home ($PROJ_DIR/results): home storage is limited, and this isn't
++# hypothetical -- job 37939058 alone (a tiny smoke test) left a ~23MB
++# .err file (see the #SBATCH --error comment above). Only JOB_LOG.md and
++# the small .snapshots/ job-description cache (see JOB DESCRIPTION below)
++# stay on $PROJ_DIR -- both are small, human/git-facing provenance
++# records, not pipeline output data.
++FLASH_BASE="/flash/FukaiU/${USER}"
++mkdir -p "${FLASH_BASE}"
++chmod 2755 "${FLASH_BASE}"
++
++# Live for the run's whole duration (not the ephemeral per-job tempdir
++# further below, which is deleted on every exit including a timeout) --
++# matches $FLASH_BASE/pao_rotation_results, the literal path the #SBATCH
++# --output/--error directives above are hardcoded to, so this job's
++# Slurm logs and its actual pipeline output end up side by side the same
++# way they always have on /home. Only persistent past this job's own
++# lifetime on a crash/timeout, though, not on a clean exit -- see the
++# `cleanup` EXIT trap in the SLURM LOG RELOCATION + OUTPUT ARCHIVING
++# section below and OUTPUT_ARCHIVE_DIR's own comment for the full
++# archive-then-clear behavior on success. /flash is scratch again for
++# this pipeline's purposes; the durable copy is OUTPUT_ARCHIVE_DIR
++# (bucket).
++OUT_DIR="$FLASH_BASE/pao_rotation_results/job_${SLURM_JOB_ID}"
+ mkdir -p "$OUT_DIR"
+ 
+-# ==============================================================================
+-# SLURM LOG RELOCATION
+-# ==============================================================================
+-# The #SBATCH --output/--error above write to $PROJ_DIR/results/ (flat,
+-# not $OUT_DIR -- see the ADJUST comment on those directives for why).
+-# Move them into $OUT_DIR once it exists, via a single combined EXIT trap
+-# (merged with the /flash tempdir cleanup trap below, since bash only
+-# honors the most recently registered EXIT trap -- a second `trap ...
+-# EXIT` later in this script would silently replace this one rather than
+-# stacking). Runs on every exit path, including failure/timeout/cancel,
+-# which is exactly when you most want the log sitting next to the rest
+-# of that run's output instead of loose in results/. Same fix as
+-# simple-mde-gmn.sbatch.
+-SLURM_OUT="$PROJ_DIR/results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.out"
+-SLURM_ERR="$PROJ_DIR/results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.err"
++# ADJUST: durable cross-job cache pool for expensive, fingerprint-reusable
++# pipeline stages (MDE forward-selection, nested-MDE/CCM network
++# construction, theta search, generate-start sweep -- see the module
++# docstring's SEARCH REUSE section and each stage's own docstring).
++# Deliberately NOT under $OUT_DIR (/flash) or $PROJ_DIR (/home) -- this
++# is a growing pool of machine-only cache artifacts across every run ever
++# submitted, not this project's own human-facing per-job output; bucket
++# storage has the headroom (and durability -- unlike /flash, not subject
++# to the same scratch-cleanup expectations) for that instead. CACHE_ROOT
++# is the read side (searched recursively, across every past job's
++# subdirectory, by find_cached_best_params()-style lookups); RUN_CACHE_DIR
++# is this job's own write side -- each cacheable stage syncs its result
++# here *immediately* upon completing (not just at job end like $OUT_DIR),
++# so it survives even if this job later crashes or times out.
++CACHE_ROOT="/bucket/FukaiU/tominaga/pao_rotation/mde_gmn_cache"
++RUN_CACHE_DIR="$CACHE_ROOT/job_${SLURM_JOB_ID}"
++mkdir -p "$RUN_CACHE_DIR"
++
++# Separate from CACHE_ROOT/RUN_CACHE_DIR above -- that pool holds only the
++# fingerprinted, cross-job-reusable *cache* artifacts (per-node MDE
++# selection pickles, best_params/generate_start_sweep json), not this
++# run's actual deliverables (network edge CSVs, every diagnostic PNG,
++# Generate() output CSVs, fidelity plots -- everything else OUT_DIR
++# collects). This is the full-output durable archive instead: on a
++# successful exit, the SLURM LOG RELOCATION section's `cleanup` trap below
++# copies everything under $OUT_DIR here, then deletes the /flash copy --
++# per explicit direction, /flash should go back to being genuine scratch
++# (not permanent storage) now that bucket has the headroom, while still
++# staying in place on /flash (not archived, not deleted) if the job
++# crashes/times out/gets cancelled, so a failed run's partial output is
++# still there to inspect.
++OUTPUT_ARCHIVE_ROOT="/bucket/FukaiU/tominaga/pao_rotation/mde_gmn_outputs"
++OUTPUT_ARCHIVE_DIR="$OUTPUT_ARCHIVE_ROOT/job_${SLURM_JOB_ID}"
++mkdir -p "$OUTPUT_ARCHIVE_DIR"
++
++# ==============================================================================
++# SLURM LOG RELOCATION + OUTPUT ARCHIVING
++# ==============================================================================
++# The #SBATCH --output/--error above write to $FLASH_BASE/
++# pao_rotation_results/ (flat, not $OUT_DIR -- see the ADJUST comment on
++# those directives for why). Move them into $OUT_DIR once it exists, via
++# a single combined EXIT trap (merged with the /flash tempdir cleanup
++# trap below, since bash only honors the most recently registered EXIT
++# trap -- a second `trap ... EXIT` later in this script would silently
++# replace this one rather than stacking). Runs on every exit path,
++# including failure/timeout/cancel, which is exactly when you most want
++# the log sitting next to the rest of that run's output instead of loose
++# in pao_rotation_results/.
++#
++# Also decides $OUT_DIR's own fate, based on PY_STATUS (set around the
++# `python3 -u simple-mde-gmn.py` call below -- unset/non-"0" here means
++# either the pipeline itself failed, or this trap fired before that line
++# ever ran, e.g. an earlier setup failure): "0" means the pipeline
++# completed cleanly, so this run's full output is copied to the durable
++# OUTPUT_ARCHIVE_DIR (bucket -- see that variable's own comment) and the
++# /flash copy is then removed, since /flash is meant to be scratch again
++# now that bucket holds the real copy; anything else leaves $OUT_DIR
++# exactly where it is on /flash, untouched, for post-mortem inspection --
++# per explicit direction, crashes/OOMs/timeouts are exactly the case
++# where you want that data still sitting on fast, directly-browsable
++# storage rather than needing to dig it out of the archive.
++SLURM_OUT="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.out"
++SLURM_ERR="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.err"
+ cleanup() {
+-    [ -n "${tempdir:-}" ] && rm -rf "$tempdir"
+     [ -f "$SLURM_OUT" ] && mv -f "$SLURM_OUT" "$OUT_DIR"/
+     [ -f "$SLURM_ERR" ] && mv -f "$SLURM_ERR" "$OUT_DIR"/
++    if [ "${PY_STATUS:-1}" = "0" ] && [ -d "$OUT_DIR" ]; then
++        if cp -a "$OUT_DIR"/. "$OUTPUT_ARCHIVE_DIR"/; then
++            rm -rf "$OUT_DIR"
++        else
++            echo "WARNING: archive copy from $OUT_DIR to $OUTPUT_ARCHIVE_DIR failed -- leaving the /flash copy in place rather than risk deleting the only one." >&2
++        fi
++    fi
++    [ -n "${tempdir:-}" ] && rm -rf "$tempdir"
+     return 0
+ }
+ trap cleanup EXIT
+@@ -80,26 +206,33 @@
+ # ==============================================================================
+ # JOB DESCRIPTION
+ # ==============================================================================
+-# Diffs this run's tsls-mde-gmn.py + tsls-mde-gmn.sbatch against the
+-# rolling snapshot cache of the last tsls-mde-gmn submission
+-# ($PROJ_DIR/results/.snapshots/ -- keyed by filename, so this never gets
+-# compared against a simple-mde-gmn job by mistake; see
+-# generate_job_description.sh's own module docstring), inserting a new
+-# entry into $PROJ_DIR/JOB_LOG.md (parameter-block changes as a table,
+-# everything else as unified diffs), then updates that cache to this
+-# run's files. Runs before the pipeline itself so the entry is written
+-# even if the run later fails or times out.
++# Diffs this run's simple-mde-gmn.py + simple-mde-gmn.sbatch against the
++# rolling snapshot cache of the last simple-mde-gmn submission
++# ($PROJ_DIR/results/.snapshots/ on /home, deliberately small and not a
++# per-job copy -- see generate_job_description.sh's own module docstring
++# for why),
++# inserting a new entry into $PROJ_DIR/JOB_LOG.md (parameter-block changes
++# as a table, everything else as unified diffs), then updates that cache
++# to this run's files. Runs before the pipeline itself so the entry is
++# written even if the run later fails or times out. In the common case
++# (submitted via submit.sh) this call is a no-op -- submit.sh already
++# wrote this job's JOB_LOG.md entry at submission time, and this script
++# checks for that first (see generate_job_description.sh's own
++# idempotency comment) -- but still runs here so a job started via bare
++# `sbatch` (skipping submit.sh) still gets logged.
+ #
+-# sbatch_src is "$0", not a hardcoded path to this canonical file -- same
+-# reasoning as simple-mde-gmn.sbatch: sbatch copies whatever file it's
+-# given verbatim into the running job, and $0 reflects that actual
+-# submitted path, which matters if the live canonical file at
+-# scripts/batch/tsls-mde-gmn.sbatch gets edited again while this job sits
+-# queued.
++# sbatch_src is "$0", not a hardcoded path to this canonical file: sbatch
++# copies whatever file it's given verbatim into the running job, and $0
++# reflects that actual submitted path (confirmed via `scontrol show job`'s
++# Command= field) -- this matters if the live canonical file at
++# scripts/batch/simple-mde-gmn.sbatch gets edited again while this job
++# sits queued. A hardcoded canonical path here would silently diff
++# whatever that file happens to contain *right now* instead of what this
++# job actually launched with.
+ "$PROJ_DIR/scripts/batch/generate_job_description.sh" \
+-    "$PROJ_DIR" "$OUT_DIR" "$SLURM_JOB_ID" \
++    "$PROJ_DIR" "$SLURM_JOB_ID" \
+     "$0" \
+-    "$PROJ_DIR/scripts/src/tsls-mde-gmn.py"
++    "$PROJ_DIR/scripts/src/simple-mde-gmn.py"
+ 
+ # ==============================================================================
+ # /flash scratch setup
+@@ -107,33 +240,26 @@
+ 
+ umask 002
+ 
+-# ADJUST: <GROUP> to this lab's actual flash allocation.
+-FLASH_BASE="/flash/FukaiU/${USER}"
+-mkdir -p "${FLASH_BASE}"
+-chmod 2755 "${FLASH_BASE}"
+-
+-tempdir="$(mktemp -d "${FLASH_BASE}/run_tsls_mde_gmn.${SLURM_JOB_ID}.XXXXXX")"
++# FLASH_BASE itself is defined earlier now (OUT_DIR needs it too -- see
++# that section's own comment); only the ephemeral per-job tempdir is set
++# up here.
++tempdir="$(mktemp -d "${FLASH_BASE}/run_simple_mde_gmn.${SLURM_JOB_ID}.XXXXXX")"
+ # Cleanup on exit (including this tempdir) is handled by the combined
+ # `cleanup` EXIT trap registered in the SLURM LOG RELOCATION section
+ # above -- deliberately not a second `trap ... EXIT` here, which would
+-# silently replace that one instead of stacking.
+-
+-# NOTE: the E/tau/theta search checkpoints to disk after every candidate
+-# so a resubmitted job can resume instead of restarting a multi-hour
+-# search from scratch -- but $tempdir lives under $FLASH_BASE and is
+-# deleted by the `cleanup` trap above the moment this script exits,
+-# including on a SLURM timeout/cancellation (SIGTERM), *before* results
+-# get copied to $OUT_DIR. Same caveat as simple-mde-gmn.sbatch: if your
+-# search might not finish within --time, checkpoints will be lost across
+-# resubmissions under this scratch layout.
++# silently replace that one instead of stacking. Only ever holds the
++# staged source/data copy below (COPY SOURCE FILE + INPUT DATA) -- actual
++# pipeline output no longer passes through here at all (see
++# MDE_GMN_RESULTS_DIR below), so this directory being wiped on every
++# exit, including a timeout, is no longer a data-loss concern the way it
++# used to be.
+ 
+ # ==============================================================================
+-# COPY SOURCE FILE + HELPER MODULE + INPUT DATA
++# COPY SOURCE FILE + INPUT DATA
+ # ==============================================================================
+ 
+ cp -av \
+-    "$PROJ_DIR/scripts/src/tsls-mde-gmn.py" \
+-    "$PROJ_DIR/scripts/src/cleaned_helper_functions.py" \
++    "$PROJ_DIR/scripts/src/simple-mde-gmn.py" \
+     "$tempdir"/
+ 
+ mkdir -p "$tempdir/data"
+@@ -147,59 +273,89 @@
+ # RUN
+ # ==============================================================================
+ 
+-export TSLS_MDE_GMN_DATA_DIR="$tempdir/data"
+-export TSLS_MDE_GMN_DATA_FILE="${DATA_FILE}"
+-# TEMP DIAGNOSTIC: pointed directly at $OUT_DIR (not $tempdir, which the
+-# `cleanup` trap deletes on every exit including a crash) so intermediate
+-# outputs -- especially the CCM interaction-matrix CSV -- survive if this
+-# run fails the same way jobs 35332887/35347307 did, instead of being lost
+-# with the rest of $tempdir before anyone can inspect them. Revert to
+-# "$tempdir/tsls_mde_gmn_outputs" once this is resolved -- writing directly
+-# under $OUT_DIR (not local /flash scratch) is slower I/O for every
+-# intermediate file this pipeline writes, acceptable for one diagnostic run
+-# but not a permanent tradeoff.
+-export TSLS_MDE_GMN_RESULTS_DIR="$OUT_DIR/live_debug"
+-export TSLS_MDE_GMN_MODE="${MODE}"
+-export TSLS_MDE_GMN_GMN_MODE="${GMN_MODE}"
+-export TSLS_MDE_GMN_TARGETS="${TARGETS}"
+-export TSLS_MDE_GMN_D="${MDE_D}"
+-export TSLS_MDE_GMN_EMBED_DIM_RHO_MIN="${EMBED_DIM_RHO_MIN}"
+-export TSLS_MDE_GMN_CROSS_MAP_RHO_MIN="${CROSS_MAP_RHO_MIN}"
+-export TSLS_MDE_GMN_REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP}"
+-export TSLS_MDE_GMN_LIB_RATIO="${LIB_RATIO}"
+-export TSLS_MDE_GMN_E_MIN="${E_MIN}"
+-export TSLS_MDE_GMN_E_MAX="${E_MAX}"
+-export TSLS_MDE_GMN_E_STEP="${E_STEP}"
+-export TSLS_MDE_GMN_TAU_MIN="${TAU_MIN}"
+-export TSLS_MDE_GMN_TAU_MAX="${TAU_MAX}"
+-export TSLS_MDE_GMN_TAU_STEP="${TAU_STEP}"
+-export TSLS_MDE_GMN_SMAP_SEARCH_MODE="${SMAP_SEARCH_MODE}"
+-export TSLS_MDE_GMN_CORES="${SLURM_CPUS_PER_TASK}"
+-export TSLS_MDE_GMN_METRIC="${METRIC}"
+-export TSLS_MDE_GMN_TARGET_METRIC="${TARGET_METRIC}"
+-export TSLS_MDE_GMN_GAMMA_DELTA="${GAMMA_DELTA}"
+-export TSLS_MDE_GMN_CCM_WINDOW_ROWS="${CCM_WINDOW_ROWS}"
+-export TSLS_MDE_GMN_CCM_LIB_SIZE_PCTS="${CCM_LIB_SIZE_PCTS}"
+-export TSLS_MDE_GMN_CCM_SAMPLE="${CCM_SAMPLE}"
+-export TSLS_MDE_GMN_CCM_SLOPE="${CCM_SLOPE}"
++export MDE_GMN_DATA_DIR="$tempdir/data"
++export MDE_GMN_DATA_FILE="${DATA_FILE}"
++# Points directly at OUT_DIR (not a subdirectory of the ephemeral
++# $tempdir) -- see the /flash scratch setup section's own comment: every
++# pipeline output, including the theta search's/generate-start sweep's
++# own intra-job checkpoint files, now survives a timeout/crash rather
++# than being deleted with $tempdir before ever reaching $OUT_DIR. What
++# happens to OUT_DIR itself after the run -- archived to bucket and
++# cleared from /flash on success, left alone on /flash on a
++# crash/timeout -- is the `cleanup` EXIT trap's job (see OUTPUT_ARCHIVE_DIR
++# above); nothing here needs to change based on that.
++export MDE_GMN_RESULTS_DIR="$OUT_DIR"
++export MDE_GMN_MODE="${MODE}"
++export MDE_GMN_GMN_MODE="${GMN_MODE}"
++export MDE_GMN_TARGETS="${TARGETS}"
++export MDE_GMN_D="${MDE_D}"
++export MDE_GMN_TP="${TP}"
++export MDE_GMN_EMBED_DIM_RHO_MIN="${EMBED_DIM_RHO_MIN}"
++export MDE_GMN_CROSS_MAP_RHO_MIN="${CROSS_MAP_RHO_MIN}"
++export MDE_GMN_EXCLUSION_RADIUS="${EXCLUSION_RADIUS}"
++export MDE_GMN_NESTED_M="${NESTED_M}"
++export MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES="${STAGE2_ALLOW_REAL_OBSERVABLES}"
++export MDE_GMN_REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP}"
++export MDE_GMN_DELAY_SOURCE="${DELAY_SOURCE}"
++export MDE_GMN_LAG_MODE="${LAG_MODE}"
++export MDE_GMN_LAG_DENSITY="${LAG_DENSITY}"
++export MDE_GMN_LAG_STEP="${LAG_STEP}"
++export MDE_GMN_DELAY_SET="${DELAY_SET}"
++export MDE_GMN_LIB_RATIO="${LIB_RATIO}"
++export MDE_GMN_MDE_VALIDATION_RATIO="${MDE_VALIDATION_RATIO}"
++export MDE_GMN_GENERATE_LENGTH="${GENERATE_LENGTH}"
++export GMN_EXCLUSION_RADIUS="${GMN_EXCLUSION_RADIUS}"
++export MDE_GMN_FORECAST_PLOT_RANGE="${FORECAST_PLOT_RANGE}"
++export MDE_GMN_GENERATE_START_MIN_OFFSET="${GENERATE_START_MIN_OFFSET}"
++export MDE_GMN_GENERATE_START_MAX_OFFSET="${GENERATE_START_MAX_OFFSET}"
++export MDE_GMN_GENERATE_START_STEP="${GENERATE_START_STEP}"
++export MDE_GMN_E_MIN="${E_MIN}"
++export MDE_GMN_E_MAX="${E_MAX}"
++export MDE_GMN_E_STEP="${E_STEP}"
++export MDE_GMN_TAU_MIN="${TAU_MIN}"
++export MDE_GMN_TAU_MAX="${TAU_MAX}"
++export MDE_GMN_TAU_STEP="${TAU_STEP}"
++export MDE_GMN_CORES="${SLURM_CPUS_PER_TASK}"
++export MDE_GMN_INTERACTION_MATRIX_OUTER_CORES="${INTERACTION_MATRIX_OUTER_CORES}"
++export MDE_GMN_REUSE_BEST_PARAMS="${REUSE_BEST_PARAMS}"
++# Separate from MDE_GMN_RESULTS_DIR (also persistent now, but per-job and
++# on /flash -- see that export's own comment) -- these point at the
++# durable *cross-job* bucket cache pool set up above so a later job can
++# actually find a past run's cached results to reuse, not just this run's
++# own (see CACHE_ROOT/RUN_CACHE_DIR's own comment).
++export MDE_GMN_PREV_RUNS_DIR="$CACHE_ROOT"
++export MDE_GMN_RUN_CACHE_DIR="$RUN_CACHE_DIR"
+ 
+ python3 -V
+ 
+-python3 -u tsls-mde-gmn.py
++# Deliberately not left under `set -e` for this one call -- PY_STATUS
++# needs to be captured either way (success or failure) so the `cleanup`
++# EXIT trap above knows whether to archive-and-clear $OUT_DIR or leave it
++# on /flash; under plain `set -e`, a nonzero exit here would jump straight
++# to the trap without ever reaching the capture line below.
++set +e
++python3 -u simple-mde-gmn.py
++PY_STATUS=$?
++set -e
++
++if [ "$PY_STATUS" -ne 0 ]; then
++    echo "simple-mde-gmn.py exited with status ${PY_STATUS} -- leaving output on /flash at ${OUT_DIR} for inspection (not archived to bucket)." >&2
++    exit "$PY_STATUS"
++fi
+ 
+ # ==============================================================================
+ # SAVE OUTPUTS
+ # ==============================================================================
+-
+-# TEMP DIAGNOSTIC: TSLS_MDE_GMN_RESULTS_DIR above already points at
+-# $OUT_DIR/live_debug (not a relative $tempdir path), so there's nothing
+-# to copy from $tempdir on success -- flatten live_debug/ into $OUT_DIR
+-# directly instead, matching this pipeline's normal final layout (files
+-# directly under $OUT_DIR, not nested). Revert alongside the
+-# TSLS_MDE_GMN_RESULTS_DIR change above once resolved.
+-cp -av "$OUT_DIR/live_debug/." "$OUT_DIR"/
++# No cp step needed here anymore -- MDE_GMN_RESULTS_DIR points directly
++# at $OUT_DIR now (see that export's own comment), so the pipeline has
++# already been writing straight to /flash throughout the run. What
++# happens next -- archived to bucket and removed from /flash, since
++# PY_STATUS=0 here means the run completed cleanly -- is handled by the
++# `cleanup` EXIT trap above (see that section's own comment for why it's
++# there rather than here: it has to run on every exit path, not just this
++# clean one).
+ 
+ echo "========================================================"
+-echo "Job ${SLURM_JOB_ID} complete. Outputs saved to:"
+-echo "  ${OUT_DIR}"
++echo "Job ${SLURM_JOB_ID} complete. Archiving outputs to bucket and clearing the /flash copy:"
++echo "  ${OUT_DIR} -> ${OUTPUT_ARCHIVE_DIR}"
+ echo "========================================================"
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 39010375
+
+Generated: 2026-08-19T11:05:03+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_38976891**
+
+### Plain-language summary
+
+Resubmission of job_38976891's exact same configuration
+(`REGION_CHANNEL_CAP=15`/`MDE_D=4`/`NESTED_M=1`/`GENERATE_LENGTH=100`,
+unchanged -- see the parameter table below, empty because nothing pipeline-
+scale changed) after that job hit `TIMEOUT` at its 4-hour budget.
+`sacct` confirms: `State=TIMEOUT`, `Elapsed=04:00:27`.
+
+What actually happened, from job_38976891's own preserved flash output
+(`/flash/FukaiU/j-tominaga/pao_rotation_results/job_38976891/`, left in
+place untouched since the run didn't exit cleanly -- see
+docs/tsls-mde-gmn-pipeline.pdf's own Cluster Storage Architecture section
+for why): Stage 1's depth-0 seed finished for both targets within about 2
+minutes, but the single depth-1 wave that followed (3 nodes --
+`mPFC_12_tsls`/`mPFC_3_tsls`/`mPFC_9_tsls`, every real driver
+`head_position_x` selected at depth 0, each re-MDE'd in its own right) had
+not produced a single new output file more than 4 hours later. Checked
+directly on the compute node before the timeout (not just inferred from
+the queue): 9 worker processes were confirmed alive and burning 90-105%
+CPU each the entire time -- ruling out a hang/deadlock. This is real,
+sustained work costing far more than the interactive smoke tests (at a
+smaller `REGION_CHANNEL_CAP=3`) predicted; the specific cost driver has
+not yet been isolated (tracked as an open item in
+docs/tsls-mde-gmn-pipeline.pdf's Development History and Future
+Directions sections).
+
+Per explicit instruction, this resubmission increases resource allocation
+(especially time) and does not first chase that root cause -- it's a
+deliberate "get a full run to actually observe" step, not a substitute for
+the profiling work still open. `--time` 04:00:00 -> 24:00:00 (6x -- a
+single depth-1 wave alone already exhausted the old budget, and Stage 2,
+untested and working over a considerably larger delay-expanded candidate
+pool, still lies entirely ahead; a small proportional bump risked a second
+uninformative timeout). `--mem` 48G -> 96G (safety margin specifically for
+that same untested Stage 2 memory footprint; still <20% of a
+compute-partition node's 500G). `--cpus-per-task` left at 16 -- the
+timeout was wall-clock-bound on a wave of only 3 nodes well under this
+core count (confirmed by the measured per-process CPU%), not core-starved,
+so more outer workers would not have helped.
+
+### Outcome
+
+**TIMEOUT again**, this time at the fuller 24-hour budget (`sacct`:
+`Elapsed=1-00:00:20`) -- the 6x time bump wasn't enough to reach
+completion either. Not memory-bound: `.batch`-step `MaxRSS` only
+~37.7GB against the `--mem=96G` request (`39515249K`), confirming the
+earlier hypothesis that this was a genuine wall-clock cost problem, not
+a resource-sizing one. This exact small scale (`REGION_CHANNEL_CAP=15`)
+was not retried again at higher resources -- the investigation instead
+moved to test a deliberately different (medium) scale next
+(job_39024490, 5 parameters changed together), rather than continuing
+to chase this specific configuration's runaway cost in isolation. The
+underlying cost driver was later substantially addressed by the CCM
+pre-filter feature (added 2026-08-24, see the
+ccm-prefilter-observables memory), which shrinks the candidate pool
+every nested-MDE stage searches.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_38976891/tsls-mde-gmn.sbatch
++++ job_39010375/tsls-mde-gmn.sbatch
+@@ -1,8 +1,8 @@
+ #!/bin/bash
+ #SBATCH --job-name=run_tsls_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=04:00:00
+-#SBATCH --mem=48G
++#SBATCH --time=24:00:00
++#SBATCH --mem=96G
+ #SBATCH --cpus-per-task=16
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell) runs,
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 38976891
+
+Generated: 2026-08-19T05:04:08+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_35678071**
+
+### Plain-language summary
+
+First cluster submission of `tsls-mde-gmn.py`/`.sbatch` after this session's
+full rewrite that ported `simple-mde-gmn.py`'s current design over wholesale:
+two-stage nested-MDE + GMN network construction (Stage 1 real-observable
+backbone, Stage 2 per-node lagged-embedding attachment), the leakage-safe
+three-way A/B/end temporal split, generalized per-driver-delay embedding,
+exception-guarding, and the full flash-scratch + bucket-archive/cache
+architecture -- replacing the old single-stage CCM-interaction-matrix network
++ combined E/tau/theta grid search that job_35678071 (and every job before it)
+ran. `job_35678071` is simply the last job that ran the *old* tsls-mde-gmn.sbatch,
+so almost every parameter below shows as newly introduced -- that's the
+from-scratch architecture rewrite, not a targeted parameter change, so the
+table isn't meaningful to read line-by-line here.
+
+This is a deliberate small, calibration-scale run, not a production one:
+`REGION_CHANNEL_CAP=15`/`MDE_D=4`/`NESTED_M=1` cap the network small, and
+`GENERATE_LENGTH=100` (down from its own default of `0`) additionally caps
+Stage 2's lag-candidate universe -- `GENERATE_LENGTH=0`'s "use the full
+held-out window" sentinel resolves in `main()` *before* feeding
+`LAG_MODE=generation_length_adjusted`'s lag-set bound, so leaving it at 0
+would have silently expanded Stage 2's search to thousands of lag columns
+per observable even with REGION_CHANNEL_CAP/MDE_D capped small -- caught and
+fixed before submission, not after a stalled run.
+
+Resource sizing: `--cpus-per-task` 32->16 (matches `THETA_RANGE`'s own 15
+candidate values for one-shot parallel theta search, this run's most
+expensive stage; small REGION_CHANNEL_CAP/MDE_D/NESTED_M keeps per-wave
+node counts well under that too). `--time` 2-00:00:00 -> 04:00:00 (generous
+headroom over this small config's expected runtime, while short enough to
+schedule easily via backfill). `--mem` left at 48G (already under 10% of a
+compute-partition node's 500G -- ample headroom, and there's no measured
+MaxRSS yet from this pipeline's own cluster history to size tighter against).
+Confirmed via `scontrol show partition`: `compute` (PriorityTier=20) is
+scheduled ahead of `short` (PriorityTier=1) regardless of job size/duration,
+so this stayed on `compute` rather than moving to `short` -- consistent with
+the immediate `RUNNING` state this job reached (~30s queue wait).
+
+Not yet examined: whether this run actually completes cleanly within the
+4-hour window, and what its real peak memory/wall-clock usage turns out to
+be -- both needed before attempting an uncapped (REGION_CHANNEL_CAP=999,
+GENERATE_LENGTH=0) production run.
+
+### Outcome
+
+**TIMEOUT** at the 4-hour budget (`sacct`: `State=TIMEOUT`,
+`Elapsed=04:00:27`). Not memory-bound: `.batch`-step `MaxRSS` only
+~21.3GB against the `--mem=48G` request (`22390921K`), so the "not yet
+examined" memory question above resolves to "comfortably fine at this
+scale" -- the open question was wall-clock, not memory. From this job's
+own preserved flash output: Stage 1's depth-0 seed finished for both
+targets within ~2 minutes, but the single depth-1 wave that followed (3
+nodes) hadn't produced a single new output file more than 4 hours later,
+despite 9 confirmed-live worker processes burning 90-105% CPU each the
+whole time (ruling out a hang/deadlock -- this was real, sustained,
+unexpectedly expensive work). Resumed with the same config at a 6x
+time/2x mem budget by job_39010375 (see that entry's own Outcome --
+still didn't finish, TIMEOUT again at 24h).
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_35678071 | job_38976891 |
+|---|---|---|
+| DELAY_SET | _(unset)_ | 0,-1,-3,-5,-10 |
+| DELAY_SOURCE | _(unset)_ | lag_mode |
+| EXCLUSION_RADIUS | _(unset)_ | 0 |
+| FORECAST_PLOT_RANGE | _(unset)_ | full |
+| GENERATE_LENGTH | _(unset)_ | 100 |
+| GENERATE_START_MAX_OFFSET | _(unset)_ | 1 |
+| GENERATE_START_MIN_OFFSET | _(unset)_ | 0 |
+| GENERATE_START_STEP | _(unset)_ | 50 |
+| GMN_EXCLUSION_RADIUS | _(unset)_ | 0 |
+| GRID_RHO_THRESHOLD | _(unset)_ | 0.9 |
+| LAG_DENSITY | _(unset)_ | strided |
+| LAG_MODE | _(unset)_ | generation_length_adjusted |
+| LAG_STEP | _(unset)_ | 1 |
+| MAX_TP | _(unset)_ | 20 |
+| MDE_VALIDATION_RATIO | _(unset)_ | 0.5 |
+| NESTED_M | _(unset)_ | 1 |
+| REUSE_BEST_PARAMS | _(unset)_ | true |
+| RUN_MDE_DIAGNOSTICS | _(unset)_ | true |
+| SMAP_SEARCH_MODE | coarse_retune | _(unset)_ |
+| STAGE2_ALLOW_REAL_OBSERVABLES | _(unset)_ | false |
+| THETA_RANGE | _(unset)_ | 0.01,0.1,0.3,0.5,0.75,1,1.5,2,3,4,5,6,7,8,9 |
+| TP | _(unset)_ | 1 |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_35678071/tsls-mde-gmn.sbatch
++++ job_38976891/tsls-mde-gmn.sbatch
+@@ -1,26 +1,25 @@
+ #!/bin/bash
+ #SBATCH --job-name=run_tsls_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=2-00:00:00
++#SBATCH --time=04:00:00
+ #SBATCH --mem=48G
+-#SBATCH --cpus-per-task=32
+-# ADJUST: must be a literal absolute path, not $HOME/$PROJ_DIR -- Slurm
+-# parses #SBATCH directives itself before this script (or any shell)
+-# runs, so no shell variable expansion happens here. Pointed directly at
+-# results/ (a fixed path that already exists) rather than results/job_%j/
+-# because Slurm opens these files before the job starts, i.e. before
+-# $SLURM_JOB_ID is known and before this script's own `mkdir -p
+-# "$OUT_DIR"` below could create that subdirectory -- a per-job
+-# subdirectory in this path would fail with "couldn't open output file"
+-# since Slurm doesn't create missing directories. The EXIT trap further
+-# down (search SLURM LOG RELOCATION) moves these into $OUT_DIR once it
+-# exists, so they still end up alongside the rest of that job's output.
+-# Same fix as simple-mde-gmn.sbatch -- its original %x-%j.out/.err
+-# (relative to whatever directory `sbatch` was invoked from, not
+-# $OUT_DIR) is why old logs ended up scattered across the repo root and
+-# scripts/batch/ instead of under results/.
+-#SBATCH --output=/home/j/j-tominaga/pao_rotation/results/%x-%j.out
+-#SBATCH --error=/home/j/j-tominaga/pao_rotation/results/%x-%j.err
++#SBATCH --cpus-per-task=16
++# ADJUST: must be a literal absolute path, not a shell variable -- Slurm
++# parses #SBATCH directives itself before this script (or any shell) runs,
++# so no shell variable expansion happens here. Pointed directly at
++# /flash/FukaiU/j-tominaga/pao_rotation_results/ (a fixed path that must
++# already exist -- created once via `mkdir -p`, persists across jobs the
++# same way $FLASH_BASE itself already does) rather than .../job_%j/ because
++# Slurm opens these files before the job starts, i.e. before $SLURM_JOB_ID
++# is known and before this script's own `mkdir -p "$OUT_DIR"` below could
++# create that subdirectory. The EXIT trap further down (search SLURM LOG
++# RELOCATION) moves these into $OUT_DIR once it exists.
++# On /flash, not /home, and shared with simple-mde-gmn.sbatch's own
++# pao_rotation_results/ directory -- same reasoning as that file: home
++# storage is limited, and Slurm logs alone have reached tens of MB per job
++# on the sibling pipeline.
++#SBATCH --output=/flash/FukaiU/j-tominaga/pao_rotation_results/%x-%j.out
++#SBATCH --error=/flash/FukaiU/j-tominaga/pao_rotation_results/%x-%j.err
+ #SBATCH --mail-user=j-tominaga@oist.jp
+ #SBATCH --mail-type=END,FAIL
+ 
+@@ -40,39 +39,104 @@
+ source "${VENV_DIR}/bin/activate"
+ 
+ export MPLBACKEND=Agg
+-# dimx.MDE / apps.InteractionMatrix / pyEDM's EmbedDimension and
+-# PredictNonlinear already parallelize across SLURM_CPUS_PER_TASK worker
+-# *processes* (passed through as TSLS_MDE_GMN_CORES below); leaving
++# gmn.GMN / PredictNonlinear already parallelize across SLURM_CPUS_PER_TASK
++# worker *processes* (passed through as TSLS_MDE_GMN_CORES below); leaving
+ # BLAS/OpenMP free to also multithread within each worker oversubscribes
+-# the node, so pin those to 1 (same reasoning as simple-mde-gmn.sbatch).
++# the node, so pin those to 1 rather than mirroring SLURM_CPUS_PER_TASK the
++# way a single-process job would.
+ export OMP_NUM_THREADS=1
+ export MKL_NUM_THREADS=1
+ export OPENBLAS_NUM_THREADS=1
+ 
+ # ADJUST: project checkout location and lab/group allocation on this cluster.
+ PROJ_DIR="$HOME/pao_rotation"
+-OUT_DIR="$PROJ_DIR/results/job_${SLURM_JOB_ID}"
++
++# ADJUST: <GROUP> to this lab's actual flash allocation. Defined here
++# (rather than down in the /flash scratch setup section, where it used to
++# live) because OUT_DIR needs it too -- same reasoning as
++# simple-mde-gmn.sbatch: home storage is limited, so every output this
++# pipeline produces now lands on /flash instead. Only JOB_LOG.md and the
++# small .snapshots/ job-description cache stay on $PROJ_DIR -- both are
++# small, human/git-facing provenance records, not pipeline output data.
++FLASH_BASE="/flash/FukaiU/${USER}"
++mkdir -p "${FLASH_BASE}"
++chmod 2755 "${FLASH_BASE}"
++
++# Live for the run's whole duration (not the ephemeral per-job tempdir
++# further below, which is deleted on every exit including a timeout) --
++# matches $FLASH_BASE/pao_rotation_results, the literal path the #SBATCH
++# --output/--error directives above are hardcoded to. Only persistent past
++# this job's own lifetime on a crash/timeout, though, not on a clean exit
++# -- see the `cleanup` EXIT trap below and OUTPUT_ARCHIVE_DIR's own comment
++# for the full archive-then-clear behavior on success.
++OUT_DIR="$FLASH_BASE/pao_rotation_results/job_${SLURM_JOB_ID}"
+ mkdir -p "$OUT_DIR"
+ 
+-# ==============================================================================
+-# SLURM LOG RELOCATION
+-# ==============================================================================
+-# The #SBATCH --output/--error above write to $PROJ_DIR/results/ (flat,
+-# not $OUT_DIR -- see the ADJUST comment on those directives for why).
+-# Move them into $OUT_DIR once it exists, via a single combined EXIT trap
+-# (merged with the /flash tempdir cleanup trap below, since bash only
+-# honors the most recently registered EXIT trap -- a second `trap ...
+-# EXIT` later in this script would silently replace this one rather than
+-# stacking). Runs on every exit path, including failure/timeout/cancel,
+-# which is exactly when you most want the log sitting next to the rest
+-# of that run's output instead of loose in results/. Same fix as
+-# simple-mde-gmn.sbatch.
+-SLURM_OUT="$PROJ_DIR/results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.out"
+-SLURM_ERR="$PROJ_DIR/results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.err"
++# ADJUST: durable cross-job cache pool for expensive, fingerprint-reusable
++# pipeline stages (MDE forward-selection, network construction, theta
++# search, generate-start sweep -- see tsls-mde-gmn.py's own module
++# docstring's SEARCH REUSE section). Deliberately NOT under $OUT_DIR
++# (/flash) or $PROJ_DIR (/home) -- a growing pool of machine-only cache
++# artifacts across every run ever submitted, not this project's own
++# human-facing per-job output; bucket storage has the headroom (and
++# durability -- unlike /flash, not subject to the same scratch-cleanup
++# expectations) for that instead. Separate cache pool from
++# simple-mde-gmn.sbatch's own CACHE_ROOT -- these two pipelines' cache
++# artifacts must never collide, even by coincidence of network_id/node
++# naming, since they're fingerprinted against genuinely different code and
++# data.
++CACHE_ROOT="/bucket/FukaiU/tominaga/pao_rotation/tsls_mde_gmn_cache"
++RUN_CACHE_DIR="$CACHE_ROOT/job_${SLURM_JOB_ID}"
++mkdir -p "$RUN_CACHE_DIR"
++
++# Separate from CACHE_ROOT/RUN_CACHE_DIR above -- that pool holds only the
++# fingerprinted, cross-job-reusable *cache* artifacts, not this run's
++# actual deliverables (network edge CSVs, every diagnostic PNG, Generate()
++# output CSVs, fidelity plots -- everything else OUT_DIR collects). This is
++# the full-output durable archive instead: on a successful exit, the
++# `cleanup` trap below copies everything under $OUT_DIR here, then deletes
++# the /flash copy -- /flash is scratch, not permanent storage, now that
++# bucket has the headroom, while still staying in place on /flash (not
++# archived, not deleted) if the job crashes/times out/gets cancelled, so a
++# failed run's partial output is still there to inspect. Same architecture
++# as simple-mde-gmn.sbatch's own OUTPUT_ARCHIVE_DIR, separate pool.
++OUTPUT_ARCHIVE_ROOT="/bucket/FukaiU/tominaga/pao_rotation/tsls_mde_gmn_outputs"
++OUTPUT_ARCHIVE_DIR="$OUTPUT_ARCHIVE_ROOT/job_${SLURM_JOB_ID}"
++mkdir -p "$OUTPUT_ARCHIVE_DIR"
++
++# ==============================================================================
++# SLURM LOG RELOCATION + OUTPUT ARCHIVING
++# ==============================================================================
++# The #SBATCH --output/--error above write to $FLASH_BASE/
++# pao_rotation_results/ (flat, not $OUT_DIR -- see the ADJUST comment on
++# those directives for why). Move them into $OUT_DIR once it exists, via a
++# single combined EXIT trap (merged with the /flash tempdir cleanup trap
++# below, since bash only honors the most recently registered EXIT trap).
++# Runs on every exit path, including failure/timeout/cancel.
++#
++# Also decides $OUT_DIR's own fate, based on PY_STATUS (set around the
++# `python3 -u tsls-mde-gmn.py` call below -- unset/non-"0" here means
++# either the pipeline itself failed, or this trap fired before that line
++# ever ran): "0" means the pipeline completed cleanly, so this run's full
++# output is copied to the durable OUTPUT_ARCHIVE_DIR (bucket) and the
++# /flash copy is then removed; anything else leaves $OUT_DIR exactly where
++# it is on /flash, untouched, for post-mortem inspection -- crashes/OOMs/
++# timeouts are exactly the case where you want that data still sitting on
++# fast, directly-browsable storage rather than needing to dig it out of the
++# archive. Same mechanism as simple-mde-gmn.sbatch's own `cleanup` trap.
++SLURM_OUT="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.out"
++SLURM_ERR="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.err"
+ cleanup() {
+-    [ -n "${tempdir:-}" ] && rm -rf "$tempdir"
+     [ -f "$SLURM_OUT" ] && mv -f "$SLURM_OUT" "$OUT_DIR"/
+     [ -f "$SLURM_ERR" ] && mv -f "$SLURM_ERR" "$OUT_DIR"/
++    if [ "${PY_STATUS:-1}" = "0" ] && [ -d "$OUT_DIR" ]; then
++        if cp -a "$OUT_DIR"/. "$OUTPUT_ARCHIVE_DIR"/; then
++            rm -rf "$OUT_DIR"
++        else
++            echo "WARNING: archive copy from $OUT_DIR to $OUTPUT_ARCHIVE_DIR failed -- leaving the /flash copy in place rather than risk deleting the only one." >&2
++        fi
++    fi
++    [ -n "${tempdir:-}" ] && rm -rf "$tempdir"
+     return 0
+ }
+ trap cleanup EXIT
+@@ -83,21 +147,21 @@
+ # Diffs this run's tsls-mde-gmn.py + tsls-mde-gmn.sbatch against the
+ # rolling snapshot cache of the last tsls-mde-gmn submission
+ # ($PROJ_DIR/results/.snapshots/ -- keyed by filename, so this never gets
+-# compared against a simple-mde-gmn job by mistake; see
+-# generate_job_description.sh's own module docstring), inserting a new
+-# entry into $PROJ_DIR/JOB_LOG.md (parameter-block changes as a table,
+-# everything else as unified diffs), then updates that cache to this
+-# run's files. Runs before the pipeline itself so the entry is written
+-# even if the run later fails or times out.
++# compared against a simple-mde-gmn job by mistake), inserting a new entry
++# into $PROJ_DIR/JOB_LOG.md, then updates that cache to this run's files.
++# Runs before the pipeline itself so the entry is written even if the run
++# later fails or times out. In the common case (submitted via submit.sh)
++# this call is a no-op -- submit.sh already wrote this job's JOB_LOG.md
++# entry at submission time -- but still runs here so a job started via
++# bare `sbatch` still gets logged.
+ #
+-# sbatch_src is "$0", not a hardcoded path to this canonical file -- same
+-# reasoning as simple-mde-gmn.sbatch: sbatch copies whatever file it's
+-# given verbatim into the running job, and $0 reflects that actual
+-# submitted path, which matters if the live canonical file at
+-# scripts/batch/tsls-mde-gmn.sbatch gets edited again while this job sits
+-# queued.
++# sbatch_src is "$0", not a hardcoded path to this canonical file -- sbatch
++# copies whatever file it's given verbatim into the running job, and $0
++# reflects that actual submitted path, which matters if the live canonical
++# file at scripts/batch/tsls-mde-gmn.sbatch gets edited again while this
++# job sits queued.
+ "$PROJ_DIR/scripts/batch/generate_job_description.sh" \
+-    "$PROJ_DIR" "$OUT_DIR" "$SLURM_JOB_ID" \
++    "$PROJ_DIR" "$SLURM_JOB_ID" \
+     "$0" \
+     "$PROJ_DIR/scripts/src/tsls-mde-gmn.py"
+ 
+@@ -107,25 +171,17 @@
+ 
+ umask 002
+ 
+-# ADJUST: <GROUP> to this lab's actual flash allocation.
+-FLASH_BASE="/flash/FukaiU/${USER}"
+-mkdir -p "${FLASH_BASE}"
+-chmod 2755 "${FLASH_BASE}"
+-
++# FLASH_BASE itself is defined earlier now (OUT_DIR needs it too); only the
++# ephemeral per-job tempdir is set up here. Only ever holds the staged
++# source/helper-module/data copy below -- actual pipeline output no longer
++# passes through here at all (see TSLS_MDE_GMN_RESULTS_DIR below), so this
++# directory being wiped on every exit, including a timeout, is not a
++# data-loss concern.
+ tempdir="$(mktemp -d "${FLASH_BASE}/run_tsls_mde_gmn.${SLURM_JOB_ID}.XXXXXX")"
+ # Cleanup on exit (including this tempdir) is handled by the combined
+-# `cleanup` EXIT trap registered in the SLURM LOG RELOCATION section
+-# above -- deliberately not a second `trap ... EXIT` here, which would
+-# silently replace that one instead of stacking.
+-
+-# NOTE: the E/tau/theta search checkpoints to disk after every candidate
+-# so a resubmitted job can resume instead of restarting a multi-hour
+-# search from scratch -- but $tempdir lives under $FLASH_BASE and is
+-# deleted by the `cleanup` trap above the moment this script exits,
+-# including on a SLURM timeout/cancellation (SIGTERM), *before* results
+-# get copied to $OUT_DIR. Same caveat as simple-mde-gmn.sbatch: if your
+-# search might not finish within --time, checkpoints will be lost across
+-# resubmissions under this scratch layout.
++# `cleanup` EXIT trap registered in the SLURM LOG RELOCATION + OUTPUT
++# ARCHIVING section above -- deliberately not a second `trap ... EXIT`
++# here, which would silently replace that one instead of stacking.
+ 
+ # ==============================================================================
+ # COPY SOURCE FILE + HELPER MODULE + INPUT DATA
+@@ -149,31 +205,49 @@
+ 
+ export TSLS_MDE_GMN_DATA_DIR="$tempdir/data"
+ export TSLS_MDE_GMN_DATA_FILE="${DATA_FILE}"
+-# TEMP DIAGNOSTIC: pointed directly at $OUT_DIR (not $tempdir, which the
+-# `cleanup` trap deletes on every exit including a crash) so intermediate
+-# outputs -- especially the CCM interaction-matrix CSV -- survive if this
+-# run fails the same way jobs 35332887/35347307 did, instead of being lost
+-# with the rest of $tempdir before anyone can inspect them. Revert to
+-# "$tempdir/tsls_mde_gmn_outputs" once this is resolved -- writing directly
+-# under $OUT_DIR (not local /flash scratch) is slower I/O for every
+-# intermediate file this pipeline writes, acceptable for one diagnostic run
+-# but not a permanent tradeoff.
+-export TSLS_MDE_GMN_RESULTS_DIR="$OUT_DIR/live_debug"
++# Points directly at OUT_DIR (not a subdirectory of the ephemeral
++# $tempdir) -- every pipeline output, including the theta search's/
++# generate-start sweep's own intra-job checkpoint files, survives a
++# timeout/crash rather than being deleted with $tempdir before ever
++# reaching $OUT_DIR. What happens to OUT_DIR itself after the run --
++# archived to bucket and cleared from /flash on success, left alone on
++# /flash on a crash/timeout -- is the `cleanup` EXIT trap's job (see
++# OUTPUT_ARCHIVE_DIR above); nothing here needs to change based on that.
++export TSLS_MDE_GMN_RESULTS_DIR="$OUT_DIR"
+ export TSLS_MDE_GMN_MODE="${MODE}"
+ export TSLS_MDE_GMN_GMN_MODE="${GMN_MODE}"
+ export TSLS_MDE_GMN_TARGETS="${TARGETS}"
+ export TSLS_MDE_GMN_D="${MDE_D}"
++export TSLS_MDE_GMN_TP="${TP}"
+ export TSLS_MDE_GMN_EMBED_DIM_RHO_MIN="${EMBED_DIM_RHO_MIN}"
+ export TSLS_MDE_GMN_CROSS_MAP_RHO_MIN="${CROSS_MAP_RHO_MIN}"
++export TSLS_MDE_GMN_EXCLUSION_RADIUS="${EXCLUSION_RADIUS}"
++export TSLS_MDE_GMN_NESTED_M="${NESTED_M}"
++export TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES="${STAGE2_ALLOW_REAL_OBSERVABLES}"
+ export TSLS_MDE_GMN_REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP}"
++export TSLS_MDE_GMN_DELAY_SOURCE="${DELAY_SOURCE}"
++export TSLS_MDE_GMN_LAG_MODE="${LAG_MODE}"
++export TSLS_MDE_GMN_LAG_DENSITY="${LAG_DENSITY}"
++export TSLS_MDE_GMN_LAG_STEP="${LAG_STEP}"
++export TSLS_MDE_GMN_DELAY_SET="${DELAY_SET}"
+ export TSLS_MDE_GMN_LIB_RATIO="${LIB_RATIO}"
++export TSLS_MDE_GMN_MDE_VALIDATION_RATIO="${MDE_VALIDATION_RATIO}"
++export TSLS_MDE_GMN_GENERATE_LENGTH="${GENERATE_LENGTH}"
++export GMN_EXCLUSION_RADIUS="${GMN_EXCLUSION_RADIUS}"
++export TSLS_MDE_GMN_FORECAST_PLOT_RANGE="${FORECAST_PLOT_RANGE}"
++export TSLS_MDE_GMN_GENERATE_START_MIN_OFFSET="${GENERATE_START_MIN_OFFSET}"
++export TSLS_MDE_GMN_GENERATE_START_MAX_OFFSET="${GENERATE_START_MAX_OFFSET}"
++export TSLS_MDE_GMN_GENERATE_START_STEP="${GENERATE_START_STEP}"
+ export TSLS_MDE_GMN_E_MIN="${E_MIN}"
+ export TSLS_MDE_GMN_E_MAX="${E_MAX}"
+ export TSLS_MDE_GMN_E_STEP="${E_STEP}"
+ export TSLS_MDE_GMN_TAU_MIN="${TAU_MIN}"
+ export TSLS_MDE_GMN_TAU_MAX="${TAU_MAX}"
+ export TSLS_MDE_GMN_TAU_STEP="${TAU_STEP}"
+-export TSLS_MDE_GMN_SMAP_SEARCH_MODE="${SMAP_SEARCH_MODE}"
++export TSLS_MDE_GMN_THETA_RANGE="${THETA_RANGE}"
++export TSLS_MDE_GMN_MAX_TP="${MAX_TP}"
++export TSLS_MDE_GMN_GRID_RHO_THRESHOLD="${GRID_RHO_THRESHOLD}"
++export TSLS_MDE_GMN_RUN_MDE_DIAGNOSTICS="${RUN_MDE_DIAGNOSTICS}"
+ export TSLS_MDE_GMN_CORES="${SLURM_CPUS_PER_TASK}"
+ export TSLS_MDE_GMN_METRIC="${METRIC}"
+ export TSLS_MDE_GMN_TARGET_METRIC="${TARGET_METRIC}"
+@@ -182,24 +256,41 @@
+ export TSLS_MDE_GMN_CCM_LIB_SIZE_PCTS="${CCM_LIB_SIZE_PCTS}"
+ export TSLS_MDE_GMN_CCM_SAMPLE="${CCM_SAMPLE}"
+ export TSLS_MDE_GMN_CCM_SLOPE="${CCM_SLOPE}"
++export TSLS_MDE_GMN_REUSE_BEST_PARAMS="${REUSE_BEST_PARAMS}"
++# Separate from TSLS_MDE_GMN_RESULTS_DIR (also persistent now, but per-job
++# and on /flash) -- these point at the durable *cross-job* bucket cache
++# pool set up above so a later job can actually find a past run's cached
++# results to reuse, not just this run's own.
++export TSLS_MDE_GMN_PREV_RUNS_DIR="$CACHE_ROOT"
++export TSLS_MDE_GMN_RUN_CACHE_DIR="$RUN_CACHE_DIR"
+ 
+ python3 -V
+ 
++# Deliberately not left under `set -e` for this one call -- PY_STATUS
++# needs to be captured either way (success or failure) so the `cleanup`
++# EXIT trap above knows whether to archive-and-clear $OUT_DIR or leave it
++# on /flash; under plain `set -e`, a nonzero exit here would jump straight
++# to the trap without ever reaching the capture line below.
++set +e
+ python3 -u tsls-mde-gmn.py
++PY_STATUS=$?
++set -e
++
++if [ "$PY_STATUS" -ne 0 ]; then
++    echo "tsls-mde-gmn.py exited with status ${PY_STATUS} -- leaving output on /flash at ${OUT_DIR} for inspection (not archived to bucket)." >&2
++    exit "$PY_STATUS"
++fi
+ 
+ # ==============================================================================
+ # SAVE OUTPUTS
+ # ==============================================================================
+-
+-# TEMP DIAGNOSTIC: TSLS_MDE_GMN_RESULTS_DIR above already points at
+-# $OUT_DIR/live_debug (not a relative $tempdir path), so there's nothing
+-# to copy from $tempdir on success -- flatten live_debug/ into $OUT_DIR
+-# directly instead, matching this pipeline's normal final layout (files
+-# directly under $OUT_DIR, not nested). Revert alongside the
+-# TSLS_MDE_GMN_RESULTS_DIR change above once resolved.
+-cp -av "$OUT_DIR/live_debug/." "$OUT_DIR"/
++# No cp step needed here anymore -- TSLS_MDE_GMN_RESULTS_DIR points
++# directly at $OUT_DIR now, so the pipeline has already been writing
++# straight to /flash throughout the run. What happens next -- archived to
++# bucket and removed from /flash, since PY_STATUS=0 here means the run
++# completed cleanly -- is handled by the `cleanup` EXIT trap above.
+ 
+ echo "========================================================"
+-echo "Job ${SLURM_JOB_ID} complete. Outputs saved to:"
+-echo "  ${OUT_DIR}"
++echo "Job ${SLURM_JOB_ID} complete. Archiving outputs to bucket and clearing the /flash copy:"
++echo "  ${OUT_DIR} -> ${OUTPUT_ARCHIVE_DIR}"
+ echo "========================================================"
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_35678071/tsls-mde-gmn.py
++++ job_38976891/tsls-mde-gmn.py
+@@ -1,70 +1,150 @@
+ '''Batch/cluster port of notebooks/tsls-mde-gmn.ipynb, executed by
+ scripts/batch/tsls-mde-gmn.sbatch. Every parameter is read from a
+-TSLS_MDE_GMN_* environment variable (set by the sbatch script's
+-MODIFIABLE PARAMETERS block) rather than edited here directly.
++TSLS_MDE_GMN_* environment variable (set by the sbatch script's MODIFIABLE
++PARAMETERS block) rather than edited here directly.
+ 
+-This is scripts/src/simple-mde-gmn.py's own MDE+GMN pipeline (the
+-run_mde_for_target / build_network / build_gmn_config / run_smap_search /
+-rebuild_at_best_params / ... functions below are DUPLICATED from that
+-file verbatim, not imported -- see notebooks/tsls-mde-gmn.ipynb's own
+-design-decisions note and this pipeline's own commit for why duplication
+-was chosen over a shared module or a dynamic import of a hyphenated
+-filename: it keeps this script fully self-contained and keeps
+-simple-mde-gmn.py untouched, at the cost of the two copies needing to be
+-kept in sync by hand if either evolves later), fed by a TSLS conversion
+-stage instead of simple-mde-gmn.py's own plain CSV load:
++This is scripts/src/simple-mde-gmn.py's own two-stage nested-MDE + GMN
++pipeline, ported wholesale (not imported -- see that file's own module
++docstring for why duplication over a shared module was chosen; same
++reasoning applies here), fed by a TSLS conversion stage instead of
++simple-mde-gmn.py's own plain CSV load, and scored throughout via
++cleaned_helper_functions.py's TSLS-aware metrics instead of dimx/pyEDM/
++apps.InteractionMatrix directly (see the METRIC/TARGET_METRIC docstring in
++load_config() below for why TSLS-encoded spike-timing series need a
++different scoring function than plain Pearson rho).
++
++Pipeline steps (see simple-mde-gmn.py's own module docstring for the
++narrative behind each one -- this docstring only covers what's specific to
++the TSLS front end and scoring):
+ 
+   0. Load the raw 40 Hz spike-train file, TSLS-convert every candidate
+      CA1/mPFC/OFC channel (external/TSLS/cleaned_helper_functions.py's
+      compute_time_since_previous_spike), then burn-in trim: TSLS is
+-     undefined (NaN) before a channel's own first spike, and
+-     dimx.MDE/pyEDM (unlike cleaned_helper_functions.py's own
+-     proper_simplex/proper_mde, which mask NaN per-embedding internally)
++     undefined (NaN) before a channel's own first spike, and gmn's own
++     Generate()/Forecast() SMap calls (unlike cleaned_helper_functions.py's
++     own proper_simplex/proper_mde, which mask NaN per-embedding internally)
+      need one fully non-NaN table for the whole lib/pred range, so the
+-     window can only start once every included channel has fired at
+-     least once -- see notebooks/tsls-mde-gmn.ipynb's intro cell for the
+-     empirical evidence this requirement is based on (dimx.MDE was
+-     confirmed to silently mis-select variables, not raise, when handed
+-     NaN-laden candidate columns).
+-  1. MDE forward-selection (skipped entirely if MODE='GMN')
+-  2. GMN network construction: CCM interaction matrix (data-driven E/tau
+-     grid search) + per-node driver-count estimate (EmbedDimension) +
+-     apps.CreateNetwork, with a driver-ranking bug workaround
+-  3. GMN node generation: SMap uniformly for every node
+-  4. Empirical (E, tau, per-node theta) search maximizing free-running
+-     Generate() fidelity against the real held-out targets
+-  5. Final GMN rebuild at the winning parameters + Forecast() diagnostic
+-     + Fig-4e-style generative fidelity metric
+-  6. MDE-only diagnostics (Evaluate vs PCA/Diffusion Map, Tp-vs-rho,
+-     univariate E/tau grid) -- skipped if MODE='GMN'
+-
+-Differences from simple-mde-gmn.py, all specific to the TSLS front end:
+-  - cleaned_helper_functions.py is imported from the same directory as
+-    this script (the sbatch script copies it there alongside the data
+-    file), matching scripts/src/tsls_example.py's own convention.
+-  - lib_ratio is computed against the row count AFTER TSLS conversion +
+-    burn-in trim, not the raw file's row count -- the usable window is
+-    itself data-driven (depends on which channel fires slowest), not a
+-    constant.
++     window can only start once every included channel has fired at least
++     once.
++  1. MDE forward-selection: two-stage nested-MDE network construction
++     (skipped if MODE='GMN') via cleaned_helper_functions.py's proper_mde
++     in place of dimx.MDE -- see run_mde_for_target()'s docstring.
++  2. Network construction -- two unrelated methods depending on MODE,
++     identical branching to simple-mde-gmn.py's own build_network():
++       - MODE='MDE-GMN': build_nested_mde_network() (Stage 1, real-
++         observable-only) + attach_lag_embeddings() (Stage 2, per-node
++         lagged-embedding attachment from the whole observable universe) --
++         both call the TSLS-flavored run_mde_for_target() below instead of
++         dimx.MDE. No CCM, no apps.InteractionMatrix, no apps.CreateNetwork
++         -- the resulting MultiDiGraph IS the network handed to gmn.GMN
++         directly.
++       - MODE='GMN': the original CCM interaction matrix, now via
++         cleaned_helper_functions.proper_ccm (build_interaction_matrix())
++         instead of apps.InteractionMatrix's CLI subprocess -- see that
++         function's own docstring for the empty-network bug this already
++         fixed, and why proper_ccm has no multiprocessing-pool-nesting
++         concern at all (no Pool usage in cleaned_helper_functions.py).
++  3. Node generation config: SMap uniformly for every node, via this
++     pipeline's own generalized per-driver-delay embedding -- ported
++     unchanged from simple-mde-gmn.py (see the gmn.Node monkeypatches right
++     below this docstring), since it operates purely on the network graph
++     and gmn's own data structures, with no dependency on what the columns
++     represent.
++  4. Theta search: retunes each node's own S-map theta once per network,
++     scored via cleaned_helper_functions.tsls._score(metric=TARGET_METRIC)
++     instead of pyEDM's plain ComputeError rho -- E and every driver's delay
++     come directly from step 2's network, never searched.
++  5. Start-point sweep: at the winning theta, tries several rows for
++     Generate()/Forecast() to launch from and keeps whichever matches the
++     real data best.
++  6. Final rebuild at the winning theta and start row, plus the Forecast()
++     diagnostic and a Fig-4e-style generative fidelity metric.
++  7. MDE-only diagnostics (Tp-vs-rho sweep, univariate E/tau grid) --
++     skipped if MODE='GMN'. The PCA/diffusion-map Evaluate comparison
++     (dx.Evaluate) simple-mde-gmn.py still has here has NO TSLS port and
++     stays dropped, exactly as this file's own architecture has always
++     established: dx.Evaluate depends on a live dimx.MDE result object this
++     pipeline doesn't build (proper_mde replaces dimx.MDE for selection
++     itself, but is not a drop-in for dx.Evaluate specifically).
++
++Differences from simple-mde-gmn.py, all specific to the TSLS front end and
++scoring (see load_config()'s own docstrings for the full rationale on each):
++  - cleaned_helper_functions.py is imported from the same directory as this
++    script (the sbatch script copies it there alongside the data file).
++  - lib_ratio (LIB_RATIO/MDE_VALIDATION_RATIO's three-way split) is computed
++    against the row count AFTER TSLS conversion + burn-in trim, not the raw
++    file's row count -- the usable window is itself data-driven (depends on
++    which channel fires slowest), not a constant.
+   - REGION_CHANNEL_CAP here caps how many raw per-region channels get
+-    TSLS-converted and offered to MDE/GMN as candidates (before the
+-    _tsls suffix), the same semantics as simple-mde-gmn.py's own
+-    REGION_CHANNEL_CAP just applied one step earlier in the pipeline.
++    TSLS-converted and offered to MDE/GMN as candidates (before the _tsls
++    suffix), the same semantics as simple-mde-gmn.py's own REGION_CHANNEL_CAP
++    just applied one step earlier in the pipeline.
++  - Every MDE/CCM/embedding-search call goes through cleaned_helper_
++    functions.py's proper_mde/proper_ccm/proper_simplex/proper_embed_
++    dimension/proper_predict_interval instead of dimx.MDE/apps.
++    InteractionMatrix/pyEDM.EmbedDimension/ComputeError/PredictInterval --
++    these accept TSLS-appropriate metrics ('f1'/'gamma' event-timing scores,
++    not just Pearson rho) and mask NaN per-embedding internally.
++    Consequently: MDE_GMN_EXCLUSION_RADIUS's dynamic 'auto' mode (simple-
++    mde-gmn.py's per-dimx.Run()-internal-call recomputation) has no
++    equivalent -- proper_mde and friends are single opaque calls taking one
++    static exclusionRadius, not a staged sequence of internal calls to
++    intercept. TSLS_MDE_GMN_EXCLUSION_RADIUS is a plain integer here, no
++    'auto' choice. Likewise, proper_mde has no multiprocessing of its own
++    (confirmed: no Pool usage anywhere in cleaned_helper_functions.py), so
++    Stage 1/Stage 2's wave pools use *only* outer (per-node)
++    ProcessPoolExecutor parallelism -- the inner cores-per-worker split that
++    fed dimx.MDE's own `cores=` argument has nothing to feed into here, and
++    is dropped. The same applies to MODE='GMN's interaction-matrix
++    construction: proper_ccm has no pool either, so
++    MDE_GMN_INTERACTION_MATRIX_OUTER_CORES has no TSLS equivalent and isn't
++    exposed.
++  - METRIC/TARGET_METRIC/GAMMA_DELTA (see load_config()) pick which of
++    cleaned_helper_functions.py's scoring functions every rho-like value in
++    this pipeline is computed with -- TARGETS (continuous behavioral
++    traces) always via TARGET_METRIC ('correlation'), every TSLS-converted
++    neuron column via METRIC ('f1' by default, decoding both series back to
++    discrete spike/reset events and matching them within an adaptive
++    per-event tolerance window, since plain correlation over the whole TSLS
++    sawtooth is dominated by the uninformative ramp segments between
++    spikes).
++  - CCM_WINDOW_ROWS/CCM_LIB_SIZE_PCTS/CCM_SAMPLE/CCM_SLOPE calibrate every
++    CCM convergence gate in this pipeline (proper_mde's own gate,
++    build_interaction_matrix()'s) to this pipeline's much larger row counts
++    -- see load_config()'s own docstring for the two production failures
++    (empty networks / zero selected drivers) this calibration fixed.
+ 
+ Everything else (differences from the notebook it mirrors) matches
+ simple-mde-gmn.py's own module docstring: subprocess.run instead of
+-get_ipython().system(), plt.close(fig) instead of plt.show(), one flat
+-RESULTS_DIR, and CORES threaded through every *_cores/numProcess
+-parameter. See that file's docstring for the KNOWN CAVEAT on
+-apps.InteractionMatrix's own process-pool nesting (unaffected by the
+-TSLS front end -- it is a property of the GMN network-construction step,
+-which this script duplicates unchanged).
++get_ipython().system() (MODE='GMN' no longer needs this at all here --
++proper_ccm has no CLI to shell out to), plt.close(fig) instead of
++plt.show(), one flat RESULTS_DIR, and CORES threaded through every
++*_cores/numProcess parameter that actually has one to feed.
++
++SEARCH REUSE / caching architecture (TSLS_MDE_GMN_REUSE_BEST_PARAMS,
++default off): ported unchanged from simple-mde-gmn.py -- see that file's own
++module docstring's SEARCH REUSE section for the full rationale. Every
++genuinely expensive stage (MDE forward-selection, network construction,
++theta search, the generate-start sweep) is deterministic given the same
++inputs, so a fingerprint match against a past job's cache skips that stage
++entirely. TSLS_MDE_GMN_PREV_RUNS_DIR/TSLS_MDE_GMN_RUN_CACHE_DIR point at a
++durable bucket-storage pool (see tsls-mde-gmn.sbatch's CACHE_ROOT/
++RUN_CACHE_DIR comment), not RESULTS_DIR -- every save_json_to_cache()/
++save_pickle_to_cache() call writes to RUN_CACHE_DIR *immediately*, right
++after its stage finishes, so a stage's result survives even if this job
++later crashes or times out.
+ '''
+ 
++import ast
++import hashlib
++import importlib.metadata
++import json
++import multiprocessing as mp
+ import os
+ import pickle
+ import sys
+-import time
++import types
++from concurrent.futures import ProcessPoolExecutor, as_completed
+ from configparser import ConfigParser
+ from pathlib import Path
+ 
+@@ -76,19 +156,22 @@
+ import numpy as np
+ import pandas as pd
+ 
++from collections import defaultdict
++
+ import gmn
+ from gmn.Common import FunctionType
+ from apps.CreateNetwork import CreateNetwork
+ # NOTE: dimx (dx.MDE/dx.Evaluate), apps.InteractionMatrix, and pyEDM's
+-# Simplex/SMap/CCM/ComputeError/EmbedDimension/PredictInterval are no
+-# longer imported directly -- this pipeline now uses
+-# cleaned_helper_functions.py's proper_mde/proper_ccm/proper_simplex/
+-# proper_embed_dimension/proper_predict_interval throughout (see this
+-# module's docstring and load_config()'s METRIC docstring for why). Embed
+-# and PredictNonlinear remain: no TSLS-aware equivalent exists for
+-# gmn.Node.Forecast's own delay-embedding call or for the per-node theta
+-# search (both pyEDM.SMap-specific concepts with no analog in
+-# cleaned_helper_functions.py's own KDTree engine).
++# Simplex/SMap/CCM/ComputeError/EmbedDimension/PredictInterval are not
++# imported directly -- this pipeline uses cleaned_helper_functions.py's
++# proper_mde/proper_ccm/proper_simplex/proper_embed_dimension/
++# proper_predict_interval throughout instead (see this module's docstring
++# and load_config()'s METRIC docstring for why). Embed and PredictNonlinear
++# remain: no TSLS-aware equivalent exists for retune_theta_for_all_nodes()'s
++# own theta search (a plain pyEDM.SMap-specific concept with no analog in
++# cleaned_helper_functions.py's own KDTree engine) -- ported unchanged from
++# simple-mde-gmn.py, reading PredictNonlinear's own built-in 'rho' column
++# directly (no separate ComputeError call, there or here).
+ from pyEDM import Embed, PredictNonlinear
+ 
+ # cleaned_helper_functions.py isn't installed as a package -- the sbatch
+@@ -97,33 +180,150 @@
+ sys.path.insert(0, str(Path(__file__).resolve().parent))
+ import cleaned_helper_functions as tsls  # noqa: E402 -- import after sys.path edit above
+ 
+-def _fixed_node_forecast(self):
++
++# =============================================================================
++# Generalized per-driver-delay embedding -- ported UNCHANGED from
++# simple-mde-gmn.py. Pure graph/pandas mechanics (networkx MultiDiGraph
++# edges' own 'delay' attribute, gmn.Node's own data/Parameters), with no
++# dependency on what the embedded columns represent -- applies identically
++# whether those columns are TSLS-converted or not. Independently fixes both
++# bugs this pipeline's own previous, narrower gmn.Node.Forecast patch
++# addressed (see _generalized_node_forecast()'s own docstring for the
++# specifics), so it's a straight replacement, not a merge.
++# =============================================================================
++
++def _embedding_spec_for(graph, node_name):
++    '''Builds one node's (column, delay) embedding coordinates directly
++    from the network graph -- a pure function, reusable both by
++    _node_embedding_spec() (which caches this on a live gmn.Node object,
++    for gmn's own monkeypatched Forecast()/Generate()) and by
++    retune_theta_for_all_nodes() (which builds embeddings directly with
++    pandas/pyEDM outside gmn's Node/Network machinery entirely, before any
++    gmn.GMN object exists).
++
++    MultiDiGraph (MODE='MDE-GMN', built by build_nested_mde_network()):
++    self always gets the full self_delay_set (graph.graph['self_delay_set'],
++    set once in build_network()) regardless of how many external drivers
++    nested-MDE found for this node -- the same unconditional fallback a
++    driverless leaf node already needed, just now built from the same delay
++    machinery as everything else rather than a special case. Each real
++    in-edge contributes one coordinate at that edge's own discovered delay
++    (see build_nested_mde_network()'s docstring for why the same driver can
++    appear more than once, at different delays).
++
++    Plain DiGraph (MODE='GMN', from apps.CreateNetwork -- no per-edge delay
++    data exists in that mode at all): falls back to the original uniform
++    E-lagged-copies-of-every-column scheme, using
++    graph.graph['fallback_E']/['fallback_tau'] (set in build_network() from
++    that mode's own CCM E/tau grid search) in place of a per-node nested-MDE
++    result it doesn't have.
++
++    Either way, this is what replaced gmn's own Embed(E, tau, columns) call
++    -- see _generalized_embed()'s docstring -- since a single uniform
++    (E, tau) can't express a per-driver, per-delay embedding.'''
++    if isinstance(graph, nx.MultiDiGraph):
++        self_delays = graph.graph.get('self_delay_set', [0])
++        spec = [(node_name, d) for d in self_delays]
++        spec += [(u, data['delay']) for u, v, data in graph.in_edges(node_name, data=True)]
++    else:
++        E = graph.graph.get('fallback_E', 3)
++        tau = graph.graph.get('fallback_tau', -1)
++        cols = list(graph.predecessors(node_name)) + [node_name]
++        spec = [(c, k * tau) for c in cols for k in range(E)]
++    return spec
++
++
++def network_max_embedding_offset(graph):
++    '''Largest per-node embedding offset across the whole network -- since
++    nodes can each have their own distinct embedding now (unlike the old
++    shared (E, tau)), this is used by build_gmn_config()'s Forecast mode to
++    size a single, network-wide lib/pred window that stays valid for every
++    node (see that function's docstring for the row-alignment tradeoff this
++    implies for lower-offset nodes).'''
++    if isinstance(graph, nx.MultiDiGraph):
++        self_delays = graph.graph.get('self_delay_set', [0])
++        self_max = max(abs(d) for d in self_delays)
++        edge_max = max((abs(data['delay']) for _, _, data in graph.edges(data=True)), default=0)
++        return max(self_max, edge_max)
++    E = graph.graph.get('fallback_E', 3)
++    tau = graph.graph.get('fallback_tau', -1)
++    return (E - 1) * abs(tau)
++
++
++def _node_embedding_spec(node):
++    '''Cached (on node._embedding_spec) wrapper around _embedding_spec_for()
++    for a live gmn.Node object -- see that function's docstring for the
++    full construction.'''
++    if not hasattr(node, '_embedding_spec'):
++        node._embedding_spec = _embedding_spec_for(node.Network.Graph, node.name)
++    return node._embedding_spec
++
++
++def _generalized_embed(data, embedding_spec):
++    '''Builds a dataframe with one column per (col, delay) pair in
++    embedding_spec, each holding that column's value abs(delay) rows in the
++    past (every delay is <= 0). Named to match pyEDM.Embed()'s own
++    "col(t-k)" convention (k = abs(delay)) so downstream code that looks up
++    Parameters.target + '(t-0)' for the current-value column keeps working
++    unchanged. Returns (embedded_df, offset) with a fresh 0-based index --
++    offset is the largest lag magnitude across the whole spec, i.e. how many
++    leading rows are dropped as NaN once every (col, delay) pair has been
++    shifted into place.'''
++    columns = {
++        f'{col}(t-{abs(delay)})': data[col].shift(-delay).to_numpy()
++        for col, delay in embedding_spec
++    }
++    embedded = pd.DataFrame(columns, index=data.index)
++    offset = max(abs(delay) for _, delay in embedding_spec)
++    return embedded.iloc[offset:].reset_index(drop=True), offset
++
++
++_real_node_init = gmn.Node.__init__
++
++
++def _generalized_node_init(self, args, Network, nodeName):
++    '''Wraps gmn.Node.__init__ to correct self.libEnd_i (the EDM library end
++    index) for SMap nodes after construction -- the installed package
++    computes it as self.data.shape[0] - Parameters.E * abs(Parameters.tau),
++    which assumes one shared, uniform embedding; the generalized embedding
++    this pipeline builds instead (see _node_embedding_spec()'s docstring)
++    has its own, generally different, per-node offset. Recomputed exactly
++    once here, right after __init__ sets the node's pristine self.data,
++    since libEnd_i is meant to reflect that original library size before
++    any values get appended during a Generate() run.'''
++    _real_node_init(self, args, Network, nodeName)
++    if self.FunctionType == FunctionType.SMap:
++        spec = _node_embedding_spec(self)
++        offset = max(abs(delay) for _, delay in spec)
++        self.libEnd_i = self.data.shape[0] - offset
++
++
++gmn.Node.__init__ = _generalized_node_init
++
++
++def _generalized_node_forecast(self):
+     '''Corrected copy of gmn.Node.Forecast (gmn/Forecast.py), fixing two
+-    bugs found empirically in the installed package's SMap branch -- the
+-    only branch this pipeline exercises, since every node uses SMap
+-    uniformly (see build_gmn_config's docstring):
+-
+-    (1) that module calls Embed() without ever importing pyEDM.Embed
+-    (confirmed: gmn/Forecast.py only does `from .Common import *`, while
+-    gmn/Generate.py's identical SMap branch correctly imports it) --
+-    raises NameError on the very first Forecast() call against any SMap
+-    node.
+-
+-    (2) `val` is assigned as a 2-tuple (time, predictions) and then
+-    immediately checked via `val.max() > 1E15` for divergence -- tuples
+-    have no .max() method, so this raises AttributeError unconditionally,
+-    not just on genuine divergence (confirmed: this fires as soon as (1)
+-    is worked around, on ordinary non-diverging output). Fixed to check
+-    the predictions Series specifically (val[1]).
+-
+-    Every other branch is copied verbatim from the installed
+-    gmn/Forecast.py (unused by this pipeline, since every node is SMap,
+-    but kept intact rather than trimmed so this patch doesn't silently
+-    change behavior for any future non-SMap use). Monkeypatched onto
+-    gmn.Node (== gmn.Node.Node -- gmn/__init__.py's `from .Node import
+-    Node` shadows the submodule name with the class in gmn's own
+-    namespace) rather than editing the installed package, to keep this
+-    script self-contained on other machines/the cluster.'''
++    pre-existing bugs (below) and replacing its SMap branch's
++    Embed(E, tau, columns) call with _generalized_embed() -- the
++    per-driver-delay embedding built from the network graph instead of one
++    uniform (E, tau) applied to every predictor. This is the only branch
++    this pipeline exercises, since every node uses SMap.
++
++    (1) gmn/Forecast.py calls Embed() without importing pyEDM.Embed --
++    raises NameError on the first Forecast() call against any SMap node.
++    Moot now that this branch no longer calls pyEDM's Embed() at all.
++
++    (2) `val` is a 2-tuple (time, predictions), then checked for divergence
++    via `val.max() > 1E15` -- tuples have no .max(), so this raised
++    AttributeError unconditionally, not just on genuine divergence. Fixed to
++    check the predictions Series directly (val[1]).
++
++    The time column is inserted explicitly from data's own offset-sliced,
++    reset-index time values rather than gmn's own implicit index-aligned
++    insert, since _generalized_embed() already resets its own index to
++    0-based. Every other branch is copied verbatim from gmn/Forecast.py
++    (unused here, since every node is SMap, but kept intact so this patch
++    can't silently change behavior for a future non-SMap node).'''
+     if self.args.DEBUG :
+         print( '-----> Node:Forecast() : ',self.FunctionType.name, self.name)
+         print( self.data.tail( 2 ), flush = True );
+@@ -163,12 +363,10 @@
+         val = ( S.iloc[:,0], S['Predictions'] )
+ 
+     elif self.FunctionType.value == FunctionType.SMap.value :
+-        df = Embed( dataFrame = data, E = Parameters.E,
+-                    tau = Parameters.tau, columns = Parameters.columns )
+-
+-        df = df.dropna()
++        spec = _node_embedding_spec(self)
++        df, offset = _generalized_embed(data, spec)
+ 
+-        df.insert( 0, data.columns[0], data.iloc[:,0] )
++        df.insert( 0, data.columns[0], data[data.columns[0]].iloc[offset:].reset_index(drop=True) )
+ 
+         if len( Parameters.lib ) and not Parameters.lib.isspace():
+             lib = Parameters.lib
+@@ -183,10 +381,10 @@
+         S = self.Function( dataFrame       = df,
+                            lib             = lib,
+                            pred            = pred,
+-                           E               = Parameters.E,
++                           E               = len(spec),
+                            Tp              = Parameters.Tp,
+                            knn             = Parameters.knn,
+-                           tau             = Parameters.tau,
++                           tau             = 1,
+                            theta           = Parameters.theta,
+                            exclusionRadius = Parameters.exclusionRadius,
+                            columns         = df.columns[1:-1],
+@@ -225,56 +423,191 @@
+     return val
+ 
+ 
+-gmn.Node.Forecast = _fixed_node_forecast
++gmn.Node.Forecast = _generalized_node_forecast
++
++
++def _generalized_node_generate(self, lastDataOut):
++    '''Corrected copy of gmn.Node.Generate (gmn/Generate.py), replacing its
++    SMap branch's Embed(E, tau, columns) call with _generalized_embed() --
++    see _generalized_node_forecast()'s and _node_embedding_spec()'s
++    docstrings for why. Unlike Forecast()'s SMap branch, gmn's own
++    Generate() code never tried to reuse real time values for its inserted
++    time column (just a fresh synthetic 0-based arange()), so there's no
++    index-alignment subtlety to correct here. Every other branch is copied
++    verbatim (unused here, since every node is SMap).'''
++    if self.args.DEBUG :
++        print( '-----> Node:Generate() : ', self.FunctionType.name, self.name )
++        print( self.data.tail( 2 ) );
++        print( 'lastDataOut:' ); print( lastDataOut, flush = True )
++
++    if not ( lastDataOut is None ):
++        self.data = pd.concat( [ self.data, lastDataOut ] )
++
++    Parameters = self.Parameters
++    data       = self.data
++
++    if self.args.DEBUG :
++        print( '  Appended data : shape: ', data.shape );
++        print( data.tail( 3 ) ); print('', flush = True)
++
++    if self.FunctionType.value == FunctionType.Simplex.value :
++        if len( Parameters.lib ) and not Parameters.lib.isspace():
++            lib = Parameters.lib
++        else:
++            lib = "1 %d" % self.libEnd_i
++
++        if len( Parameters.pred ) and not Parameters.pred.isspace():
++            pred = Parameters.pred
++        else:
++            pred = "%d %d" % ( data.shape[0] - 1, data.shape[0] )
++
++        S = self.Function( dataFrame       = data,
++                           lib             = lib,
++                           pred            = pred,
++                           E               = Parameters.E,
++                           Tp              = Parameters.Tp,
++                           knn             = Parameters.knn,
++                           tau             = Parameters.tau,
++                           exclusionRadius = Parameters.exclusionRadius,
++                           columns         = Parameters.columns,
++                           target          = Parameters.target,
++                           embedded        = Parameters.embedded,
++                           validLib        = Parameters.validLib,
++                           generateSteps   = Parameters.generateSteps )
++
++        val = S['Predictions'].iloc[-1]
++
++    elif self.FunctionType.value == FunctionType.SMap.value :
++        spec = _node_embedding_spec(self)
++        df, offset = _generalized_embed(data, spec)
++
++        timeColumn = np.arange(df.shape[0])
++        df.insert(0, 'time', timeColumn, allow_duplicates=True)
++
++        if len( Parameters.lib ) and not Parameters.lib.isspace():
++            lib = Parameters.lib
++        else :
++            lib  = "1 %d" % self.libEnd_i
++
++        if len( Parameters.pred ) and not Parameters.pred.isspace():
++            pred = Parameters.pred
++        else:
++            pred = "%d %d" % ( df.shape[0] - 1, df.shape[0] )
++
++        S = self.Function( dataFrame       = df,
++                           lib             = lib,
++                           pred            = pred,
++                           E               = len(spec),
++                           Tp              = Parameters.Tp,
++                           knn             = Parameters.knn,
++                           tau             = 1,
++                           theta           = Parameters.theta,
++                           exclusionRadius = Parameters.exclusionRadius,
++                           columns         = df.columns[1:-1],
++                           target          = Parameters.target + '(t-0)',
++                           solver          = None,
++                           embedded        = Parameters.embedded,
++                           validLib        = Parameters.validLib,
++                           generateSteps   = Parameters.generateSteps )
++
++        val = S['predictions']['Predictions'].iloc[-1]
++
++        if abs( val ) > 1E15 :
++            raise RuntimeError( "Generate:SMap() Node: " + self.name +\
++                                "   Divergence detected (>1E15)" )
++
++    elif self.FunctionType.value == FunctionType.kedmSimplex.value :
++        data_ = data[ Parameters.columns ] # DataFrame; includes target
++
++        targetLen = Parameters.E * abs( Parameters.tau )
++        pred    = data_.iloc[ -targetLen : ]
++        library = data_.iloc[ : self.libEnd_i ]
++        target  = library[ Parameters.target ]
++
++        S = self.Function( lib    = library.to_numpy(),
++                           pred   = pred.to_numpy(),
++                           target = target.to_numpy(),
++                           E      = Parameters.E,
++                           tau    = abs( Parameters.tau ),
++                           Tp     = Parameters.Tp )
+ 
++        val = S[-1]
+ 
+-def _sequential_ccm_workers(parallel):
+-    '''Replaces pyEDM.CCM's private _resolve_workers(), forcing every
+-    CCM().Project() call in this process onto its sequential in-process
+-    path instead of spawning a fresh multiprocessing Pool.
+-
+-    Ported from simple-mde-gmn.py -- this is the actual fix for the
+-    nested-pool blowup documented in that file's module docstring and in
+-    build_network()'s docstring below: every single pyEDM.CCM() call --
+-    one per channel pair in apps.InteractionMatrix, one per MDE candidate
+-    column in dimx.Run -- creates its *own* fresh `spawn`/`forkserver`
+-    Pool sized to cpu_count() (CCM.py's `_resolve_workers`, called from
+-    `Project()`), on top of whichever outer pool (apps.InteractionMatrix's
+-    ProcessPoolExecutor, dimx's CrossMapColumns Pool) is already
+-    dispatching that call. Neither apps.InteractionMatrix nor dimx.Run
+-    ever pass `parallel=` through to CCM(), so this can't be tuned away
+-    via their CLIs. This module duplicates simple-mde-gmn.py's GMN
+-    network-construction step (and dimx.MDE call) unchanged, so it is
+-    exposed to the identical bug -- confirmed empirically there as the
+-    root cause of jobs running ~2 days regardless of dataset size, MODE,
+-    or MDE_D, before this patch was added. Without it, this pipeline's
+-    much larger default row/channel count (see this module's docstring)
+-    makes hitting the same pathology *more* likely, not less.
+-
+-    Forcing sequential execution here is strictly a win, not a
+-    parallelism/wall-time tradeoff: every CCM() call in this pipeline
+-    resolves to only 4-8 tiny tasks (2 directions x 2-4 libSizes -- see
+-    apps/InteractionMatrix.py's libSizes=[libMin,libMax] and dimx's
+-    default pLibSizes=[10,15,85,90]), each a KDTree build+query over a
+-    handful of embedding rows. Running those 4-8 tasks in-process is
+-    faster than the Pool spawn + full heavy-import (numpy/scipy/pandas/
+-    sklearn/pyEDM/gmn) teardown cost alone, before any actual work
+-    happens -- and the real parallelism across channel pairs/candidates
+-    already comes from the outer pool, which this doesn't touch.
+-    Monkeypatched (not `parallel=False` at each call site) because
+-    apps.InteractionMatrix and dimx.Run construct CCM() internally and
+-    don't expose that argument.'''
+-    return 1
++    elif self.FunctionType.value == FunctionType.kedmSMap.value :
++        data_ = data[ self.name ] # Series
+ 
++        targetLen = Parameters.E * abs( Parameters.tau )
++        pred    = data_.iloc[ -targetLen : ]
++        library = data_.iloc[ : self.libEnd_i ]
++        target  = library
++
++        S = self.Function( lib    = library.to_numpy(),
++                           pred   = pred.to_numpy(),
++                           target = target.to_numpy(),
++                           E      = Parameters.E,
++                           tau    = abs( Parameters.tau ),
++                           Tp     = Parameters.Tp,
++                           theta  = Parameters.theta )
+ 
+-import pyEDM.CCM as _pyedm_ccm_module
+-_pyedm_ccm_module._resolve_workers = _sequential_ccm_workers
++        val = S[-1]
++
++    elif self.FunctionType.value == FunctionType.Linear.value :
++        X = data[ Parameters.columns ]
++        X = X.to_numpy()
++        y = data[ Parameters.target ].to_numpy()
++
++        lr = self.Function()
++        lr.fit( X, y )
++
++        nextX = self.FindNextX( X )
++        pred  = lr.predict( nextX )
++        val   = pred[ 0 ]
++
++    elif self.FunctionType.value == FunctionType.SVR.value :
++        X = data[ Parameters.columns ]
++        X = X.to_numpy()
++        y = data[ Parameters.target ].to_numpy()
++
++        svr = self.Function( kernel = 'rbf', gamma = 'scale', tol = 0.001,
++                             epsilon = 0.1, shrinking = True, cache_size = 200,
++                             verbose = False, max_iter = -1 )
++        svr.fit( X, y )
++
++        nextX = self.FindNextX( X )
++        pred  = svr.predict( nextX )
++        val   = pred[ 0 ]
++
++    elif self.FunctionType.value == FunctionType.knn.value :
++        X = data[ Parameters.columns ]
++
++        if len( Parameters.columns ) > 1 :
++            X  = X.drop( self.name, axis = 'columns' )
++
++        X = X.to_numpy()
++        y = data[ Parameters.target ].to_numpy()
++
++        knn = self.Function( n_neighbors = 10, weights = 'distance' )
++        knn.fit( X, y )
++
++        nextX = self.FindNextX( X )
++        pred  = knn.predict( nextX )
++        val   = pred[ 0 ]
++
++    if self.args.DEBUG :
++        print( self.name, "val:", val )
++        print( '<----- Node:Generate() : ',self.FunctionType.name,self.name )
++        print('', flush = True)
++
++    return val
++
++
++gmn.Node.Generate = _generalized_node_generate
+ 
+ 
+ # =============================================================================
+ # Configuration -- every value overridable via TSLS_MDE_GMN_* environment
+-# variables; see scripts/batch/tsls-mde-gmn.sbatch's MODIFIABLE
+-# PARAMETERS block for the canonical list with descriptions.
++# variables; see scripts/batch/tsls-mde-gmn.sbatch's MODIFIABLE PARAMETERS
++# block for the canonical list with descriptions.
+ # =============================================================================
+ 
+ def _env_bool(name, default):
+@@ -298,13 +631,20 @@
+     return [float(x.strip()) for x in val.split(',') if x.strip()]
+ 
+ 
++def _env_int_list(name, default):
++    val = os.environ.get(name)
++    if val is None:
++        return list(default)
++    return [int(x.strip()) for x in val.split(',') if x.strip()]
++
++
+ def load_config():
+     cfg = {}
+ 
+     # ---- Data ---------------------------------------------------------
+-    # NOTE: as with simple-mde-gmn.py, the cluster deployment expects
+-    # data files copied flat into DATA_DIR by the sbatch script -- no
+-    # nested extraction-folder name.
++    # NOTE: as with simple-mde-gmn.py, the cluster deployment expects data
++    # files copied flat into DATA_DIR by the sbatch script -- no nested
++    # extraction-folder name.
+     cfg['DATA_DIR'] = Path(os.environ.get('TSLS_MDE_GMN_DATA_DIR', '../../data'))
+     cfg['DATA_FILE'] = os.environ.get('TSLS_MDE_GMN_DATA_FILE', 'J1620210605_epoch_8_freq_40_Hz.csv')
+     cfg['RESULTS_DIR'] = Path(os.environ.get('TSLS_MDE_GMN_RESULTS_DIR', '../../results'))
+@@ -319,38 +659,171 @@
+     cfg['TARGETS'] = _env_list('TSLS_MDE_GMN_TARGETS', ['head_position_x', 'head_position_y'])
+     cfg['SECOND_TARGET'] = cfg['TARGETS'][1] if len(cfg['TARGETS']) > 1 else None
+ 
+-    # Lib/pred split, expressed as the fraction of the TSLS-converted,
+-    # burn-in-trimmed dataset used as library -- computed in main() once
+-    # that trimmed row count is known (see module docstring), not here.
++    # Three-way temporal split of the full (TSLS-converted, burn-in-trimmed)
++    # dataset -- ported from simple-mde-gmn.py's own load_config() docstring,
++    # resolved by main() once the trimmed row count is known:
++    #   [0, A)      MDE library    -- LIB_RATIO fraction of the trimmed dataset
++    #   [A, B)      MDE validation -- proper_mde's own held-out `pred` window
++    #               (CCM/embedDimRhoMin/crossMapRhoMin gates, both nested-MDE
++    #               stages) -- MDE_VALIDATION_RATIO fraction of the
++    #               *remainder* after A
++    #   [B, end)    Generate/Forecast validation -- generate_start floats
++    #               only within this segment (GENERATE_START_MIN/MAX/STEP_
++    #               OFFSET below), for GENERATE_LENGTH steps
++    # This exists so network construction (both nested-MDE stages) and the
++    # reported Generate()/Forecast() fidelity never touch the same rows --
++    # see run_mde_for_target()'s docstring for the mechanics and main()'s
++    # window-resolution block for the actual arithmetic. Unlike
++    # simple-mde-gmn.py, computed against the row count AFTER TSLS
++    # conversion + burn-in trim (main()), not the raw file's row count --
++    # see this module's own docstring.
+     cfg['LIB_RATIO'] = float(os.environ.get('TSLS_MDE_GMN_LIB_RATIO', 0.7))
++    cfg['MDE_VALIDATION_RATIO'] = float(os.environ.get('TSLS_MDE_GMN_MDE_VALIDATION_RATIO', 0.5))
++    if not (0.0 < cfg['MDE_VALIDATION_RATIO'] < 1.0):
++        raise ValueError(
++            f"TSLS_MDE_GMN_MDE_VALIDATION_RATIO must be in (0, 1): {cfg['MDE_VALIDATION_RATIO']!r}"
++        )
++
++    # Step count for each Generate() call, decoupled from PREDICTION_LENGTH
++    # -- see simple-mde-gmn.py's own load_config() docstring for the full
++    # rationale (identical here). 0 (default) means "use the full held-out
++    # window"; a larger value is clamped down to it in main().
++    cfg['GENERATE_LENGTH'] = int(os.environ.get('TSLS_MDE_GMN_GENERATE_LENGTH', 0))
++
++    # Theiler-window / neighbor-exclusion radius for gmn's own recursive
++    # Generate()/Forecast() nearest-neighbor search (SMap), passed through
++    # as Parameters.exclusionRadius by build_gmn_config() -- a plain static
++    # knob (confirmed against build_gmn_config()'s own docstring and every
++    # consumption site in simple-mde-gmn.py), NOT the dynamic/auto
++    # mechanism TSLS_MDE_GMN_EXCLUSION_RADIUS below uses -- these are two
++    # independent EDM contexts (MDE's forward selection vs. GMN's own
++    # Generate()/Forecast()) with their own separate embeddings, so there's
++    # no single shared "auto" value that would make sense for both.
++    # Deliberately not TSLS_MDE_GMN_-prefixed, matching simple-mde-gmn.py's
++    # own GMN_EXCLUSION_RADIUS naming (kept visually distinct from the
++    # unrelated MDE-side parameter).
++    cfg['GMN_EXCLUSION_RADIUS'] = int(os.environ.get('GMN_EXCLUSION_RADIUS', 0))
++
++    # Plotted x-axis range for the final Generate()-vs-Forecast()-vs-actual
++    # diagnostic figure -- see run_forecast_diagnostic()'s plot_range_mode
++    # docstring. Ported unchanged from simple-mde-gmn.py.
++    cfg['FORECAST_PLOT_RANGE'] = os.environ.get('TSLS_MDE_GMN_FORECAST_PLOT_RANGE', 'full').strip().lower()
++    if cfg['FORECAST_PLOT_RANGE'] not in ('full', 'windowed'):
++        raise ValueError(
++            f"TSLS_MDE_GMN_FORECAST_PLOT_RANGE must be 'full' or 'windowed', "
++            f"got {cfg['FORECAST_PLOT_RANGE']!r}"
++        )
++
++    # Candidate starting rows for the final Generate()/Forecast() diagnostic,
++    # as offsets (rows) from GENERATE_VALIDATION_START -- see
++    # simple-mde-gmn.py's own load_config() docstring for the full rationale
++    # (identical here). Default MIN=0, MAX=1 tries only offset 0.
++    cfg['GENERATE_START_MIN_OFFSET'] = int(os.environ.get('TSLS_MDE_GMN_GENERATE_START_MIN_OFFSET', 0))
++    cfg['GENERATE_START_MAX_OFFSET'] = int(os.environ.get('TSLS_MDE_GMN_GENERATE_START_MAX_OFFSET', 1))
++    cfg['GENERATE_START_STEP'] = int(os.environ.get('TSLS_MDE_GMN_GENERATE_START_STEP', 50))
+ 
+     # ---- MDE (variable selection; unused when MODE='GMN') -------------
++    # MDE_D counts distinct *real* observables, not delay-expanded candidate
++    # columns -- reused as the per-round cap for both nested-MDE stages
++    # (Stage 1: real-observable-only, so the multiplier is always 1;
++    # Stage 2: lagged-only, multiplied by however many lag values
++    # LAG_MODE/LAG_DENSITY/LAG_STEP below resolve to) -- see
++    # effective_mde_dimension()'s docstring. Ported unchanged from
++    # simple-mde-gmn.py.
+     cfg['MDE_D'] = int(os.environ.get('TSLS_MDE_GMN_D', 20))
++    # Prediction interval every proper_mde forward-selection call (both the
++    # top-level per-target search and every nested-MDE per-node search)
++    # ranks/validates every candidate driver against -- ported from
++    # simple-mde-gmn.py's own TP parameter (proper_mde accepts Tp as a real
++    # argument, confirmed), replacing this pipeline's own previous hardcoded
++    # Tp=1.
++    cfg['TP'] = int(os.environ.get('TSLS_MDE_GMN_TP', 1))
+     cfg['EMBED_DIM_RHO_MIN'] = float(os.environ.get('TSLS_MDE_GMN_EMBED_DIM_RHO_MIN', 0.2))
+     cfg['CROSS_MAP_RHO_MIN'] = float(os.environ.get('TSLS_MDE_GMN_CROSS_MAP_RHO_MIN', 0.2))
+-    # Candidate pool: first N *raw* channels of each region, TSLS-converted
+-    # and offered to MDE/GMN as candidates. Default 999 (effectively
+-    # uncapped -- matches notebooks/tsls-mde-gmn.ipynb's own full-channel-
+-    # set decision); cap this down for a fast test job.
++    # Theiler-window / neighbor-exclusion radius for every proper_mde/
++    # proper_ccm/proper_simplex/proper_embed_dimension call this pipeline
++    # makes for MDE forward-selection. UNLIKE simple-mde-gmn.py, this is a
++    # PLAIN STATIC INTEGER ONLY -- no 'auto' dynamic mode. simple-mde-gmn.py's
++    # 'auto' mode recomputes exclusionRadius fresh at every one of dimx.Run's
++    # own internal CrossMapColumns/EmbedDimension/CCM calls (a staged
++    # sequence of internal calls this pipeline's own forward-selection makes
++    # as it grows a candidate embedding one column at a time); proper_mde
++    # and friends are each a single opaque call taking one exclusionRadius
++    # value for their own whole internal search, with no staged internal
++    # calls to intercept the same way. See this module's own docstring for
++    # the full explanation.
++    cfg['EXCLUSION_RADIUS_VALUE'] = int(os.environ.get('TSLS_MDE_GMN_EXCLUSION_RADIUS', 0))
++    # Nested-MDE network construction (MODE='MDE-GMN' only). Reuses MDE_D as
++    # the per-node driver cap N at every nesting level (deliberately not a
++    # separate parameter). NESTED_M is the number of *additional* nested-MDE
++    # rounds beyond each target's own initial selection -- total graph depth
++    # from each target is 1 + NESTED_M levels. NESTED_M=0 is a sentinel for
++    # "uncapped". Ported unchanged from simple-mde-gmn.py -- see
++    # build_nested_mde_network()'s docstring for the full algorithm.
++    cfg['NESTED_M'] = int(os.environ.get('TSLS_MDE_GMN_NESTED_M', 1))
++    # First N *raw* channels per region (CA1_/mPFC_/OFC_), TSLS-converted
++    # and offered as MDE candidates (or, when MODE='GMN', used directly as
++    # the interaction-matrix's full node set). 999 is effectively uncapped
++    # (matches notebooks/tsls-mde-gmn.ipynb's own full-channel-set decision).
+     cfg['REGION_CHANNEL_CAP'] = int(os.environ.get('TSLS_MDE_GMN_REGION_CHANNEL_CAP', 999))
+ 
+-    # ---- E/tau/theta search ranges -------------------------------------
++    # ---- Two-stage nested-MDE network construction (MODE='MDE-GMN' only) --
++    # Ported unchanged from simple-mde-gmn.py -- see build_nested_mde_network()
++    # (Stage 1) and attach_lag_embeddings() (Stage 2) for the full algorithm,
++    # and that file's own load_config() docstrings for STAGE2_ALLOW_REAL_
++    # OBSERVABLES/DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP/DELAY_SET's full
++    # rationale (identical here -- this is all pure column-name/DataFrame
++    # machinery with no TSLS-specific behavior).
++    cfg['STAGE2_ALLOW_REAL_OBSERVABLES'] = _env_bool('TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES', False)
++
++    cfg['DELAY_SOURCE'] = os.environ.get('TSLS_MDE_GMN_DELAY_SOURCE', 'lag_mode').strip().lower()
++    if cfg['DELAY_SOURCE'] not in ('explicit', 'lag_mode'):
++        raise ValueError(f"TSLS_MDE_GMN_DELAY_SOURCE must be 'explicit' or 'lag_mode': {cfg['DELAY_SOURCE']!r}")
++
++    cfg['LAG_MODE'] = os.environ.get('TSLS_MDE_GMN_LAG_MODE', 'generation_length_adjusted').strip().lower()
++    if cfg['LAG_MODE'] not in ('generation_length_adjusted', 'every_lag_possible'):
++        raise ValueError(f"TSLS_MDE_GMN_LAG_MODE must be 'generation_length_adjusted' or "
++                          f"'every_lag_possible': {cfg['LAG_MODE']!r}")
++
++    cfg['LAG_DENSITY'] = os.environ.get('TSLS_MDE_GMN_LAG_DENSITY', 'strided').strip().lower()
++    if cfg['LAG_DENSITY'] not in ('strided', 'dense'):
++        raise ValueError(f"TSLS_MDE_GMN_LAG_DENSITY must be 'strided' or 'dense': {cfg['LAG_DENSITY']!r}")
++    cfg['LAG_STEP'] = int(os.environ.get('TSLS_MDE_GMN_LAG_STEP', 1))
++    if cfg['LAG_STEP'] < 1:
++        raise ValueError(f"TSLS_MDE_GMN_LAG_STEP must be >= 1: {cfg['LAG_STEP']!r}")
++
++    cfg['DELAY_SET'] = _env_int_list('TSLS_MDE_GMN_DELAY_SET', [0, -1, -3, -5, -10])
++    if any(d > 0 for d in cfg['DELAY_SET']):
++        raise ValueError(f"TSLS_MDE_GMN_DELAY_SET must be <= 0 (no future data): {cfg['DELAY_SET']!r}")
++
++    # ---- E/tau search range (MODE='GMN' only) --------------------------
++    # Used exclusively by build_network()'s mode == 'GMN' branch (the
++    # proper_ccm-based interaction-matrix E/tau grid search, via
++    # target_E_tau_rho_grid()) -- MODE='MDE-GMN' no longer has a
++    # network-wide E/tau at all. Also feeds run_theta_search()'s own theta
++    # retuning range regardless of mode (THETA_RANGE below).
+     cfg['E_RANGE'] = range(
+         int(os.environ.get('TSLS_MDE_GMN_E_MIN', 3)),
+-        int(os.environ.get('TSLS_MDE_GMN_E_MAX', 16)),
+-        int(os.environ.get('TSLS_MDE_GMN_E_STEP', 2)),
++        int(os.environ.get('TSLS_MDE_GMN_E_MAX', 13)),
++        int(os.environ.get('TSLS_MDE_GMN_E_STEP', 4)),
+     )
+     cfg['TAU_RANGE'] = range(
+-        int(os.environ.get('TSLS_MDE_GMN_TAU_MIN', -15)),
++        int(os.environ.get('TSLS_MDE_GMN_TAU_MIN', -9)),
+         int(os.environ.get('TSLS_MDE_GMN_TAU_MAX', 0)),
+-        int(os.environ.get('TSLS_MDE_GMN_TAU_STEP', 2)),
++        int(os.environ.get('TSLS_MDE_GMN_TAU_STEP', 4)),
+     )
++    # Theta (SMap's nonlinearity/localization parameter) search range, used
++    # by run_theta_search() for both MODE='MDE-GMN' and MODE='GMN' -- ported
++    # unchanged from simple-mde-gmn.py. Replaces this pipeline's own
++    # previous SMAP_SEARCH_MODE='coarse_retune'/'joint' combined (E, tau,
++    # theta) grid search entirely (see run_theta_search()'s own docstring):
++    # E and every driver's delay now come from the network itself (MODE=
++    # 'MDE-GMN': nested-MDE; MODE='GMN': the E_RANGE/TAU_RANGE grid search
++    # above), leaving theta as the only thing still searched per node.
+     cfg['THETA_RANGE'] = _env_float_list(
+         'TSLS_MDE_GMN_THETA_RANGE',
+         [0.01, 0.1, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9],
+     )
+-    cfg['COARSE_THETA_RANGE'] = cfg['THETA_RANGE'][::3]
+-    cfg['SMAP_SEARCH_MODE'] = os.environ.get('TSLS_MDE_GMN_SMAP_SEARCH_MODE', 'coarse_retune')  # 'coarse_retune' | 'joint'
+ 
+     # ---- MDE-only diagnostics (skipped when MODE='GMN') ----------------
+     cfg['MAX_TP'] = int(os.environ.get('TSLS_MDE_GMN_MAX_TP', 20))
+@@ -358,63 +831,52 @@
+     cfg['RUN_MDE_DIAGNOSTICS'] = _env_bool('TSLS_MDE_GMN_RUN_MDE_DIAGNOSTICS', True)
+ 
+     # ---- Parallelism ----------------------------------------------------
++    # NOTE: no TSLS_MDE_GMN_INTERACTION_MATRIX_OUTER_CORES here -- unlike
++    # simple-mde-gmn.py's own MODE='GMN' branch (still shells out to
++    # apps.InteractionMatrix, whose own outer pool that knob sizes), this
++    # pipeline's MODE='GMN' path uses proper_ccm (build_interaction_matrix()
++    # below), which -- like proper_mde -- has no multiprocessing pool of its
++    # own at all (no Pool usage anywhere in cleaned_helper_functions.py), so
++    # there's nothing for a knob like this to size. See this module's own
++    # docstring.
+     cfg['CORES'] = int(os.environ.get('TSLS_MDE_GMN_CORES', os.cpu_count() or 1))
+-    cfg['INTERACTION_MATRIX_OUTER_CORES'] = int(os.environ.get('TSLS_MDE_GMN_INTERACTION_MATRIX_OUTER_CORES', 2))
+ 
+     # ---- TSLS-aware scoring (cleaned_helper_functions.py's proper_mde/
+     # proper_ccm/proper_simplex/adaptive_event_metrics_from_tsls, replacing
+     # dimx.MDE / apps.InteractionMatrix / pyEDM.EmbedDimension / plain
+-    # ComputeError rho everywhere in this pipeline) -----------------------
++    # ComputeError rho everywhere in this pipeline that scores a TSLS-
++    # converted column) -----------------------------------------------------
+     # 'correlation' (plain Pearson rho, pyEDM's own default) | 'mae' |
+     # 'f1' | 'gamma' (Kistler coincidence factor) -- see
+     # cleaned_helper_functions.py's _score()/adaptive_event_metrics_from_tsls
+     # docstrings. 'f1'/'gamma' score TSLS series by decoding both true and
+-    # predicted series back to discrete reset/spike events (via a
+-    # near-zero threshold calibrated from the true series itself) and
+-    # matching them within an adaptive per-event tolerance window -- this
+-    # is what actually answers "did we get the spike timing right" instead
+-    # of Pearson correlation over the whole sawtooth, which is dominated
+-    # by the smooth (uninformative) ramp segments between spikes.
++    # predicted series back to discrete reset/spike events (via a near-zero
++    # threshold calibrated from the true series itself) and matching them
++    # within an adaptive per-event tolerance window -- this is what actually
++    # answers "did we get the spike timing right" instead of Pearson
++    # correlation over the whole sawtooth, which is dominated by the smooth
++    # (uninformative) ramp segments between spikes.
+     cfg['METRIC'] = os.environ.get('TSLS_MDE_GMN_METRIC', 'f1')
+     # TARGETS (head_position_x/y) are continuous behavioral traces, not
+-    # TSLS-encoded spike series -- they never "reset" near zero at
+-    # discrete events, so 'f1'/'gamma' event-decoding is meaningless for
+-    # them (confirmed empirically: applying METRIC='f1' to a target's own
+-    # self-prediction produced NaN for every candidate, since
+-    # infer_near_zero_threshold_from_true_tsls/detect_reset_events_from_tsls
+-    # have nothing sensible to key off of on a signal with no genuine
+-    # reset structure). Always 'correlation' (or 'mae') for anything scored
+-    # against a TARGETS column; METRIC above is only for scoring
+-    # predictions of the TSLS-converted neuron columns themselves.
++    # TSLS-encoded spike series -- they never "reset" near zero at discrete
++    # events, so 'f1'/'gamma' event-decoding is meaningless for them. Always
++    # 'correlation' (or 'mae') for anything scored against a TARGETS column;
++    # METRIC above is only for scoring predictions of the TSLS-converted
++    # neuron columns themselves.
+     cfg['TARGET_METRIC'] = os.environ.get('TSLS_MDE_GMN_TARGET_METRIC', 'correlation')
+     cfg['GAMMA_DELTA'] = int(os.environ.get('TSLS_MDE_GMN_GAMMA_DELTA', 2))
+     # Every CCM convergence gate in this pipeline (proper_mde's own CCM
+     # step, and build_interaction_matrix() below) sweeps library sizes as
+     # PERCENTAGES of however many rows it's handed. CCM_WINDOW_ROWS bounds
+-    # that row count -- CRITICAL for calibration, not just a speed knob:
+-    # confirmed empirically twice that too-large a window makes every
+-    # tested library size land in the already-converged tail of the real
+-    # curve, with the gate then (correctly) reporting "no rise" -- not
+-    # because the underlying relationship isn't real, but because it was
+-    # never shown the region where the rise happens.
+-    #   1) job 35513363's preserved iMatrix CSV: apps.InteractionMatrix's
+-    #      2-point delta gate (libMinFraction=0.05 of ~31k rows -> a
+-    #      "small" library of ~1567 rows) reported exactly 0 for
+-    #      virtually every pair.
+-    #   2) job 35525431: proper_mde's own 4-point slope gate at
+-    #      CCM_WINDOW_ROWS=3000 (a "small" library of 300 rows) rejected
+-    #      every candidate for both targets, despite the ranking stage
+-    #      finding clearly strong candidates (e.g. correlation=0.68).
+-    # Recalibrated by testing genuinely small (tens of rows) library
+-    # sizes directly against real data pairs from this dataset: a real,
+-    # gradual, directionally-asymmetric convergence curve appeared in the
+-    # ~15-400 row range (e.g. one real pair's forward direction rose
+-    # 0.075->0.200 smoothly across that range while its reverse direction
+-    # stayed flat/declining -- the textbook CCM causality signature). The
+-    # defaults below (CCM_WINDOW_ROWS=800, percentages landing on
+-    # ~16/24/40/64/96/160/240/400) reproduce that validated range. Keep
+-    # CCM_WINDOW_ROWS's smallest resulting libSize >= (max E in E_RANGE)+2
+-    # -- SMap/Simplex's own minimum embedding-plus-one-point requirement.
++    # that row count -- CRITICAL for calibration, not just a speed knob: too
++    # large a window makes every tested library size land in the
++    # already-converged tail of the real curve, with the gate then
++    # (correctly) reporting "no rise" even though the underlying
++    # relationship is real. Fixed two past production failures this way
++    # (apps.InteractionMatrix reporting ~all-zero interactions; proper_mde
++    # rejecting every candidate for both targets) -- recalibrated against
++    # real small-libSize data from this dataset. Keep CCM_WINDOW_ROWS's
++    # smallest resulting libSize >= (max E in E_RANGE)+2.
+     cfg['CCM_WINDOW_ROWS'] = int(os.environ.get('TSLS_MDE_GMN_CCM_WINDOW_ROWS', 800))
+     cfg['CCM_LIB_SIZE_PCTS'] = tuple(
+         _env_float_list('TSLS_MDE_GMN_CCM_LIB_SIZE_PCTS', (2, 3, 5, 8, 12, 20, 30, 50))
+@@ -422,19 +884,27 @@
+     cfg['CCM_SAMPLE'] = int(os.environ.get('TSLS_MDE_GMN_CCM_SAMPLE', 20))
+     cfg['CCM_SLOPE'] = float(os.environ.get('TSLS_MDE_GMN_CCM_SLOPE', 0.01))
+ 
++    # ---- Search reuse ---------------------------------------------------
++    # See simple-mde-gmn.py's own module docstring's SEARCH REUSE section
++    # for the full rationale; ported unchanged. Short version: reuse a past
++    # job's E/tau/theta search result instead of redoing it, when settings
++    # match exactly.
++    cfg['REUSE_BEST_PARAMS'] = _env_bool('TSLS_MDE_GMN_REUSE_BEST_PARAMS', False)
++    cfg['PREV_RUNS_DIR'] = Path(os.environ.get('TSLS_MDE_GMN_PREV_RUNS_DIR', '../../results'))
++    cfg['RUN_CACHE_DIR'] = Path(os.environ.get('TSLS_MDE_GMN_RUN_CACHE_DIR', cfg['RESULTS_DIR']))
++    cfg['RUN_CACHE_DIR'].mkdir(parents=True, exist_ok=True)
++
+     cfg['TARGET_COLORS'] = {t: plt.get_cmap('tab10')(i % 10) for i, t in enumerate(cfg['TARGETS'])}
+ 
+     return cfg
+ 
+ 
+ # =============================================================================
+-# TSLS conversion + burn-in trim (mirrors notebooks/tsls-mde-gmn.ipynb
+-# cells 3-4; see that notebook's intro cell for the full rationale)
++# TSLS conversion + burn-in trim (kept unchanged -- TSLS-specific front end;
++# mirrors notebooks/tsls-mde-gmn.ipynb cells 3-4; see that notebook's intro
++# cell for the full rationale)
+ # =============================================================================
+ 
+-REGION_PREFIXES = ('CA1_', 'mPFC_', 'OFC_')
+-
+-
+ def region_neuron_columns(df, prefix, n):
+     candidates = [f'{prefix}{i}' for i in range(n)]
+     return [c for c in candidates if c in df.columns]
+@@ -449,10 +919,10 @@
+ 
+ 
+ def convert_to_tsls(df_raw, neuron_columns, targets, results_dir):
+-    '''Spike counts -> TSLS for every candidate channel; behavioral
+-    TARGETS columns pass through untouched (they are already continuous,
+-    not spike counts). Returns the full (not yet burn-in-trimmed)
+-    TSLS DataFrame and the list of its _tsls-suffixed observable columns.'''
++    '''Spike counts -> TSLS for every candidate channel; behavioral TARGETS
++    columns pass through untouched (they are already continuous, not spike
++    counts). Returns the full (not yet burn-in-trimmed) TSLS DataFrame and
++    the list of its _tsls-suffixed observable columns.'''
+     time_grid = df_raw['time_bin_center'].to_numpy()
+ 
+     data = {'time_bin_center': time_grid}
+@@ -474,9 +944,9 @@
+ 
+ def burn_in_trim(tsls_df_full, observable_columns, results_dir):
+     '''Drop leading rows until every observable_columns entry is non-NaN
+-    (see module docstring for why this is a correctness requirement for
+-    the dimx.MDE/pyEDM handoff, not just cleanliness). Raises if any
+-    candidate channel never fires at all in this window.'''
++    (see module docstring for why this is a correctness requirement for the
++    gmn.Node Generate()/Forecast() handoff, not just cleanliness). Raises
++    if any candidate channel never fires at all in this window.'''
+     first_valid_idx = tsls_df_full[observable_columns].notna().idxmax()
+     never_valid = [c for c in observable_columns if not tsls_df_full[c].notna().any()]
+     if never_valid:
+@@ -496,12 +966,13 @@
+     print(f'-> tsls_data_trimmed.csv  shape={df.shape}', flush=True)
+     return df
+ 
++
+ def _ccm_window(df, lib_ratio, max_rows):
+     '''Bound the row count fed into any percentage-based CCM libSize sweep
+     to max_rows, preserving lib_ratio's proportion within that smaller
+     window. See load_config()'s CCM_WINDOW_ROWS docstring for why this is
+-    necessary (not optional) for CCM's convergence gate to mean anything
+-    at this pipeline's row counts.'''
++    necessary (not optional) for CCM's convergence gate to mean anything at
++    this pipeline's row counts.'''
+     n = min(len(df), max_rows)
+     windowed = df.iloc[:n].reset_index(drop=True)
+     lib_end = max(1, int(round(n * lib_ratio)))
+@@ -512,61 +983,218 @@
+     '''TARGETS (continuous behavioral traces) always score via
+     target_metric ('correlation'); everything else (TSLS-converted neuron
+     columns) uses metric ('f1' by default) -- see load_config()'s
+-    TARGET_METRIC docstring for why this split is required, not
+-    cosmetic.'''
++    TARGET_METRIC docstring for why this split is required, not cosmetic.'''
+     return target_metric if column in targets else metric
+ 
+ 
++# =============================================================================
++# Delay/column-naming infrastructure -- ported UNCHANGED from
++# simple-mde-gmn.py. Pure string/DataFrame manipulation with no dependency
++# on what the columns represent; reused as-is against TSLS's own
++# `_tsls`-suffixed column names.
++# =============================================================================
++
++DELAY_MARKER = '::delay'
++
++
++def _delayed_column_name(observable, delay):
++    return f'{observable}{DELAY_MARKER}{delay}'
++
++
++def _parse_delayed_column_name(name):
++    observable, _, delay_str = name.rpartition(DELAY_MARKER)
++    return observable, int(delay_str)
++
++
++def observable_and_delay(column_name, raw_columns):
++    '''Maps a (possibly delay-expanded) candidate column name back to its
++    underlying (observable, delay) pair. Delay=0 candidates are just the
++    raw observable name itself (see expand_delay_columns()'s docstring for
++    why that delay isn't also given a suffixed alias) -- checked against
++    `raw_columns` rather than by string shape alone, in case a real channel
++    name were ever to collide with the delay-suffix marker.'''
++    if column_name in raw_columns:
++        return column_name, 0
++    return _parse_delayed_column_name(column_name)
++
++
++def expand_delay_columns(df, columns, delay_set):
++    '''Adds one new column per (observable, delay) pair in `columns` x
++    `delay_set` (delay=0 excluded -- the observable's own raw column
++    already IS that pair, no separate alias needed) to a copy of `df`, each
++    holding that observable's value abs(delay) rows in the past
++    (pandas .shift() -- every delay is <= 0). This is what lets forward
++    selection treat each (observable, delay) combination as its own
++    independent candidate driver, instead of being stuck with one fixed lag
++    applied uniformly to every column -- see build_nested_mde_network()'s
++    docstring for how the selected pairs become graph edges.
++
++    Returns (expanded_df, expanded_columns) -- expanded_columns is
++    `columns` (representing delay=0) plus one new name per nonzero delay,
++    in the format observable_and_delay() parses back.'''
++    expanded = df.copy()
++    expanded_columns = list(columns)
++    for observable in columns:
++        for delay in delay_set:
++            if delay == 0:
++                continue
++            name = _delayed_column_name(observable, delay)
++            expanded[name] = df[observable].shift(-delay)
++            expanded_columns.append(name)
++    return expanded, expanded_columns
++
++
++def derive_lag_set(delay_source, explicit_delay_set, lag_mode, lag_density, lag_step,
++                    generate_length, mde_lib_size, min_lib_rows=50):
++    '''Resolves the nonzero-delay set used for Stage 2's lagged-driver
++    candidate pool (attach_lag_embeddings()) and, unioned with {0}, every
++    node's unconditional self_delay_set -- see load_config()'s
++    DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP docstrings for the parameter
++    semantics. Ported unchanged from simple-mde-gmn.py.
++
++    delay_source='explicit': just the hand-picked delay_set list, stripped
++    of any 0 entry.
++
++    delay_source='lag_mode': auto-derived --
++      lag_mode='generation_length_adjusted': bound = generate_length.
++      lag_mode='every_lag_possible': bound = mde_lib_size - min_lib_rows
++        (clamped to >= 1) -- as deep as the MDE library segment [0, A)
++        structurally allows while reserving min_lib_rows real rows so MDE's
++        own forward-selection still has a meaningful library left after the
++        deepest lag's warm-up NaN rows are skipped.
++    Either bound is then sampled every lag_step rows (lag_density='strided')
++    or every single integer lag (lag_density='dense').
++
++    Returns a sorted-descending list of negative ints -- no 0 entry, same
++    convention as the explicit-source path above.'''
++    if delay_source == 'explicit':
++        return sorted((d for d in explicit_delay_set if d != 0), reverse=True)
++
++    if lag_mode == 'generation_length_adjusted':
++        bound = max(1, generate_length)
++    elif lag_mode == 'every_lag_possible':
++        bound = max(1, mde_lib_size - min_lib_rows)
++    else:
++        raise ValueError(f"Unknown lag_mode: {lag_mode!r}")
++
++    step = lag_step if lag_density == 'strided' else 1
++    if lag_density not in ('strided', 'dense'):
++        raise ValueError(f"Unknown lag_density: {lag_density!r}")
++
++    return list(range(-1, -bound - 1, -step))
++
++
++def effective_mde_dimension(mde_d, candidate_columns, num_delays):
++    '''MDE_D names the desired count of distinct *real* observables MDE
++    should be able to select -- not delay-expanded columns. Each real
++    observable occupies `num_delays` separate candidate columns (one per
++    delay), so the D actually handed to proper_mde is scaled up by
++    num_delays -- see simple-mde-gmn.py's own docstring for the full
++    rationale (identical here). Capped at the number of real observables
++    actually present in this call's own candidate pool.'''
++    num_real_observables_available = len(candidate_columns) // num_delays
++    return min(mde_d, num_real_observables_available) * num_delays
++
++
++# =============================================================================
++# MDE (mirrors notebook cells 2-5)
++# =============================================================================
++
+ def run_mde_for_target(target, df, observable_columns, prediction_start, prediction_length,
+-                        mde_d, embed_dim_rho_min, cross_map_rho_min, results_dir,
+-                        metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
+-                        ccm_sample, ccm_slope):
+-    '''Forward-selection for a single target variable via
+-    cleaned_helper_functions.proper_mde (replaces dimx.MDE -- see
+-    load_config()'s METRIC docstring for why: proper_mde accepts
+-    metric='f1'/'gamma', scoring TSLS series by decoded spike-timing
+-    match instead of plain Pearson rho over the whole sawtooth).
+-
+-    metric vs. ccmMetric: proper_mde's `metric` scores the RANKING stage
+-    (predictions of `target`, which is one of TARGETS -- a continuous
+-    behavioral trace, not TSLS -- so this must be target_metric, never
+-    METRIC); `ccmMetric` scores the CCM gate (predictions of the
+-    CANDIDATE column, which IS a TSLS neuron series -- so this is METRIC).
+-    See load_config()'s TARGET_METRIC docstring and this file's
+-    _metric_for() -- proper_mde's own docstring anticipates exactly this
+-    split ("pick [ccmMetric] to match the nature of the candidate
+-    columns").
+-
+-    NOTE: proper_mde has no multiprocessing of its own (confirmed against
+-    cleaned_helper_functions.py -- no Pool/multiprocessing usage anywhere
+-    in the file), unlike dimx.MDE which threaded `cores` through its own
+-    worker pool. This pipeline no longer has a way to parallelize the MDE
+-    forward-selection step; CCM_WINDOW_ROWS keeps each individual
+-    proper_ccm/Simplex call cheap (bounded row count) to compensate, but a
+-    very large REGION_CHANNEL_CAP candidate pool will still take
+-    proportionally longer wall-clock than the old dimx.MDE-based version
+-    did on a multi-core node.
+-
+-    CCM gate (noCCM left at its default False, i.e. ENABLED): a job
+-    submitted with noCCM=True (dropping this gate entirely) produced zero
+-    selected drivers under one ranking configuration and non-zero drivers
+-    under another, in a way that was ultimately inconclusive about
+-    whether the gate itself was miscalibrated at this data's scale or
+-    correctly rejecting non-causal correlations -- see this project's own
+-    job-log/dev notes for 2026-07-30. The gate stays on by design (it is
+-    the only thing distinguishing "these two series are correlated" from
+-    "one appears to causally drive the other," which matters for a
+-    pipeline whose output is meant to represent validated causal
+-    structure); see CCM_WINDOW_ROWS and CCM_LIB_SIZE_PCTS below for the
+-    calibration knobs to reach for instead of disabling the gate.'''
++                        mde_d, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                        results_dir, delay_set, tp=1,
++                        metric='f1', target_metric='correlation', gamma_delta=2,
++                        ccm_window_rows=800, ccm_lib_size_pcts=(2, 3, 5, 8, 12, 20, 30, 50),
++                        ccm_sample=20, ccm_slope=0.01,
++                        reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
++                        data_file=None, data_file_sha256=None, code_fingerprint=None,
++                        cache_stage='stage1'):
++    '''Run cleaned_helper_functions.proper_mde's forward selection for a
++    single target variable -- TSLS-flavored equivalent of
++    simple-mde-gmn.py's own run_mde_for_target() (dimx.MDE), matching that
++    function's return shape (a 'm' namespace exposing MDEcolumns/MDErho/
++    MDEOut/args.lib/args.pred/args.tau/args.Tp) exactly, so every downstream
++    consumer ported from simple-mde-gmn.py (_accept_mde_result_edges(),
++    _failed_mde_result(), plot_mde_rho_vs_dimension(),
++    run_tp_vs_rho_sweep(), run_univariate_e_tau_grid()) works completely
++    unchanged. `mde_d` here is already the *effective* dimension count (see
++    effective_mde_dimension()).
++
++    metric vs. ccmMetric passed to proper_mde: `target_metric` scores the
++    RANKING stage (predictions of `target`, a continuous TARGETS column --
++    never `metric`); `metric` scores the CCM causality gate (predictions of
++    each CANDIDATE column, a TSLS-converted neuron series) -- see
++    load_config()'s TARGET_METRIC docstring and this file's _metric_for();
++    proper_mde's own docstring anticipates exactly this split.
++
++    LEAKAGE (see load_config()'s three-way A/B/end window docstring,
++    identical rationale to simple-mde-gmn.py's own run_mde_for_target()):
++    `prediction_start`/`prediction_length` here are always A and B-A. The
++    row range handed to proper_mde is trimmed twice before being windowed
++    to CCM_WINDOW_ROWS (see _ccm_window() and load_config()'s own
++    CCM_WINDOW_ROWS docstring for why that windowing is necessary at this
++    pipeline's row counts): `warmup` rows are skipped at the front (delay-
++    expansion NaN warm-up, same as simple-mde-gmn.py) and `tp` rows are
++    trimmed from the back (B - tp, not B, so the last validated row's own
++    t+tp target label can never land at or past B) -- both applied BEFORE
++    windowing, so the CCM window itself can never reach into the Generate/
++    Forecast validation segment [B, end) regardless of CCM_WINDOW_ROWS's
++    value.
++
++    CACHE (reuse_cache, gated by TSLS_MDE_GMN_REUSE_BEST_PARAMS): ported
++    unchanged from simple-mde-gmn.py -- a cache hit reconstructs the same
++    'm' namespace shape from a pickled dict instead of calling proper_mde
++    at all. `cache_stage` ('stage1' default, 'stage2' from
++    attach_lag_embeddings()) keeps the two stages' cache files distinct,
++    same as simple-mde-gmn.py.'''
+     mde_df = df[[target] + observable_columns].iloc[:prediction_start + prediction_length]
+-    lib_ratio = prediction_start / (prediction_start + prediction_length)
+-    ccm_df, ccm_lib_end = _ccm_window(mde_df, lib_ratio, ccm_window_rows)
++
++    # See this function's own LEAKAGE docstring above for why both trims
++    # happen before windowing, not after.
++    warmup = max((abs(d) for d in delay_set), default=0)
++    usable_end = prediction_start + prediction_length - tp
++
++    fingerprint = None
++    cache_filename = f'mde_selection_{cache_stage}_{target}.pkl'
++    if reuse_cache:
++        fingerprint = build_mde_selection_fingerprint(
++            target, observable_columns, mde_d, tp, embed_dim_rho_min, cross_map_rho_min,
++            exclusion_radius, delay_set, prediction_start, prediction_length,
++            metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
++            ccm_sample, ccm_slope,
++            data_file, data_file_sha256, code_fingerprint, cache_stage,
++        )
++        hit = find_cached(prev_runs_dir, cache_filename, fingerprint,
++                           load_one=_load_pickle_cache_entry)
++        if hit is not None:
++            entry, source = hit
++            print(f'{target}: TSLS_MDE_GMN_REUSE_BEST_PARAMS matched cached MDE selection '
++                  f'{source} -- skipping forward-selection entirely', flush=True)
++            m = types.SimpleNamespace(
++                MDEcolumns=entry['MDEcolumns'], MDErho=entry['MDErho'], MDEOut=entry['MDEOut'],
++                args=types.SimpleNamespace(lib=entry['lib'], pred=entry['pred'],
++                                            tau=entry['tau'], Tp=entry['Tp']),
++            )
++            m.MDEOut.to_csv(results_dir / f'mde_output_{cache_stage}_{target}.csv', index=False)
++            selected_columns = list(m.MDEcolumns)
++            print(f'MDE selected columns for {target}:', selected_columns, flush=True)
++            return {
++                'target': target,
++                'mde_df': mde_df,
++                'm': m,
++                'SELECTED_COLUMNS': selected_columns,
++            }
++        print(f'{target}: TSLS_MDE_GMN_REUSE_BEST_PARAMS set but no matching cached MDE selection '
++              f'found under {prev_runs_dir} -- running forward-selection.', flush=True)
++
++    usable_df = mde_df.iloc[warmup:usable_end].reset_index(drop=True)
++    lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
++    ccm_df, ccm_lib_end = _ccm_window(usable_df, lib_ratio, ccm_window_rows)
+ 
+     result = tsls.proper_mde(
+         ccm_df, target=target, columns=observable_columns, D=mde_d,
+         lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)],
+-        tau=-1, Tp=1, E=3,
++        tau=-1, Tp=tp, E=3, exclusionRadius=exclusion_radius,
+         pLibSizes=ccm_lib_size_pcts, sample=ccm_sample, ccmSlope=ccm_slope,
+         crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
+         metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
+@@ -574,26 +1202,43 @@
+     )
+ 
+     mde_out = pd.DataFrame({'rho': result['MDErho']})
+-    mde_out.to_csv(results_dir / f'mde_output_{target}.csv', index=False)
++    mde_out.to_csv(results_dir / f'mde_output_{cache_stage}_{target}.csv', index=False)
+ 
+     selected_columns = list(result['MDEcolumns'])
+     print(f'MDE selected columns for {target}:', selected_columns, flush=True)
+ 
++    m = types.SimpleNamespace(
++        MDEcolumns=selected_columns,
++        MDErho=np.asarray(result['MDErho']),
++        MDEOut=mde_out,
++        args=types.SimpleNamespace(
++            lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)], tau=-1, Tp=tp,
++        ),
++    )
++
++    if fingerprint is not None:
++        save_pickle_to_cache(
++            cache_filename,
++            {
++                'fingerprint': fingerprint,
++                'MDEcolumns': m.MDEcolumns, 'MDErho': m.MDErho, 'MDEOut': m.MDEOut,
++                'lib': m.args.lib, 'pred': m.args.pred, 'tau': m.args.tau, 'Tp': m.args.Tp,
++            },
++            results_dir, run_cache_dir,
++        )
++
+     return {
+         'target': target,
+         'mde_df': ccm_df,
+-        'MDEOut': mde_out,
++        'm': m,
+         'SELECTED_COLUMNS': selected_columns,
+-        'LIB': [1, ccm_lib_end],
+-        'PRED': [ccm_lib_end + 1, len(ccm_df)],
+-        'TAU': -1,
+     }
+ 
+ 
+ def plot_mde_rho_vs_dimension(mde_results, targets, target_colors, save_path):
+     fig, ax = plt.subplots(figsize=(9, 5))
+     for target in targets:
+-        mde_out = mde_results[target]['MDEOut']
++        mde_out = mde_results[target]['m'].MDEOut
+         dims = np.arange(1, len(mde_out) + 1)
+         ax.plot(dims, mde_out['rho'], marker='o', label=target, color=target_colors[target])
+     ax.set_xlabel('Embedding dimension')
+@@ -605,11 +1250,18 @@
+     plt.close(fig)
+ 
+ 
+-def plot_3d_mde_projection(target, second_target, mde_results, df,
++def plot_3d_mde_projection(target, second_target, mde_results, df, raw_columns,
+                             prediction_start, prediction_length, save_path):
+     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 -- registers the '3d' projection
+ 
+-    obs = mde_results[target]['SELECTED_COLUMNS'][:2]
++    # SELECTED_COLUMNS can now be delay-suffixed names (see
++    # expand_delay_columns()'s docstring) that don't exist in the raw `df`
++    # this function indexes into -- mapped back to their underlying raw
++    # observable (the delay itself isn't meaningful for this plot, a visual
++    # trajectory of the real, undelayed driver values).
++    obs = list(dict.fromkeys(
++        observable_and_delay(c, raw_columns)[0] for c in mde_results[target]['SELECTED_COLUMNS']
++    ))[:2]
+     if len(obs) < 2:
+         print(f'{target}: fewer than 2 MDE-selected columns, skipping 3D projection.', flush=True)
+         return
+@@ -638,18 +1290,16 @@
+     fig.tight_layout()
+     fig.savefig(save_path, dpi=300)
+     plt.close(fig)
++
++
+ # =============================================================================
+ # GMN network construction (mirrors notebook cell 7)
+ # =============================================================================
+ 
+ def _lib_train_test_ranges(n_rows, train_frac=0.7):
+-    # [start, stop] list form (1-offset, inclusive) -- both call sites
+-    # feed these into cleaned_helper_functions.py's proper_simplex/
+-    # proper_embed_dimension, which expect that form, not pyEDM's own
+-    # "start stop" string form (the two look similar but proper_simplex's
+-    # lib[0]/lib[1] indexing on a string silently does the wrong thing
+-    # and gets swallowed by the caller's try/except -- confirmed
+-    # empirically as the cause of an all-NaN E/tau grid in production).
++    # [start, stop] list form (1-offset, inclusive) -- proper_simplex/
++    # proper_embed_dimension expect this form, not pyEDM's own "start stop"
++    # string form.
+     split = int(n_rows * train_frac)
+     return [1, split], [split + 1, n_rows]
+ 
+@@ -673,8 +1323,8 @@
+ 
+ def estimate_node_dimension(lib_df, node, metric, gamma_delta, max_e=15, fallback=4):
+     '''EmbedDimension-equivalent for TSLS-aware metrics via
+-    proper_embed_dimension (pyEDM's own EmbedDimension is Pearson-rho
+-    only, so it can't score 'f1'/'gamma').'''
++    proper_embed_dimension (pyEDM's own EmbedDimension is Pearson-rho only,
++    so it can't score 'f1'/'gamma').'''
+     lib_range, pred_range = _lib_train_test_ranges(len(lib_df))
+     try:
+         ed = tsls.proper_embed_dimension(
+@@ -704,54 +1354,24 @@
+                               gamma_delta, ccm_window_rows, ccm_lib_size_pcts, ccm_sample,
+                               ccm_slope):
+     '''NxN interaction matrix via cleaned_helper_functions.proper_ccm,
+-    replacing apps.InteractionMatrix's CLI subprocess.
++    replacing apps.InteractionMatrix's CLI subprocess -- MODE='GMN' only.
++    No multiprocessing-pool-nesting concern at all here (unlike
++    simple-mde-gmn.py's own MODE='GMN' branch): proper_ccm has no pool of
++    its own to nest inside an outer one.
+ 
+     Per-pair metric selection via _metric_for(): `nodes` mixes TSLS-
+     converted neuron columns with the (continuous, non-TSLS) TARGETS
+     columns, so each proper_ccm call's target_measurement/
+-    columns_measurement must independently match whichever side (a or b)
+-    is actually being predicted in that direction -- using METRIC
+-    ('f1' by default) to score a TARGETS column produced NaN for every
+-    candidate in production (see load_config()'s TARGET_METRIC
+-    docstring).
+-
+-    WHY (empty-network root cause, and why the gate stays on): both
+-    apps.InteractionMatrix's own CCM convergence gate (InteractFunc, line
+-    ~430: `CCM_XY = CCM_YX = 0` unless the large-libSize skill beats the
+-    small-libSize skill by > deltaCCM=0.05) and proper_mde's own 4-point
+-    slope gate reported ~zero interactions in production (job 35513363's
+-    preserved iMatrix CSV: 88/90 cells exactly 0.0; job 35525431: MDE
+-    selected zero drivers for either target) -- not because the gates
+-    are wrong to require convergence, but because both were fed
+-    percentage-of-N libSize sweeps where even the *small* end (hundreds
+-    to thousands of rows, at this pipeline's ~30-45k-row TSLS-converted
+-    scale) already sits in the flat/converged tail of the real curve.
+-    Confirmed directly: testing genuinely small (tens of rows) library
+-    sizes against real candidate pairs from this dataset showed a
+-    smooth, monotonic, directionally-asymmetric convergence curve in the
+-    ~15-400 row range (one real pair's forward direction rose
+-    0.075->0.200 while its reverse direction stayed flat/declining --
+-    the textbook CCM causality signature) -- i.e. the convergence
+-    requirement is doing real, correct work here; it just needs to be
+-    shown the right range of library sizes. See load_config()'s
+-    CCM_WINDOW_ROWS docstring for the calibrated defaults this function
+-    (and proper_mde's own CCM gate) now use, matching that validated
+-    range. An earlier version of this function dropped the convergence
+-    requirement entirely rather than recalibrating it -- reverted: for a
+-    pipeline whose output is meant to represent causally-validated
+-    structure, an uncalibrated gate is a bug to fix, not a check to
+-    remove.
+-
+-    Matches apps.CreateNetwork()'s documented convention (confirmed
+-    empirically against a working simple-mde-gmn network's own iMatrix.csv,
+-    job 34172242): `iMatrix.loc[driven_node, driver_node]` = skill of
+-    predicting driven_node FROM driver_node's history. proper_ccm's c2t
+-    direction (`target` predicted FROM `columns`) maps directly onto that;
+-    calling it once per *unordered* pair yields both c2t and t2c, matching
+-    apps.InteractionMatrix's own upper-triangular optimization (its module
+-    docstring: "CCM returns X:Y and Y:X, also compute pairs"). Non-
+-    converged directions are left at 0 (the pre-filled default), which is
+-    what build_network()'s downstream threshold + per-node top-N-drivers
++    columns_measurement must independently match whichever side (a or b) is
++    actually being predicted in that direction.
++
++    Matches apps.CreateNetwork()'s documented convention:
++    `iMatrix.loc[driven_node, driver_node]` = skill of predicting
++    driven_node FROM driver_node's history. proper_ccm's c2t direction
++    (`target` predicted FROM `columns`) maps directly onto that; calling it
++    once per *unordered* pair yields both c2t and t2c. Non-converged
++    directions are left at 0 (the pre-filled default), which is what
++    build_network()'s downstream threshold + per-node top-N-drivers
+     selection already expects.'''
+     windowed, _ = _ccm_window(data_lib, 0.5, ccm_window_rows)
+     libSizes = sorted({max(10, int(len(windowed) * p / 100.0)) for p in ccm_lib_size_pcts})
+@@ -762,9 +1382,6 @@
+             a_metric = _metric_for(a, targets, metric, target_metric)
+             b_metric = _metric_for(b, targets, metric, target_metric)
+             try:
+-                # target_measurement scores c2t (predictions of `target`=a);
+-                # columns_measurement scores t2c (predictions of `columns`=b)
+-                # -- each independently matched to whichever of a/b it predicts.
+                 c2t, t2c, _ = tsls.proper_ccm(
+                     windowed, libSizes=libSizes, sample=ccm_sample,
+                     tau=ccm_tau, Tp=1, E=ccm_E,
+@@ -775,10 +1392,6 @@
+             except Exception:
+                 continue
+ 
+-            # c2t: skill of predicting `target`=a FROM `columns`=b's
+-            # embedding -> iMatrix.loc[a, b] (a driven by b), kept only if
+-            # this direction shows genuine convergence. t2c mirrors this
+-            # the other way -> iMatrix.loc[b, a].
+             for series, driven, driver, node_metric in (
+                 (c2t, a, b, a_metric), (t2c, b, a, b_metric),
+             ):
+@@ -793,50 +1406,350 @@
+     return iMatrix
+ 
+ 
++def _failed_mde_result(target):
++    '''Fallback run_mde_for_target()-shaped result for a node/target whose
++    MDE call raised, instead of returning normally -- ported unchanged from
++    simple-mde-gmn.py (job 37946756: dimx's own internal EmbedDimension hit
++    an all-NaN rho column; proper_mde has its own analogous internal
++    failure modes against degenerate candidate data, not something this
++    pipeline's own gates catch or control). Shaped to be indistinguishable,
++    to every downstream consumer, from a node that legitimately selected
++    zero drivers -- already one of build_nested_mde_network()'s documented
++    ordinary BFS termination conditions -- so a single degenerate node
++    dead-ends cleanly instead of the exception propagating out of a
++    ProcessPoolExecutor wave and crashing everything already computed
++    alongside it.'''
++    return {
++        'target': target,
++        'mde_df': None,
++        'm': types.SimpleNamespace(
++            MDEcolumns=[], MDErho=np.array([]), MDEOut=None,
++            args=types.SimpleNamespace(lib=None, pred=None, tau=None, Tp=None),
++        ),
++        'SELECTED_COLUMNS': [],
++    }
++
++
++def _accept_mde_result_edges(graph, edges, node, result, raw_columns):
++    '''Shared MDE-edge-acceptance rules -- self-loop guard, NaN
++    marginal-gain rejection, eager cycle rejection -- ported unchanged from
++    simple-mde-gmn.py (see that file's build_nested_mde_network() docstring
++    for the full rationale on each). Applied to every column
++    run_mde_for_target() selected for `node`. Mutates `graph` in place and
++    appends accepted rows to `edges`.
++
++    Returns the list of (driver, delay) pairs actually accepted as edges
++    into `node` (in selection order).'''
++    accepted = []
++    cols = result['SELECTED_COLUMNS']
++    gains = np.diff(np.concatenate(([0.0], result['m'].MDErho)))
++
++    for col, gain in zip(cols, gains):
++        driver, delay = observable_and_delay(col, raw_columns)
++
++        if driver == node:
++            continue  # explicit self-loop guard (belt-and-suspenders)
++
++        if np.isnan(gain):
++            print(f'MDE edge accept: rejected {driver} (delay {delay}) -> {node} '
++                  f'(marginal MDE rho gain is NaN -- treating as a dead-end edge)', flush=True)
++            continue
++
++        graph.add_node(driver)
++        key = graph.add_edge(driver, node, delay=delay, weight=gain)
++
++        if not nx.is_directed_acyclic_graph(graph):
++            graph.remove_edge(driver, node, key=key)
++            if graph.degree(driver) == 0:
++                graph.remove_node(driver)
++            print(f'MDE edge accept: rejected {driver} (delay {delay}) -> {node} '
++                  f'(would create a cycle)', flush=True)
++            continue
++
++        edges.append({'driver': driver, 'node': node, 'delay': delay, 'weight': gain})
++        accepted.append((driver, delay))
++
++    return accepted
++
++
++def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns,
++                              prediction_start, prediction_length, nested_n, nested_m,
++                              embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                              results_dir, mde_results, delay_set, tp,
++                              metric, target_metric, gamma_delta, ccm_window_rows,
++                              ccm_lib_size_pcts, ccm_sample, ccm_slope, cores,
++                              reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
++                              data_file=None, data_file_sha256=None, code_fingerprint=None):
++    '''Stage 1 of two-stage nested-MDE network construction -- MODE='MDE-GMN'
++    only. Ported from simple-mde-gmn.py's own build_nested_mde_network();
++    see that function's docstring for the full algorithm (BFS out from
++    targets, real-observable-only, cycle/self-loop/NaN-gain rejection,
++    delay=0-only nesting continuation) -- identical here, data-agnostic.
++
++    Two differences from simple-mde-gmn.py, both consequences of
++    proper_mde having no multiprocessing of its own (see this module's own
++    docstring): (1) run_mde_for_target() calls here take no `cores`
++    argument at all -- `cores` is only used to size this function's own
++    OUTER (per-node) ProcessPoolExecutor, with no INNER cores-per-worker
++    split (nothing to feed it into); (2) the wave pool passes no
++    `initializer=` -- simple-mde-gmn.py's own _mde_wave_worker_init()
++    reapplies dimx.Run monkeypatches inside every worker, which has no
++    TSLS-side equivalent (no dimx.Run to monkeypatch at all).'''
++    graph = nx.MultiDiGraph()
++    graph.add_nodes_from(targets)
++
++    num_delays = len(expanded_columns) // len(raw_columns)
++
++    edges = []
++    nested_mde_results = {}
++    visited = set()
++    current_wave = [(t, 0) for t in targets]
++
++    while current_wave:
++        wave_nodes, seen = [], set()
++        for node, depth in current_wave:
++            if node in visited or node in seen:
++                continue
++            seen.add(node)
++            wave_nodes.append((node, depth))
++
++        if not wave_nodes:
++            break
++
++        to_compute = [(node, depth) for node, depth in wave_nodes
++                      if not (depth == 0 and node in mde_results)]
++        wave_results = {
++            node: mde_results[node] for node, depth in wave_nodes
++            if depth == 0 and node in mde_results
++        }
++
++        if to_compute:
++            outer_workers = min(len(to_compute), max(1, cores))
++            print(f'nested MDE: wave of {len(to_compute)} node(s) at depth '
++                  f'{to_compute[0][1]} -- {outer_workers} parallel worker(s), '
++                  f'no inner split (proper_mde has no multiprocessing of its own)', flush=True)
++
++            with ProcessPoolExecutor(max_workers=outer_workers,
++                                      mp_context=mp.get_context('fork')) as executor:
++                futures = {}
++                for node, depth in to_compute:
++                    candidate_pool = [c for c in expanded_columns
++                                       if observable_and_delay(c, raw_columns)[0] != node]
++                    effective_d = effective_mde_dimension(nested_n, candidate_pool, num_delays)
++                    fut = executor.submit(
++                        run_mde_for_target, node, expanded_df, candidate_pool,
++                        prediction_start, prediction_length, effective_d,
++                        embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                        results_dir, delay_set, tp,
++                        metric, target_metric, gamma_delta, ccm_window_rows,
++                        ccm_lib_size_pcts, ccm_sample, ccm_slope,
++                        reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
++                        code_fingerprint,
++                    )
++                    futures[fut] = node
++                for fut in as_completed(futures):
++                    node = futures[fut]
++                    try:
++                        wave_results[node] = fut.result()
++                    except Exception as exc:
++                        # See _failed_mde_result()'s own docstring -- a
++                        # single node's MDE call failing must not crash the
++                        # rest of this wave or every already-completed node
++                        # in prior waves.
++                        print(f'nested MDE: {node} MDE call FAILED: {exc!r} -- treating as a '
++                              f'dead-end (zero drivers selected, no further nesting from this '
++                              f'node)', flush=True)
++                        wave_results[node] = _failed_mde_result(node)
++
++        next_wave = []
++        for node, depth in wave_nodes:
++            visited.add(node)
++            result = wave_results[node]
++            nested_mde_results[node] = result
++
++            accepted = _accept_mde_result_edges(graph, edges, node, result, raw_columns)
++
++            for driver, delay in accepted:
++                if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited:
++                    next_wave.append((driver, depth + 1))
++
++        current_wave = next_wave
++
++    edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
++
++    nested_m_display = 'unlimited' if nested_m == 0 else nested_m
++    print(f'nested MDE: {len(graph.nodes)} nodes, {len(edges_df)} edges '
++          f'(N={nested_n}, M={nested_m_display})', flush=True)
++
++    return graph, edges_df, nested_mde_results
++
++
++def attach_lag_embeddings(graph, raw_columns, df, prediction_start, prediction_length,
++                           stage2_n, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                           results_dir, lag_set, stage2_allow_real_observables, tp,
++                           metric, target_metric, gamma_delta, ccm_window_rows,
++                           ccm_lib_size_pcts, ccm_sample, ccm_slope, cores,
++                           reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
++                           data_file=None, data_file_sha256=None, code_fingerprint=None):
++    '''Stage 2 of two-stage nested-MDE network construction (MODE='MDE-GMN'
++    only) -- ported from simple-mde-gmn.py's own attach_lag_embeddings();
++    see that function's docstring for the full algorithm (one non-recursive
++    MDE round per Stage-1 node, candidate pool spans lag_set x every real
++    observable, never itself recurses). Same outer-only-parallelism/no-
++    initializer difference from simple-mde-gmn.py as build_nested_mde_
++    network() above -- see that function's own docstring.'''
++    expanded_df, expanded_columns = expand_delay_columns(df, raw_columns, lag_set)
++    lag_only_columns = expanded_columns[len(raw_columns):]
++    candidate_universe = expanded_columns if stage2_allow_real_observables else lag_only_columns
++    num_delays = len(lag_set) + (1 if stage2_allow_real_observables else 0)
++
++    nodes = sorted(graph.nodes)
++    edges = []
++    if not nodes:
++        return pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
++
++    outer_workers = min(len(nodes), max(1, cores))
++    print(f'lag embedding (Stage 2): {len(nodes)} node(s) -- {outer_workers} parallel '
++          f'worker(s), no inner split, candidate pool size '
++          f'{len(candidate_universe)} (lag_set={lag_set}, '
++          f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
++
++    results = {}
++    with ProcessPoolExecutor(max_workers=outer_workers,
++                              mp_context=mp.get_context('fork')) as executor:
++        futures = {}
++        for node in nodes:
++            candidate_pool = [c for c in candidate_universe
++                               if observable_and_delay(c, raw_columns)[0] != node]
++            effective_d = effective_mde_dimension(stage2_n, candidate_pool, num_delays)
++            fut = executor.submit(
++                run_mde_for_target, node, expanded_df, candidate_pool,
++                prediction_start, prediction_length, effective_d,
++                embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                results_dir, lag_set, tp,
++                metric, target_metric, gamma_delta, ccm_window_rows,
++                ccm_lib_size_pcts, ccm_sample, ccm_slope,
++                reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
++                code_fingerprint, 'stage2',
++            )
++            futures[fut] = node
++        for fut in as_completed(futures):
++            node = futures[fut]
++            try:
++                results[node] = fut.result()
++            except Exception as exc:
++                print(f'lag embedding (Stage 2): {node} MDE call FAILED: {exc!r} -- treating as '
++                      f'a dead-end (zero lagged drivers attached for this node)', flush=True)
++                results[node] = _failed_mde_result(node)
++
++    for node in nodes:
++        _accept_mde_result_edges(graph, edges, node, results[node], raw_columns)
++
++    edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
++    print(f'lag embedding (Stage 2): {len(edges_df)} edges added across {len(nodes)} node(s) '
++          f'(N={stage2_n})', flush=True)
++    return edges_df
++
++
+ def build_network(targets, mde_results, df, prediction_start, prediction_length,
+-                   mode, e_range, tau_range, results_dir, metric, target_metric, gamma_delta,
+-                   ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
+-                   threshold=0, fallback_node_dimension=4, max_node_dimension=15):
+-    '''Build one interaction matrix + strongest-driver network spanning
+-    `targets` and the union of their driver candidate columns
+-    (mde_results[t]['SELECTED_COLUMNS'] -- MDE-selected when mode ==
+-    'MDE-GMN', the full observable pool when mode == 'GMN'; this function
+-    itself has no mode-awareness beyond that one flag used for the
+-    network_id prefix below).
+-
+-    Mirrors notebooks/simple-mde-gmn.ipynb cell 7's build_network(). See
+-    that cell's docstring for the CreateNetwork driver-ranking-bug
+-    workaround rationale (identical here). The interaction matrix itself
+-    is now built by build_interaction_matrix() (see its docstring) instead
+-    of apps.InteractionMatrix's subprocess -- fixes the empty-network bug
+-    documented there, and (as a side effect) removes the
+-    apps.InteractionMatrix/pyEDM.CCM nested-pool concern this docstring
+-    used to describe, since proper_ccm has no multiprocessing pool at all.
++                   mode, e_range, tau_range, results_dir, cores,
++                   metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
++                   ccm_sample, ccm_slope,
++                   observable_columns=None, nested_n=None, nested_m=None,
++                   embed_dim_rho_min=None, cross_map_rho_min=None, exclusion_radius=None,
++                   lag_set=None, stage2_allow_real_observables=False, tp=1,
++                   threshold=0, fallback_node_dimension=4, max_node_dimension=15,
++                   reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
++                   data_file=None, data_file_sha256=None, code_fingerprint=None):
++    '''Build one network spanning `targets` and their driver candidates, via
++    one of two unrelated constructions depending on `mode` -- same
++    mode-branch restructuring as simple-mde-gmn.py's own build_network():
++      - mode == 'MDE-GMN': two-stage nested-MDE (build_nested_mde_network()
++        + attach_lag_embeddings()), no apps.CreateNetwork() call -- see
++        simple-mde-gmn.py's own build_network() docstring for the full
++        rationale (identical here). observable_columns/nested_n/nested_m/
++        embed_dim_rho_min/cross_map_rho_min/lag_set are required in this
++        mode.
++      - mode == 'GMN': the interaction matrix via
++        cleaned_helper_functions.proper_ccm (build_interaction_matrix()) --
++        TSLS's own existing replacement for apps.InteractionMatrix's CLI
++        subprocess, unaffected by any of the MDE-GMN-side two-stage rework
++        -- then a node-dimension estimate and apps.CreateNetwork with its
++        driver-ranking-bug workaround, same as before.
+     '''
+     network_id = '_'.join(targets)
+-    # Distinguishes MODE='GMN' network artifacts from MODE='MDE-GMN'
+-    # artifacts for the same targets -- these are genuinely different
+-    # networks (full raw channel pool vs. MDE-selected columns) and must
+-    # not share a checkpoint file (see the search function's checkpoint
+-    # resume logic, which only validates e_vals/tau_vals/theta_vals, not
+-    # network topology).
+     if mode == 'GMN':
+         network_id = f'gmn_{network_id}'
+ 
+-    selected_union = []
+-    for t in targets:
+-        for c in mde_results[t]['SELECTED_COLUMNS']:
+-            if c not in selected_union:
+-                selected_union.append(c)
+-
+-    if not selected_union:
+-        print(f'{network_id}: WARNING -- no MDE-selected driver columns for any target; '
+-              f'the network below will only contain {targets} with no real neuron drivers.',
+-              flush=True)
++    ccm_E = ccm_tau = None
++    node_dimensions = {}
++
++    fingerprint = None
++    cache_filename = f'network_cache_{network_id}.pkl'
++    cache_hit = None
++    if reuse_cache:
++        fingerprint = build_network_fingerprint(
++            mode, targets, observable_columns, nested_n, nested_m, tp,
++            embed_dim_rho_min, cross_map_rho_min, exclusion_radius, lag_set,
++            e_range, tau_range, prediction_start, prediction_length,
++            metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
++            ccm_sample, ccm_slope,
++            data_file, data_file_sha256, code_fingerprint,
++            stage2_allow_real_observables=stage2_allow_real_observables,
++        )
++        hit = find_cached(prev_runs_dir, cache_filename, fingerprint, load_one=_load_pickle_cache_entry)
++        if hit is not None:
++            cache_hit, source = hit
++            print(f'{network_id}: TSLS_MDE_GMN_REUSE_BEST_PARAMS matched cached network {source} '
++                  f'-- skipping network construction entirely', flush=True)
++        else:
++            print(f'{network_id}: TSLS_MDE_GMN_REUSE_BEST_PARAMS set but no matching cached network '
++                  f'found under {prev_runs_dir} -- building from scratch.', flush=True)
++
++    if mode == 'MDE-GMN':
++        if cache_hit is not None:
++            graph = cache_hit['graph']
++        else:
++            graph, _, _ = build_nested_mde_network(
++                targets, df, observable_columns, observable_columns,
++                prediction_start, prediction_length,
++                nested_n, nested_m, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                results_dir, mde_results, [], tp,
++                metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
++                ccm_sample, ccm_slope, cores,
++                reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
++                code_fingerprint,
++            )
++            attach_lag_embeddings(
++                graph, observable_columns, df, prediction_start, prediction_length,
++                nested_n, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                results_dir, lag_set, stage2_allow_real_observables, tp,
++                metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
++                ccm_sample, ccm_slope, cores,
++                reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
++                code_fingerprint,
++            )
++        graph.graph['self_delay_set'] = sorted(set(lag_set) | {0}, reverse=True)
++        selected_union = [n for n in graph.nodes if n not in targets]
++        edges_file = results_dir / f'edges_nestedMDE_N{nested_n}_M{nested_m}_{network_id}.csv'
++        edges_rows = [{'driver': u, 'node': v, 'delay': d['delay'], 'weight': d['weight']}
++                      for u, v, d in graph.edges(data=True)]
++        pd.DataFrame(edges_rows, columns=['driver', 'node', 'delay', 'weight']).to_csv(
++            edges_file, index=False)
++    else:  # mode == 'GMN'
++        if cache_hit is not None:
++            network = cache_hit['network']
++            ccm_E, ccm_tau, node_dimensions = (
++                cache_hit['ccm_E'], cache_hit['ccm_tau'], cache_hit['node_dimensions'])
++        selected_union = []
++        for t in targets:
++            for c in mde_results[t]['SELECTED_COLUMNS']:
++                if c not in selected_union:
++                    selected_union.append(c)
+ 
+     data_after_mde = (
+         df[targets + selected_union]
+-        .iloc[:prediction_start + prediction_length]
++        .iloc[:len(df)]
+         .reset_index(drop=True)
+     )
+     data_after_mde.insert(0, 'Time', np.arange(len(data_after_mde)))
+@@ -847,61 +1760,85 @@
+     data_after_mde_lib_file = results_dir / f'data_after_mde_lib_{network_id}.csv'
+     data_after_mde_lib.to_csv(data_after_mde_lib_file, index=False)
+ 
+-    e_vals, tau_vals = list(e_range), list(tau_range)
+-    # target_E_tau_rho_grid always scores a TARGETS column's own
+-    # self-predictability -- always target_metric (continuous), never
+-    # METRIC (see load_config()'s TARGET_METRIC docstring).
+-    target_grids = [
+-        target_E_tau_rho_grid(data_after_mde_lib, t, e_vals, tau_vals, target_metric, gamma_delta)
+-        for t in targets
+-    ]
+-    mean_grid = np.nanmean(np.stack(target_grids), axis=0)
+-    best_i, best_j = np.unravel_index(np.nanargmax(mean_grid), mean_grid.shape)
+-    ccm_E, ccm_tau = e_vals[best_i], tau_vals[best_j]
+-    print(f'{network_id}: CCM E={ccm_E}, tau={ccm_tau} '
+-          f'(grid-search {target_metric}={mean_grid[best_i, best_j]:.3f})', flush=True)
+-
+-    nodes = [c for c in data_after_mde_lib.columns if c != 'Time']
+-    iMatrix = build_interaction_matrix(
+-        data_after_mde_lib, nodes, targets, ccm_E, ccm_tau, metric, target_metric, gamma_delta,
+-        ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
+-    )
+-    interaction_csv = results_dir / f'iMatrix_E{ccm_E}_tau{ccm_tau}_{network_id}_CCM.csv'
+-    iMatrix.to_csv(interaction_csv)
++    if mode == 'MDE-GMN':
++        network_dict = {node: list(graph.predecessors(node)) for node in graph.nodes}
++        network = {'Graph': graph, 'Map': network_dict}
++        network_file = results_dir / f'Network_nestedMDE_N{nested_n}_M{nested_m}_{network_id}.pkl'
++        with open(network_file, 'wb') as f:
++            pickle.dump(network, f)
++
++        if fingerprint is not None and cache_hit is None:
++            save_pickle_to_cache(cache_filename, {'fingerprint': fingerprint, 'graph': graph},
++                                  results_dir, run_cache_dir)
++    else:  # mode == 'GMN'
++        if cache_hit is None:
++            e_vals, tau_vals = list(e_range), list(tau_range)
++            # target_E_tau_rho_grid always scores a TARGETS column's own
++            # self-predictability -- always target_metric (continuous),
++            # never metric.
++            target_grids = [
++                target_E_tau_rho_grid(data_after_mde_lib, t, e_vals, tau_vals, target_metric, gamma_delta)
++                for t in targets
++            ]
++            mean_grid = np.nanmean(np.stack(target_grids), axis=0)
++            best_i, best_j = np.unravel_index(np.nanargmax(mean_grid), mean_grid.shape)
++            ccm_E, ccm_tau = e_vals[best_i], tau_vals[best_j]
++            print(f'{network_id}: CCM E={ccm_E}, tau={ccm_tau} '
++                  f'(grid-search {target_metric}={mean_grid[best_i, best_j]:.3f})', flush=True)
++
++            nodes = [c for c in data_after_mde_lib.columns if c != 'Time']
++            iMatrix = build_interaction_matrix(
++                data_after_mde_lib, nodes, targets, ccm_E, ccm_tau, metric, target_metric,
++                gamma_delta, ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
++            )
++            interaction_csv = results_dir / f'iMatrix_E{ccm_E}_tau{ccm_tau}_{network_id}_CCM.csv'
++            iMatrix.to_csv(interaction_csv)
+ 
+-    node_dimensions = {
+-        node: estimate_node_dimension(
+-            data_after_mde_lib, node, _metric_for(node, targets, metric, target_metric),
+-            gamma_delta, max_e=max_node_dimension, fallback=fallback_node_dimension,
+-        )
+-        for node in iMatrix.index
+-    }
+-    print(f'{network_id}: node N_D =', node_dimensions, flush=True)
++            node_dimensions = {
++                node: estimate_node_dimension(
++                    data_after_mde_lib, node, _metric_for(node, targets, metric, target_metric),
++                    gamma_delta, max_e=max_node_dimension, fallback=fallback_node_dimension,
++                )
++                for node in iMatrix.index
++            }
++            print(f'{network_id}: node N_D =', node_dimensions, flush=True)
++
++            # apps.CreateNetwork() keeps each node's *weakest* above-
++            # threshold drivers instead of the strongest -- worked around
++            # by pre-selecting the strongest N_D drivers ourselves, then
++            # calling CreateNetwork with numDrivers set to the full column
++            # count so its buggy truncation never has anything left to
++            # remove.
++            strongest_iMatrix = iMatrix.copy()
++            for node in strongest_iMatrix.index:
++                row = strongest_iMatrix.loc[node].drop(node)
++                n_drivers = max(1, min(node_dimensions[node], len(row)))
++                keep = row[row > threshold].sort_values(ascending=False).index[:n_drivers]
++                drop = row.index.difference(keep)
++                strongest_iMatrix.loc[node, drop] = threshold
++
++            network_file = results_dir / f'Network_E{ccm_E}_tau{ccm_tau}_CCM_{network_id}.pkl'
++            network = CreateNetwork(
++                interactionMatrix = strongest_iMatrix,
++                targetCols        = list(targets),
++                threshold         = threshold,
++                numDrivers        = len(strongest_iMatrix.columns),
++                outputFile        = str(network_file),
++                plotNetwork       = False,
++            )
++        else:
++            network_file = results_dir / f'Network_E{ccm_E}_tau{ccm_tau}_CCM_{network_id}.pkl'
+ 
+-    # apps.CreateNetwork() keeps each node's *weakest* above-threshold
+-    # drivers instead of the strongest (confirmed against the installed
+-    # apps/CreateNetwork.py:110-116 -- it sorts each row ascending, then
+-    # truncates to numDrivers). Worked around by pre-selecting the
+-    # strongest N_D drivers ourselves, then calling CreateNetwork with
+-    # numDrivers set to the full column count so its buggy truncation
+-    # never has anything left to remove.
+-    strongest_iMatrix = iMatrix.copy()
+-    for node in strongest_iMatrix.index:
+-        row = strongest_iMatrix.loc[node].drop(node)
+-        n_drivers = max(1, min(node_dimensions[node], len(row)))
+-        keep = row[row > threshold].sort_values(ascending=False).index[:n_drivers]
+-        drop = row.index.difference(keep)
+-        strongest_iMatrix.loc[node, drop] = threshold
+-
+-    network_file = results_dir / f'Network_E{ccm_E}_tau{ccm_tau}_CCM_{network_id}.pkl'
+-    network = CreateNetwork(
+-        interactionMatrix = strongest_iMatrix,
+-        targetCols        = list(targets),
+-        threshold         = threshold,
+-        numDrivers        = len(strongest_iMatrix.columns),
+-        outputFile        = str(network_file),
+-        plotNetwork       = False,
+-    )
++        network['Graph'].graph['fallback_E'] = ccm_E
++        network['Graph'].graph['fallback_tau'] = ccm_tau
++        with open(network_file, 'wb') as f:
++            pickle.dump(network, f)
++
++        if fingerprint is not None and cache_hit is None:
++            save_pickle_to_cache(cache_filename, {
++                'fingerprint': fingerprint, 'network': network,
++                'ccm_E': ccm_E, 'ccm_tau': ccm_tau, 'node_dimensions': node_dimensions,
++            }, results_dir, run_cache_dir)
+ 
+     for t in targets:
+         print(f'{t} parents:', network['Map'][t], flush=True)
+@@ -919,99 +1856,159 @@
+ 
+ 
+ def draw_colored_network(net_result, target_colors, save_path):
++    '''Draws the network graph, nodes colored by which target ultimately
++    depends on them. Edges are colored by delay, with a legend mapping
++    color -> delay, whenever the graph carries per-edge delay data (a
++    MultiDiGraph built by build_nested_mde_network() for MODE='MDE-GMN').
++    MODE='GMN' networks (a plain DiGraph from apps.CreateNetwork, no delay
++    concept at all) fall back to the original by-target edge coloring.
++    Ported unchanged from simple-mde-gmn.py -- purely graph-structural, no
++    dependency on what the columns represent.'''
+     graph = net_result['network']['Graph']
+     targets = net_result['targets']
++    has_delays = isinstance(graph, nx.MultiDiGraph)
+ 
+     node_colors = [target_colors.get(n, 'lightgray') for n in graph.nodes]
+-    edge_colors = [target_colors.get(v, 'gray') for _, v in graph.edges]
+ 
+     pos = nx.arf_layout(graph)
+     fig, ax = plt.subplots(figsize=(10, 10))
+-    nx.draw_networkx(
+-        graph, pos=pos, ax=ax, with_labels=True, arrowsize=10,
+-        node_size=300, node_color=node_colors, edge_color=edge_colors,
+-        width=1.2, font_size=9, font_weight='bold',
+-    )
+-    handles = [
++    nx.draw_networkx_nodes(graph, pos=pos, ax=ax, node_size=300, node_color=node_colors)
++    nx.draw_networkx_labels(graph, pos=pos, ax=ax, font_size=9, font_weight='bold')
++
++    if has_delays:
++        all_delays = sorted({data['delay'] for _, _, data in graph.edges(data=True)})
++        cmap = plt.get_cmap('viridis')
++        delay_color = {d: cmap(i / max(1, len(all_delays) - 1)) for i, d in enumerate(all_delays)}
++
++        parallel_count = defaultdict(int)
++        for u, v, data in graph.edges(data=True):
++            i = parallel_count[(u, v)]
++            parallel_count[(u, v)] += 1
++            rad = 0.15 * ((i + 1) // 2) * (1 if i % 2 == 0 else -1)
++            nx.draw_networkx_edges(
++                graph, pos=pos, ax=ax, edgelist=[(u, v)], arrowsize=10, width=1.2,
++                edge_color=[delay_color[data['delay']]],
++                connectionstyle=f'arc3,rad={rad}',
++            )
++
++        edge_handles = [
++            plt.Line2D([0], [0], color=delay_color[d], lw=2, label=f'delay={d}')
++            for d in all_delays
++        ]
++        legend_title = 'Edge delay / target'
++    else:
++        for u, v in graph.edges():
++            nx.draw_networkx_edges(
++                graph, pos=pos, ax=ax, edgelist=[(u, v)], arrowsize=10, width=1.2,
++                edge_color=[target_colors.get(v, 'gray')],
++            )
++        edge_handles = []
++        legend_title = 'Target'
++
++    node_handles = [
+         plt.Line2D([0], [0], marker='o', color='w', markersize=12,
+                    markerfacecolor=target_colors[t], label=t)
+         for t in targets
+     ]
+-    ax.legend(handles=handles, loc='upper left', bbox_to_anchor=(1.0, 1.0))
++    ax.legend(handles=edge_handles + node_handles, loc='upper left',
++              bbox_to_anchor=(1.0, 1.0), title=legend_title)
+     ax.set_title(f"GMN network ({net_result['network_id']})")
+     fig.tight_layout()
+     fig.savefig(save_path, dpi=300)
+     plt.close(fig)
+ 
++
+ # =============================================================================
+-# GMN node generation config (mirrors notebook cell 8)
++# GMN node generation config (mirrors notebook cell 8) -- ported UNCHANGED
++# from simple-mde-gmn.py. Pure gmn/.cfg-file mechanics, no dependency on
++# what the embedded columns represent.
+ # =============================================================================
+ 
+ def build_gmn_config(net_result, prediction_start, prediction_length, results_dir,
+-                      mode='Generate', function='SMap', E=3, tau=-3, theta=3,
+-                      node_theta_overrides=None, variant=''):
++                      mode='Generate', function='SMap', theta=3,
++                      node_theta_overrides=None, variant='', generate_length=None,
++                      generate_start=None, max_offset=None, exclusion_radius=0):
+     '''Stage the .cfg file gmn.GMN's configFile= constructor expects.
+ 
++    exclusion_radius: written into the [EDM] section below and read
++    straight through by gmn's own (monkeypatched) Node.Forecast/Generate as
++    `Parameters.exclusionRadius`, passed to every pyEDM Simplex/SMap call
++    gmn itself makes -- the same Theiler-window neighbor-exclusion
++    mechanism as TSLS_MDE_GMN_EXCLUSION_RADIUS (this pipeline's MDE-side
++    parameter), just applied to GMN's own recursive Generate()/Forecast()
++    nearest-neighbor search rather than MDE's forward selection -- two
++    independent EDM contexts with their own separate embeddings, so there's
++    no single shared value that would make sense for both. This one is a
++    plain static knob, not dynamically recomputed the way MDE's 'auto' mode
++    would be (that mode has no equivalent here regardless -- see this
++    module's own docstring).
++
++    E/tau are no longer parameters here -- every node's real embedding now
++    comes from _node_embedding_spec()/_embedding_spec_for() (per-driver
++    delays off the network graph, plus self_delay_set or
++    fallback_E/fallback_tau), not a shared network-wide (E, tau) written
++    into this .cfg. Placeholder 'E'/'tau' values are still written into the
++    [EDM] section purely because gmn.Node.__init__'s own (unpatched)
++    arithmetic reads them before _generalized_node_init immediately
++    corrects self.libEnd_i; their actual values are otherwise inert.
++
++    generate_start (both modes): row index where Generate() starts
++    free-running / where Forecast()'s pred window starts, independent of
++    prediction_start -- the latter is the fixed MDE lib/pred boundary that
++    MDE variable selection and the CCM/embedDimRhoMin/crossMapRhoMin gates
++    validate against, and stays fixed regardless of what row a diagnostic
++    Generate()/Forecast() call happens to start at. Defaults to
++    prediction_start when None.
++
++    generate_length (both modes): number of steps simulated/predicted from
++    generate_start, independent of prediction_length. A full Generate()
++    call over the whole held-out window can be the single most expensive
++    step in the search loop, so decoupling this lets you shrink it without
++    also shrinking the held-out window MDE/CCM validate against. Defaults
++    to prediction_length when None. mode='Forecast' honors this same cap so
++    its window matches Generate()'s -- run_forecast_diagnostic() plots both
++    on the same axes.
++
+     function is fixed to 'SMap' for every node in this pipeline -- gmn's
+-    Simplex branch never calls pyEDM.Embed() before predicting (confirmed
+-    by reading gmn/Generate.py directly), so it can't do real Takens
+-    delay embedding: embedded=True forces pyEDM to overwrite E with the
+-    raw predecessor-column count, silently discarding tau. gmn's SMap
+-    branch does call Embed(E, tau, columns) first -- a genuine delay
+-    embedding. Per explicit direction, this pipeline uses SMap uniformly
+-    for every node rather than mixing generators per node or patching
+-    Simplex -- see notebooks/simple-mde-gmn.ipynb's build_gmn_config
+-    docstring for the full evidence trail. Consequence: every node
+-    (including leaf/undriven ones) needs E >= 2, or SMap's own
+-    predictor-column-exclusion convention leaves it with zero predictors.
++    Simplex branch never calls pyEDM.Embed() before predicting, so it can't
++    do real Takens delay embedding. gmn's SMap branch does call
++    Embed(E, tau, columns) first (now replaced by this pipeline's own
++    generalized embedding).
+ 
+     node_theta_overrides: optional {nodeName: theta} dict -- written as
+     per-node .cfg files (gmn/Node.py's nodeConfigPath + f'{name}.cfg'
+     lookup); every other node uses the network-wide `theta`. The trailing
+     '/' on configPath below works around gmn/Node.py:78's naive string
+-    concatenation path lookup (confirmed empirically: without it, every
+-    override is silently ignored).
++    concatenation path lookup.
+ 
+-    Forecast mode's lib/pred offset: gmn/Forecast.py's SMap branch calls
+-    Embed(E, tau, columns) then dropna() before predicting, which drops
+-    the leading (E-1)*abs(tau) NaN rows the time-shift introduces --
+-    shrinking the dataframe SMap actually sees relative to node.data's
+-    full row count, which is what `prediction_start`/`n_rows` below are
+-    expressed in. Since every node uses SMap and E >= 2 always (see
+-    docstring above), this offset is never zero, and an unadjusted
+-    lib/pred computed in original-row terms overflows the shrunk frame
+-    (confirmed empirically: pyEDM.SMap's CreateIndices() raises
+-    "prediction index N exceeds the number of data rows M" with M
+-    matching n_rows - offset exactly). gmn/Generate.py's own SMap branch
+-    sidesteps this by building a fresh 0-based time index after its own
+-    equivalent offset slice; gmn/Forecast.py instead reuses the node's
+-    original (now index-shifted) time column, so the fix here is to shift
+-    our own explicit lib/pred bounds back by the same offset instead.'''
++    max_offset (mode='Forecast' only): the network's largest per-node
++    embedding offset (network_max_embedding_offset()), used to size a
++    single, network-wide lib/pred window valid for every node's own
++    embedding.'''
+     if mode not in ('Generate', 'Forecast'):
+         raise ValueError(f"Unknown mode: {mode!r}")
+-
+-    n_rows = prediction_start + prediction_length
+     Tp = 1
++    generate_start = generate_start if generate_start is not None else prediction_start
+ 
+     if mode == 'Generate':
+-        gmn_prediction_start = str(prediction_start)
+-        gmn_prediction_length = str(prediction_length)
++        gmn_prediction_start = str(generate_start)
++        gmn_prediction_length = str(generate_length if generate_length is not None else prediction_length)
+         lib_range = ''
+         pred_range = ''
+     else:
+         gmn_prediction_start = '1'
+         gmn_prediction_length = '1'
+-        offset = (E - 1) * abs(tau)
+-        if offset >= prediction_start or offset >= prediction_length - Tp:
++        offset = max_offset if max_offset is not None else 0
++        forecast_length = generate_length if generate_length is not None else prediction_length
++        if offset >= generate_start or offset >= forecast_length - Tp:
+             raise ValueError(
+                 f'build_gmn_config(mode=Forecast): embedding offset {offset} '
+-                f'(E={E}, tau={tau}) leaves too few rows in prediction_start='
+-                f'{prediction_start}/prediction_length={prediction_length} for '
+-                f'a valid lib/pred split after SMap\'s Embed()+dropna() shrinks '
+-                f'the frame -- shrink E/|tau| or grow the prediction window.'
++                f'leaves too few rows in generate_start={generate_start}/'
++                f'forecast_length={forecast_length} for a valid lib/pred split '
++                f'-- shrink TSLS_MDE_GMN_DELAY_SET or grow the prediction window.'
+             )
+-        lib_range = f'1 {prediction_start - offset}'
+-        pred_range = f'{prediction_start - offset} {n_rows - Tp - offset}'
++        lib_range = f'1 {generate_start - offset}'
++        pred_range = f'{generate_start - offset} {generate_start + forecast_length - Tp - offset}'
+ 
+     node_cfg_dir = results_dir / f"node_cfgs_{net_result['network_id']}_{variant or mode.lower()}"
+ 
+@@ -1043,12 +2040,12 @@
+             'EDM': {
+                 'lib': lib_range,
+                 'pred': pred_range,
+-                'E': str(E),
++                'E': '2',    # placeholder, inert -- see this function's docstring
+                 'Tp': str(Tp),
+                 'knn': '0',
+-                'tau': str(tau),
++                'tau': '-1',  # placeholder, inert -- see this function's docstring
+                 'theta': str(node_theta),
+-                'exclusionRadius': '0',
++                'exclusionRadius': str(exclusion_radius),
+                 'columns': '',
+                 'target': '',
+                 'solver': '',
+@@ -1084,19 +2081,295 @@
+ 
+     return config_file
+ 
++
+ # =============================================================================
+-# E/tau/theta search (mirrors notebook cell 10)
++# Cross-job caching / fingerprint architecture -- ported from
++# simple-mde-gmn.py; see that file's own module docstring's SEARCH REUSE
++# section for the full rationale. Fingerprint functions fold in this
++# pipeline's own TSLS-specific cfg knobs (METRIC/TARGET_METRIC/GAMMA_DELTA/
++# CCM_WINDOW_ROWS/CCM_LIB_SIZE_PCTS/CCM_SAMPLE/CCM_SLOPE) alongside the
++# fields simple-mde-gmn.py already fingerprints.
+ # =============================================================================
+ 
+-def retune_theta_for_candidate(data_lib, graph, nodes, E, tau, theta_range, cores,
+-                                min_pred_rows=20):
++def _hash_file(path, chunk_size=1 << 20):
++    '''sha256 of a file's actual bytes -- ported unchanged from
++    simple-mde-gmn.py.'''
++    h = hashlib.sha256()
++    with open(path, 'rb') as f:
++        for chunk in iter(lambda: f.read(chunk_size), b''):
++            h.update(chunk)
++    return h.hexdigest()
++
++
++def _strip_docstrings(tree):
++    '''Removes every module/class/function docstring from an AST in place
++    -- ported unchanged from simple-mde-gmn.py.'''
++    for node in ast.walk(tree):
++        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
++            body = node.body
++            if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
++                    and isinstance(body[0].value.value, str)):
++                body.pop(0)
++    return tree
++
++
++def _pipeline_code_fingerprint():
++    '''SHA-256 of this file's own normalized AST (docstrings stripped) --
++    ported unchanged from simple-mde-gmn.py, applied to this file.'''
++    tree = ast.parse(Path(__file__).read_text())
++    _strip_docstrings(tree)
++    return hashlib.sha256(ast.dump(tree).encode()).hexdigest()
++
++
++def _environment_fingerprint():
++    '''Captures the installed numerical/algorithmic dependencies this
++    pipeline's cached stages actually run through. Unlike simple-mde-gmn.py:
++    no `dimx` (not imported at all in this pipeline) and no
++    `apps.InteractionMatrix` (MODE='GMN' here uses proper_ccm instead, no
++    subprocess); `cleaned_helper_functions` (this pipeline's own TSLS-aware
++    scoring engine, not an installed package) is content-hashed directly,
++    same approach as `apps.CreateNetwork` (still used for MODE='GMN''s own
++    network object).'''
++    versions = {}
++    for pkg in ('gmn', 'pyEDM', 'networkx', 'numpy', 'pandas'):
++        try:
++            versions[pkg] = importlib.metadata.version(pkg)
++        except importlib.metadata.PackageNotFoundError:
++            versions[pkg] = None
++    for mod_name in ('apps.CreateNetwork',):
++        mod = importlib.import_module(mod_name)
++        versions[mod_name] = _hash_file(Path(mod.__file__))
++    versions['cleaned_helper_functions'] = _hash_file(Path(tsls.__file__))
++    return versions
++
++
++def build_code_fingerprint():
++    '''Combines _pipeline_code_fingerprint() and _environment_fingerprint()
++    into the single value every cache fingerprint embeds -- ported
++    unchanged from simple-mde-gmn.py. Computed once per job in main()
++    (gated by TSLS_MDE_GMN_REUSE_BEST_PARAMS) and threaded down as a plain
++    argument rather than recomputed per call.'''
++    return {'source': _pipeline_code_fingerprint(), 'environment': _environment_fingerprint()}
++
++
++def build_search_fingerprint(cfg, net_result, data_file_sha256, code_fingerprint):
++    '''Everything that determines one network's theta search outcome
++    (run_theta_search()) -- ported from simple-mde-gmn.py, with TSLS's own
++    scoring/CCM-calibration knobs folded in (they shape the network's own
++    topology/selection outcome just as much as MDE_D/NESTED_M/etc. do) and
++    `exclusion_radius` simplified to the plain value directly (no 'auto'
++    mode to normalize against here, unlike simple-mde-gmn.py).'''
++    graph = net_result['network']['Graph']
++    return {
++        'mode': cfg['MODE'],
++        'gmn_mode': cfg['GMN_MODE'],
++        'targets': sorted(net_result['targets']),
++        'mde_d': cfg['MDE_D'],
++        'tp': cfg['TP'],
++        'embed_dim_rho_min': cfg['EMBED_DIM_RHO_MIN'],
++        'cross_map_rho_min': cfg['CROSS_MAP_RHO_MIN'],
++        'exclusion_radius': cfg['EXCLUSION_RADIUS_VALUE'],
++        'gmn_exclusion_radius': cfg['GMN_EXCLUSION_RADIUS'],
++        'stage2_allow_real_observables': cfg['STAGE2_ALLOW_REAL_OBSERVABLES'],
++        'nested_m': cfg['NESTED_M'],
++        'region_channel_cap': cfg['REGION_CHANNEL_CAP'],
++        'lib_ratio': cfg['LIB_RATIO'],
++        'mde_validation_ratio': cfg['MDE_VALIDATION_RATIO'],
++        'generate_length': cfg['GENERATE_LENGTH'],
++        'lag_set': list(cfg['LAG_SET']),
++        'e_vals': list(cfg['E_RANGE']),
++        'tau_vals': list(cfg['TAU_RANGE']),
++        'theta_vals': list(cfg['THETA_RANGE']),
++        'metric': cfg['METRIC'],
++        'target_metric': cfg['TARGET_METRIC'],
++        'gamma_delta': cfg['GAMMA_DELTA'],
++        'ccm_window_rows': cfg['CCM_WINDOW_ROWS'],
++        'ccm_lib_size_pcts': list(cfg['CCM_LIB_SIZE_PCTS']),
++        'ccm_sample': cfg['CCM_SAMPLE'],
++        'ccm_slope': cfg['CCM_SLOPE'],
++        'data_file': cfg['DATA_FILE'],
++        'data_file_sha256': data_file_sha256,
++        'prediction_start': cfg['PREDICTION_START'],
++        'prediction_length': cfg['PREDICTION_LENGTH'],
++        'network_nodes': sorted(graph.nodes),
++        'code_fingerprint': code_fingerprint,
++        'stage': 'theta_search',
++    }
++
++
++def build_network_fingerprint(mode, targets, observable_columns, nested_n, nested_m, tp,
++                               embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                               delay_set, e_range, tau_range, prediction_start,
++                               prediction_length, metric, target_metric, gamma_delta,
++                               ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
++                               data_file, data_file_sha256, code_fingerprint,
++                               stage2_allow_real_observables=False):
++    '''Everything that determines one group's network-construction outcome
++    -- ported from simple-mde-gmn.py, TSLS scoring/CCM-calibration knobs
++    folded in. Computable *before* that construction runs, since the whole
++    point is deciding whether to skip it.'''
++    return {
++        'mode': mode,
++        'targets': sorted(targets),
++        'observable_columns': sorted(observable_columns),
++        'mde_d': nested_n,
++        'nested_m': nested_m,
++        'tp': tp,
++        'embed_dim_rho_min': embed_dim_rho_min,
++        'cross_map_rho_min': cross_map_rho_min,
++        'exclusion_radius': exclusion_radius,
++        'delay_set': list(delay_set) if delay_set is not None else None,
++        'stage2_allow_real_observables': stage2_allow_real_observables,
++        'e_vals': list(e_range),
++        'tau_vals': list(tau_range),
++        'metric': metric,
++        'target_metric': target_metric,
++        'gamma_delta': gamma_delta,
++        'ccm_window_rows': ccm_window_rows,
++        'ccm_lib_size_pcts': list(ccm_lib_size_pcts),
++        'ccm_sample': ccm_sample,
++        'ccm_slope': ccm_slope,
++        'prediction_start': prediction_start,
++        'prediction_length': prediction_length,
++        'data_file': data_file,
++        'data_file_sha256': data_file_sha256,
++        'code_fingerprint': code_fingerprint,
++        'stage': 'network',
++    }
++
++
++def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_rho_min,
++                                     cross_map_rho_min, exclusion_radius, delay_set,
++                                     prediction_start, prediction_length,
++                                     metric, target_metric, gamma_delta,
++                                     ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
++                                     data_file, data_file_sha256, code_fingerprint,
++                                     cache_stage='stage1'):
++    '''Everything that determines one run_mde_for_target() call's outcome,
++    computable before that call runs -- ported from simple-mde-gmn.py, TSLS
++    scoring/CCM-calibration knobs folded in. `candidate_pool` is kept in
++    order rather than sorted -- forward selection can tie-break on column
++    order, so the same columns in a different order aren't guaranteed to
++    select the same result.'''
++    return {
++        'node': node,
++        'candidate_pool': list(candidate_pool),
++        'mde_d': mde_d,
++        'tp': tp,
++        'embed_dim_rho_min': embed_dim_rho_min,
++        'cross_map_rho_min': cross_map_rho_min,
++        'exclusion_radius': exclusion_radius,
++        'delay_set': list(delay_set),
++        'metric': metric,
++        'target_metric': target_metric,
++        'gamma_delta': gamma_delta,
++        'ccm_window_rows': ccm_window_rows,
++        'ccm_lib_size_pcts': list(ccm_lib_size_pcts),
++        'ccm_sample': ccm_sample,
++        'ccm_slope': ccm_slope,
++        'prediction_start': prediction_start,
++        'prediction_length': prediction_length,
++        'data_file': data_file,
++        'data_file_sha256': data_file_sha256,
++        'code_fingerprint': code_fingerprint,
++        'stage': f'mde_selection_{cache_stage}',
++    }
++
++
++def _load_json_cache_entry(path):
++    with open(path) as f:
++        return json.load(f)
++
++
++def _load_pickle_cache_entry(path):
++    with open(path, 'rb') as f:
++        return pickle.load(f)
++
++
++def find_cached(prev_runs_dir, filename, fingerprint, load_one=_load_json_cache_entry):
++    '''Generic cross-job cache lookup -- ported unchanged from
++    simple-mde-gmn.py, shared by every cacheable stage.'''
++    if not prev_runs_dir.exists():
++        return None
++    candidates = sorted(
++        prev_runs_dir.glob(f'**/{filename}'),
++        key=lambda p: p.stat().st_mtime, reverse=True,
++    )
++    for path in candidates:
++        try:
++            entry = load_one(path)
++        except (OSError, EOFError, json.JSONDecodeError, pickle.UnpicklingError):
++            continue
++        if entry.get('fingerprint') == fingerprint:
++            return entry, path
++    return None
++
++
++def _save_to_cache(filename, results_dir, run_cache_dir, write_one):
++    '''Ported unchanged from simple-mde-gmn.py -- writes once per unique
++    directory in {results_dir, run_cache_dir}, deduplicated.'''
++    written = []
++    for directory in dict.fromkeys([results_dir, run_cache_dir]):
++        path = directory / filename
++        write_one(path)
++        written.append(path)
++    return written[0]
++
++
++def save_json_to_cache(filename, payload, results_dir, run_cache_dir):
++    def write_one(path):
++        with open(path, 'w') as f:
++            json.dump(payload, f, indent=2)
++    return _save_to_cache(filename, results_dir, run_cache_dir, write_one)
++
++
++def save_pickle_to_cache(filename, payload, results_dir, run_cache_dir):
++    def write_one(path):
++        with open(path, 'wb') as f:
++            pickle.dump(payload, f)
++    return _save_to_cache(filename, results_dir, run_cache_dir, write_one)
++
++
++def find_cached_best_params(prev_runs_dir, network_id, fingerprint):
++    hit = find_cached(prev_runs_dir, f'best_params_{network_id}.json', fingerprint)
++    if hit is None:
++        return None
++    entry, path = hit
++    return entry['best_node_theta'], path
++
++
++def save_best_params(results_dir, run_cache_dir, network_id, fingerprint, best_node_theta, source):
++    return save_json_to_cache(
++        f'best_params_{network_id}.json',
++        {'fingerprint': fingerprint, 'best_node_theta': best_node_theta, 'source': source},
++        results_dir, run_cache_dir,
++    )
++
++
++# =============================================================================
++# Theta search (mirrors notebook cell 10) -- replaces this pipeline's own
++# previous SMAP_SEARCH_MODE='coarse_retune'/'joint' combined (E, tau, theta)
++# grid search entirely. E and every driver's delay now come from the
++# network itself (see build_network()'s docstring), leaving theta as the
++# only thing still searched per node -- same reduction in search cost as
++# simple-mde-gmn.py's own equivalent change.
++# =============================================================================
++
++def retune_theta_for_all_nodes(data_lib, graph, nodes, theta_range, cores, min_pred_rows=20):
++    '''Finds each node's own best theta via PredictNonlinear on a 70/30
++    lib/pred split of that node's own generalized embedding -- ported
++    UNCHANGED from simple-mde-gmn.py. No TSLS-aware equivalent exists for
++    this step (a plain pyEDM.SMap-specific concept with no analog in
++    cleaned_helper_functions.py's own KDTree engine -- see this module's
++    own docstring), so it's scored the same way here as there: plain
++    PredictNonlinear rho, not metric/target_metric. Falls back to theta=3
++    whenever there's too little data for the split or PredictNonlinear
++    itself fails.'''
+     best_theta_by_node = {}
+ 
+     for node in nodes:
+-        columns = list(graph.predecessors(node)) + [node]
+-        embedded = Embed(dataFrame=data_lib, E=E, tau=tau, columns=columns)
+-        offset = (E - 1) * abs(tau)
+-        embedded = embedded.iloc[offset:].reset_index(drop=True)
++        spec = _embedding_spec_for(graph, node)
++        embedded, offset = _generalized_embed(data_lib, spec)
+         embedded.insert(0, 'Time', np.arange(len(embedded)))
+         embedded[node] = data_lib[node].to_numpy()[offset:]
+ 
+@@ -1124,13 +2397,31 @@
+ 
+ 
+ def evaluate_smap_candidate(net_result, prediction_start, prediction_length,
+-                             E, tau, node_theta, variant, results_dir, cores,
+-                             metric, gamma_delta):
++                             node_theta, variant, results_dir, cores,
++                             target_metric, gamma_delta,
++                             generate_length=None, generate_start=None, exclusion_radius=0,
++                             generate_validation_start=None):
++    '''Runs one Generate() call and scores it as mean rho, across
++    `net_result['targets']` only, between the simulated and real held-out
++    series -- ported from simple-mde-gmn.py, scored via
++    tsls._score(metric=target_metric) instead of pyEDM's plain
++    ComputeError rho (TARGETS are continuous, so target_metric is always
++    'correlation' by default -- see load_config()'s TARGET_METRIC
++    docstring). This is "generative skill" as this pipeline defines it
++    everywhere -- run_theta_search() and sweep_generate_start() both call
++    this same function, at the same objective, so a search over either axis
++    is comparable to the other.
++
++    generate_start defaults to generate_validation_start (== cfg's B, the
++    start of the Generate/Forecast validation segment), NOT prediction_start
++    (== A) -- a Generate() call scored here must never launch from inside
++    the segment MDE's own driver selection already validated against.'''
++    generate_start = generate_start if generate_start is not None else generate_validation_start
+     config_file = build_gmn_config(
+         net_result, prediction_start, prediction_length, results_dir,
+-        mode='Generate', E=E, tau=tau,
+-        node_theta_overrides=node_theta,
+-        variant=variant,
++        mode='Generate', node_theta_overrides=node_theta,
++        variant=variant, generate_length=generate_length,
++        generate_start=generate_start, exclusion_radius=exclusion_radius,
+     )
+     G = gmn.GMN( configFile = str(config_file), cores = cores )
+     G.Generate()
+@@ -1139,213 +2430,301 @@
+     generated = G.DataOut.reset_index(drop=True)
+     n_gen = len(generated)
+ 
+-    # gmn.GMN().Generate() itself still runs pyEDM.SMap internally (no
+-    # TSLS-aware equivalent exists for that -- out of scope, see this
+-    # module's docstring); what changes here is only how we SCORE its
+-    # already-generated output against the real held-out targets.
+-    # tsls._score is cleaned_helper_functions.py's own metric dispatcher
+-    # (same one proper_simplex/proper_ccm/proper_mde call internally),
+-    # reused directly instead of re-implementing correlation/f1/gamma
+-    # switching here.
+     target_rhos = {}
+     for target in net_result['targets']:
+-        actual_vals = actual_df[target].to_numpy()[prediction_start: prediction_start + n_gen]
++        actual_vals = actual_df[target].to_numpy()[generate_start: generate_start + n_gen]
+         gen_vals = generated[target].to_numpy()
+-        target_rhos[target] = tsls._score(actual_vals, gen_vals, metric, gammaDelta=gamma_delta)
++        target_rhos[target] = tsls._score(actual_vals, gen_vals, target_metric, gammaDelta=gamma_delta)
+ 
+     score = float(np.nanmean(list(target_rhos.values())))
+     return score, target_rhos, G
+ 
+ 
+-def run_smap_search(gmn_runs, prediction_start, prediction_length, e_range, tau_range,
+-                     theta_range, coarse_theta_range, search_mode, results_dir, cores,
+-                     target_metric, gamma_delta):
+-    smap_search_results = {}
++def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range, results_dir,
++                      cores, target_metric, gamma_delta,
++                      generate_length=None, reuse_best_params=False, prev_runs_dir=None,
++                      run_cache_dir=None, fingerprints=None, exclusion_radius=0,
++                      generate_validation_start=None):
++    '''Retunes each network's per-node theta once, then scores the result
++    with a single Generate() call -- ported from simple-mde-gmn.py. E and
++    each driver's delay are no longer search parameters at all: for
++    MODE='MDE-GMN' they come directly from nested-MDE's own discovered
++    network; for MODE='GMN' they still come from that mode's own CCM E/tau
++    grid search (fallback_E/fallback_tau, set in build_network()).'''
++    theta_search_results = {}
+     for network_id, run in gmn_runs.items():
+         net_result = run['net_result']
+         graph = net_result['network']['Graph']
+         all_nodes = list(graph.nodes)
+         data_after_mde_lib = pd.read_csv(net_result['DATA_AFTER_MDE']).iloc[:prediction_start]
+ 
+-        e_vals, tau_vals = list(e_range), list(tau_range)
+-        theta_vals = list(theta_range) if search_mode == 'joint' else [None]
+-        n_candidates = len(e_vals) * len(tau_vals) * len(theta_vals)
++        fingerprint = fingerprints[network_id] if fingerprints else None
++        if reuse_best_params and fingerprint is not None:
++            cached = find_cached_best_params(prev_runs_dir, network_id, fingerprint)
++            if cached is not None:
++                best_node_theta, source = cached
++                print(f'{network_id}: TSLS_MDE_GMN_REUSE_BEST_PARAMS matched {source} -- '
++                      f'skipping theta retuning entirely', flush=True)
++                theta_search_results[network_id] = {
++                    'best_node_theta': best_node_theta, 'reused_from': str(source),
++                }
++                save_best_params(results_dir, run_cache_dir, network_id, fingerprint, best_node_theta,
++                                  source=f'reused_from:{source}')
++                continue
++            print(f'{network_id}: TSLS_MDE_GMN_REUSE_BEST_PARAMS set but no matching cached run '
++                  f'found under {prev_runs_dir} -- retuning theta.', flush=True)
+ 
+-        checkpoint_file = results_dir / f'smap_search_checkpoint_{network_id}_{search_mode}.pkl'
+-        score_grid = np.full((len(e_vals), len(tau_vals), len(theta_vals)), np.nan)
+-        if checkpoint_file.exists():
+-            with open(checkpoint_file, 'rb') as f:
+-                ckpt = pickle.load(f)
+-            if (ckpt.get('e_vals') == e_vals and ckpt.get('tau_vals') == tau_vals
+-                    and ckpt.get('theta_vals') == theta_vals):
+-                score_grid = ckpt['score_grid']
+-                print(f'{network_id}: resumed checkpoint, '
+-                      f'{int(np.sum(~np.isnan(score_grid)))}/{score_grid.size} candidates already done',
+-                      flush=True)
+-
+-        print(f'{network_id}: {search_mode} search over {n_candidates} (E, tau) candidates '
+-              f'{"x " + str(len(theta_vals)) + " theta " if search_mode == "joint" else ""}'
+-              f'(mode={search_mode})', flush=True)
+-
+-        start_t = time.monotonic()
+-        done_at_start = int(np.sum(~np.isnan(score_grid)))
+-        done = done_at_start
++        print(f'{network_id}: retuning theta for {len(all_nodes)} node(s)', flush=True)
++        best_node_theta = retune_theta_for_all_nodes(
++            data_after_mde_lib, graph, all_nodes, theta_range, cores,
++        )
+ 
+-        for i, E in enumerate(e_vals):
+-            for j, tau in enumerate(tau_vals):
+-                if np.all(~np.isnan(score_grid[i, j])):
+-                    continue
++        try:
++            score, _, _ = evaluate_smap_candidate(
++                net_result, prediction_start, prediction_length, best_node_theta,
++                'theta_search', results_dir, cores, target_metric, gamma_delta,
++                generate_length=generate_length,
++                exclusion_radius=exclusion_radius,
++                generate_validation_start=generate_validation_start,
++            )
++            print(f'{network_id}: theta search score={score:.4f}', flush=True)
++        except Exception as exc:
++            # gmn.Generate raises RuntimeError on SMap divergence (blown-up
++            # recursive forecast, >1E15) -- possible even at a retuned
++            # theta on a large, high-dimensional network, not a bug to
++            # crash the whole run over.
++            print(f'{network_id}: theta search candidate FAILED: {exc!r}', flush=True)
++
++        theta_search_results[network_id] = {'best_node_theta': best_node_theta}
++
++        if fingerprint is not None:
++            save_best_params(results_dir, run_cache_dir, network_id, fingerprint, best_node_theta,
++                              source='computed')
+ 
+-                if search_mode == 'coarse_retune':
+-                    node_theta_for_candidate = retune_theta_for_candidate(
+-                        data_after_mde_lib, graph, all_nodes, E, tau, coarse_theta_range, cores,
+-                    )
++    return theta_search_results
+ 
+-                for k, theta in enumerate(theta_vals):
+-                    if not np.isnan(score_grid[i, j, k]):
+-                        continue
+-
+-                    if search_mode == 'joint':
+-                        node_theta = {n: theta for n in all_nodes}
+-                    else:
+-                        node_theta = node_theta_for_candidate
+-
+-                    variant = (f'smap_search_{search_mode}_E{E}_tau{tau}'
+-                               + (f'_theta{theta}' if search_mode == 'joint' else ''))
+-                    score, _, _ = evaluate_smap_candidate(
+-                        net_result, prediction_start, prediction_length,
+-                        E, tau, node_theta, variant, results_dir, cores,
+-                        target_metric, gamma_delta,
+-                    )
+-                    score_grid[i, j, k] = score
+ 
+-                    with open(checkpoint_file, 'wb') as f:
+-                        pickle.dump({'e_vals': e_vals, 'tau_vals': tau_vals,
+-                                     'theta_vals': theta_vals, 'score_grid': score_grid}, f)
+-
+-                    done += 1
+-                    elapsed = time.monotonic() - start_t
+-                    per_candidate = elapsed / max(1, done - done_at_start)
+-                    eta = per_candidate * (n_candidates - done)
+-                    theta_str = f', theta={theta}' if search_mode == 'joint' else ''
+-                    print(f'[PROGRESS] {network_id} candidate {done}/{n_candidates} '
+-                          f'(E={E}, tau={tau}{theta_str}) score={score:.4f} '
+-                          f'(elapsed {elapsed:6.1f}s, ETA {eta:6.1f}s)', flush=True)
+-
+-        smap_search_results[network_id] = {
+-            'mode': search_mode,
+-            'e_vals': e_vals, 'tau_vals': tau_vals, 'theta_vals': theta_vals,
+-            'score_grid': score_grid,
+-        }
++# =============================================================================
++# Generate()/Forecast() start-point sweep -- ported UNCHANGED (structurally)
++# from simple-mde-gmn.py. Doesn't exist in this pipeline's own previous
++# architecture at all.
++# =============================================================================
+ 
+-        flat_grid = score_grid[:, :, 0] if search_mode != 'joint' else np.nanmax(score_grid, axis=2)
+-        best_i, best_j = np.unravel_index(np.nanargmax(flat_grid), flat_grid.shape)
+-        best_E, best_tau = e_vals[best_i], tau_vals[best_j]
+-
+-        if search_mode == 'joint':
+-            best_k = int(np.nanargmax(score_grid[best_i, best_j]))
+-            best_theta_global = theta_vals[best_k]
+-            print(f'{network_id}: best E={best_E}, tau={best_tau}, theta={best_theta_global} '
+-                  f'(score={score_grid[best_i, best_j, best_k]:.4f})', flush=True)
+-            smap_search_results[network_id]['best_node_theta'] = {n: best_theta_global for n in all_nodes}
+-        else:
+-            best_node_theta = retune_theta_for_candidate(
+-                data_after_mde_lib, graph, all_nodes, best_E, best_tau, coarse_theta_range, cores,
++def build_start_sweep_fingerprint(network_fingerprint, node_theta, start_offsets,
++                                   generate_length, exclusion_radius):
++    '''Everything that determines one network's start-point sweep outcome
++    -- ported unchanged from simple-mde-gmn.py. network_fingerprint already
++    embeds every TSLS-specific scoring/CCM-calibration knob (via
++    build_search_fingerprint()), so nothing TSLS-specific needs adding
++    here.'''
++    return {
++        'network_fingerprint': network_fingerprint,
++        'node_theta': {k: node_theta[k] for k in sorted(node_theta)},
++        'start_offsets': list(start_offsets),
++        'generate_length': generate_length,
++        'exclusion_radius': exclusion_radius,
++        'stage': 'start_sweep',
++    }
++
++
++def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, prediction_length,
++                          results_dir, cores, generate_length, start_offsets,
++                          target_metric, gamma_delta, exclusion_radius=0,
++                          reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
++                          fingerprints=None, generate_validation_start=None):
++    '''Finds, per network, which row Generate() should start free-running
++    from to best match the real held-out data -- ported from
++    simple-mde-gmn.py, scored via the same TSLS-aware evaluate_smap_candidate()
++    the theta search uses. Returns {network_id: best_generate_start_row}.'''
++    best_starts = {}
++    for network_id, run in gmn_runs.items():
++        if len(start_offsets) == 1:
++            best_starts[network_id] = generate_validation_start + start_offsets[0]
++            continue
++
++        net_result = run['net_result']
++        node_theta = theta_search_results[network_id]['best_node_theta']
++        network_fingerprint = fingerprints[network_id] if fingerprints else None
++
++        sweep_fingerprint = None
++        cache_filename = f'generate_start_sweep_{network_id}.json'
++        if reuse_cache and network_fingerprint is not None:
++            sweep_fingerprint = build_start_sweep_fingerprint(
++                network_fingerprint, node_theta, start_offsets, generate_length, exclusion_radius,
+             )
+-            print(f'{network_id}: best E={best_E}, tau={best_tau} '
+-                  f'(theta=coarse-retuned per node, score={flat_grid[best_i, best_j]:.4f})', flush=True)
+-            smap_search_results[network_id]['best_node_theta'] = best_node_theta
++            hit = find_cached(prev_runs_dir, cache_filename, sweep_fingerprint)
++            if hit is not None:
++                entry, source = hit
++                scores = {int(k): v for k, v in entry['scores'].items()}
++                best_offset = entry['best_offset']
++                best_starts[network_id] = generate_validation_start + best_offset
++                print(f'{network_id}: TSLS_MDE_GMN_REUSE_BEST_PARAMS matched cached start sweep '
++                      f'{source} -- skipping sweep entirely (best offset {best_offset}, '
++                      f'score={scores.get(best_offset, float("nan")):.4f})', flush=True)
++
++                fig, ax = plt.subplots(figsize=(7, 4))
++                ax.plot(start_offsets, [scores.get(o, np.nan) for o in start_offsets], marker='o')
++                ax.axvline(best_offset, color='gray', ls='--', lw=0.8)
++                ax.set_xlabel('Start offset from GENERATE_VALIDATION_START (rows)')
++                ax.set_ylabel('Generate() rho (mean over targets)')
++                ax.set_title(f'Generate() start-point sweep -- {network_id} (cached)')
++                fig.tight_layout()
++                fig.savefig(results_dir / f'generate_start_sweep_{network_id}.png', dpi=300)
++                plt.close(fig)
++                continue
++            print(f'{network_id}: TSLS_MDE_GMN_REUSE_BEST_PARAMS set but no matching cached start '
++                  f'sweep found under {prev_runs_dir} -- running sweep.', flush=True)
+ 
+-        smap_search_results[network_id]['best_E'] = best_E
+-        smap_search_results[network_id]['best_tau'] = best_tau
++        checkpoint_file = results_dir / f'generate_start_checkpoint_{network_id}.pkl'
++        scores = {}
++        if checkpoint_file.exists():
++            with open(checkpoint_file, 'rb') as f:
++                ckpt = pickle.load(f)
++            if (ckpt.get('start_offsets') == start_offsets
++                    and ckpt.get('generate_length') == generate_length):
++                scores = ckpt['scores']
++                print(f'{network_id}: resumed start-sweep checkpoint, '
++                      f'{len(scores)}/{len(start_offsets)} offsets already done', flush=True)
+ 
+-        fig, ax = plt.subplots(figsize=(8, 6))
+-        im = ax.imshow(flat_grid, aspect='auto', cmap='viridis')
+-        ax.set_xticks(range(len(tau_vals))); ax.set_xticklabels(tau_vals)
+-        ax.set_yticks(range(len(e_vals))); ax.set_yticklabels(e_vals)
+-        ax.set_xlabel('tau'); ax.set_ylabel('E')
+-        ax.set_title(f'GMN E/tau search ({search_mode}) -- {network_id}\nmean Generate() rho across targets')
+-        fig.colorbar(im, ax=ax, label='mean target rho')
+-        rect = patches.Rectangle((best_j - 0.5, best_i - 0.5), 1, 1,
+-                                  fill=False, edgecolor='red', linewidth=2.5)
+-        ax.add_patch(rect)
++        for offset in start_offsets:
++            if offset in scores and not np.isnan(scores[offset]):
++                continue
++
++            generate_start = generate_validation_start + offset
++            try:
++                score, _, _ = evaluate_smap_candidate(
++                    net_result, prediction_start, prediction_length,
++                    node_theta, f'startsweep_offset{offset}', results_dir, cores,
++                    target_metric, gamma_delta,
++                    generate_length=generate_length, generate_start=generate_start,
++                    exclusion_radius=exclusion_radius,
++                )
++            except Exception as exc:
++                print(f'{network_id}: start offset {offset} FAILED: {exc!r} -- scoring as NaN', flush=True)
++                score = np.nan
++
++            scores[offset] = score
++            with open(checkpoint_file, 'wb') as f:
++                pickle.dump({'start_offsets': start_offsets,
++                             'generate_length': generate_length, 'scores': scores}, f)
++            print(f'{network_id}: start offset {offset:5d} (row {generate_start}) score={score:.4f}', flush=True)
++
++        valid_offsets = [o for o in start_offsets if not np.isnan(scores.get(o, np.nan))]
++        best_offset = max(valid_offsets, key=lambda o: scores[o]) if valid_offsets else start_offsets[0]
++        best_starts[network_id] = generate_validation_start + best_offset
++        print(f'{network_id}: best generate start = row {best_starts[network_id]} '
++              f'(offset {best_offset}, score={scores.get(best_offset, float("nan")):.4f})', flush=True)
++
++        if sweep_fingerprint is not None:
++            save_json_to_cache(
++                cache_filename,
++                {
++                    'fingerprint': sweep_fingerprint,
++                    'scores': {str(k): v for k, v in scores.items()},
++                    'best_offset': best_offset,
++                },
++                results_dir, run_cache_dir,
++            )
++
++        fig, ax = plt.subplots(figsize=(7, 4))
++        ax.plot(start_offsets, [scores.get(o, np.nan) for o in start_offsets], marker='o')
++        ax.axvline(best_offset, color='gray', ls='--', lw=0.8)
++        ax.set_xlabel('Start offset from GENERATE_VALIDATION_START (rows)')
++        ax.set_ylabel('Generate() rho (mean over targets)')
++        ax.set_title(f'Generate() start-point sweep -- {network_id}')
+         fig.tight_layout()
+-        fig.savefig(results_dir / f'gmn_E_tau_search_{search_mode}_{network_id}.png', dpi=300)
++        fig.savefig(results_dir / f'generate_start_sweep_{network_id}.png', dpi=300)
+         plt.close(fig)
+ 
+-    return smap_search_results
++    return best_starts
++
+ 
+ # =============================================================================
+ # Final rebuild + Forecast() diagnostic + fidelity metric
+-# (mirrors notebook cells 11-13)
++# (mirrors notebook cells 11-13) -- ported from simple-mde-gmn.py, scored
++# throughout via _metric_for()/tsls._score() instead of plain ComputeError.
+ # =============================================================================
+ 
+-def rebuild_at_best_params(gmn_runs, smap_search_results, prediction_start, prediction_length,
+-                            results_dir, cores, metric, target_metric, gamma_delta):
++def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, prediction_length,
++                            results_dir, cores, metric, target_metric, gamma_delta,
++                            generate_length=None, generate_starts=None,
++                            exclusion_radius=0, generate_validation_start=None):
++    '''Reruns Generate() at the winning per-node theta found by
++    run_theta_search(), and the winning start row found by
++    sweep_generate_start(). Ported from simple-mde-gmn.py -- try/except-
++    guarded per network: a failure here is logged and that network is
++    skipped (run['G'] stays unset) rather than crashing the whole job.'''
+     for network_id, run in gmn_runs.items():
+         net_result = run['net_result']
+-        search = smap_search_results[network_id]
+-        best_E, best_tau = search['best_E'], search['best_tau']
+-        node_theta = search['best_node_theta']
+-
+-        config_file = build_gmn_config(
+-            net_result, prediction_start, prediction_length, results_dir,
+-            mode='Generate', E=best_E, tau=best_tau,
+-            node_theta_overrides=node_theta,
+-            variant='best',
+-        )
++        node_theta = theta_search_results[network_id]['best_node_theta']
++        generate_start = generate_starts[network_id] if generate_starts else generate_validation_start
+ 
+-        G = gmn.GMN( configFile = str(config_file), cores = cores )
+-        G.Generate()
++        try:
++            config_file = build_gmn_config(
++                net_result, prediction_start, prediction_length, results_dir,
++                mode='Generate', node_theta_overrides=node_theta,
++                variant='best', generate_length=generate_length, generate_start=generate_start,
++                exclusion_radius=exclusion_radius,
++            )
++            G = gmn.GMN( configFile = str(config_file), cores = cores )
++            G.Generate()
++        except Exception as exc:
++            print(f'{network_id}: FINAL Generate() rebuild FAILED: {exc!r} -- '
++                  f'skipping this network (no plots/fidelity/output for it)', flush=True)
++            continue
+ 
+         run['G'] = G
+-        run['best_E'] = best_E
+-        run['best_tau'] = best_tau
+         run['best_node_theta'] = node_theta
++        run['generate_start'] = generate_start
+ 
+         actual_df = pd.read_csv(net_result['DATA_AFTER_MDE'])
+         generated = G.DataOut.reset_index(drop=True)
+-        generate_time = np.arange(prediction_start, prediction_start + len(generated))
+-        n_rows = prediction_start + prediction_length
+         nodes = [c for c in generated.columns if c != 'Time']
+ 
+-        fig, axes = plt.subplots(len(nodes), 1, figsize=(11, 2.2 * len(nodes)), sharex=False)
+-        if len(nodes) == 1:
+-            axes = [axes]
+-
+-        for ax, node in zip(axes, nodes):
+-            ax.plot(np.arange(n_rows), actual_df[node].to_numpy(),
+-                    color='tab:blue', lw=1, label='Lib/actual')
+-            ax.plot(generate_time, generated[node].to_numpy(),
+-                    color='tab:red', lw=1.2, label=f'Generate() SMap E={best_E}, tau={best_tau}')
+-            ax.axvline(prediction_start, color='gray', ls='--', lw=0.8)
+-            ax.set_title(node, fontsize=10)
+-            ax.legend(fontsize=7, loc='upper right')
+-
+-        fig.suptitle(f"GMN Generate() (SMap, {search['mode']} search) -- {network_id}", fontsize=11)
+-        fig.tight_layout()
+-        fig.savefig(results_dir / f'gmn_generate_{network_id}.png', dpi=300)
+-        plt.close(fig)
+-
+-        print(f"{network_id} Generate() score, held-out window:", flush=True)
++        print(f"{network_id} Generate() score, held-out window (start row {generate_start}):", flush=True)
+         for node in nodes:
+             node_metric = _metric_for(node, net_result['targets'], metric, target_metric)
+-            a = actual_df[node].to_numpy()[prediction_start:n_rows]
++            a = actual_df[node].to_numpy()[generate_start:generate_start + len(generated)]
+             r = tsls._score(a, generated[node].to_numpy(), node_metric, gammaDelta=gamma_delta)
+             tag = 'TARGET' if node in net_result['targets'] else 'driver'
+             print(f"  {node:20s} {tag:7s} {node_metric}={r:7.3f}", flush=True)
+ 
+ 
+ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
+-                             E, tau, node_theta, results_dir, cores, save_path,
+-                             metric, target_metric, gamma_delta):
+-    config_file = build_gmn_config(
+-        net_result, prediction_start, prediction_length, results_dir, mode='Forecast',
+-        E=E, tau=tau, node_theta_overrides=node_theta,
+-    )
++                             node_theta, results_dir, cores, save_path,
++                             metric, target_metric, gamma_delta,
++                             generate_length=None, generate_start=None, nodes_per_figure=10,
++                             exclusion_radius=0, plot_range_mode='full',
++                             generate_validation_start=None, total_rows=None):
++    '''Runs the Forecast() diagnostic and draws the one actual-vs-
++    Generate()-vs-Forecast() figure for this network -- ported from
++    simple-mde-gmn.py, including the 'full'/'windowed' plot_range_mode
++    toggle (see that file's own docstring for the full behavior of each
++    option -- identical here). Returns (None, {}) instead of raising if the
++    Forecast() build/call itself fails.'''
++    generate_length = generate_length if generate_length is not None else prediction_length
++    generate_start = generate_start if generate_start is not None else generate_validation_start
+ 
+-    Gf = gmn.GMN( configFile = str(config_file), cores = cores )
+-    Gf.Forecast()
++    if plot_range_mode == 'windowed':
++        forecast_compute_length = min(2 * generate_length, max(total_rows - generate_start, 0))
++    else:
++        forecast_compute_length = generate_length
++
++    try:
++        max_offset = network_max_embedding_offset(net_result['network']['Graph'])
++        config_file = build_gmn_config(
++            net_result, prediction_start, prediction_length, results_dir, mode='Forecast',
++            node_theta_overrides=node_theta, generate_length=forecast_compute_length,
++            generate_start=generate_start, max_offset=max_offset,
++            exclusion_radius=exclusion_radius,
++        )
++        Gf = gmn.GMN( configFile = str(config_file), cores = cores )
++        Gf.Forecast()
++    except Exception as exc:
++        print(f"{net_result['network_id']}: Forecast() diagnostic FAILED: {exc!r} -- "
++              f"skipping its plot/rho for this network (Generate()-based outputs are unaffected)",
++              flush=True)
++        return None, {}
+ 
+     actual_df = pd.read_csv(net_result['DATA_AFTER_MDE'])
+     forecast_out = Gf.DataOut.dropna().reset_index(drop=True)
+@@ -1353,39 +2732,59 @@
+     nodes = [c for c in forecast_out.columns if c != 'Time']
+ 
+     generate_out = G.DataOut.reset_index(drop=True)
+-    generate_time = np.arange(prediction_start, prediction_start + len(generate_out))
+-    n_rows = prediction_start + prediction_length
++    generate_time = np.arange(generate_start, generate_start + len(generate_out))
++
++    if plot_range_mode == 'windowed':
++        plot_start = generate_start - min(2 * generate_length, generate_start)
++        plot_end = generate_start + forecast_compute_length
++    else:
++        plot_start = 0
++        plot_end = generate_start + generate_length
+ 
+     rhos = {}
+-    fig, axes = plt.subplots(len(nodes), 1, figsize=(11, 2.2 * len(nodes)), sharex=False)
+-    if len(nodes) == 1:
+-        axes = [axes]
++    n_parts = (len(nodes) + nodes_per_figure - 1) // nodes_per_figure
++    for part in range(n_parts):
++        part_nodes = nodes[part * nodes_per_figure:(part + 1) * nodes_per_figure]
++        fig, axes = plt.subplots(len(part_nodes), 1, figsize=(11, 2.2 * len(part_nodes)), sharex=False)
++        if len(part_nodes) == 1:
++            axes = [axes]
+ 
+-    for ax, node in zip(axes, nodes):
+-        node_metric = _metric_for(node, net_result['targets'], metric, target_metric)
+-        actual = actual_df[node].to_numpy()
+-        forecast_pred = forecast_out[node].to_numpy()
+-        rhos[node] = tsls._score(actual[time_idx], forecast_pred, node_metric, gammaDelta=gamma_delta)
+-
+-        ax.plot(np.arange(n_rows), actual, color='tab:blue', lw=1, label='Lib/actual')
+-        if node in generate_out.columns:
+-            ax.plot(generate_time, generate_out[node].to_numpy(),
+-                    color='tab:red', lw=1, label='Generate()')
+-        ax.plot(time_idx, forecast_pred, color='tab:purple', lw=1.2, ls=':', label='Forecast()')
+-        ax.axvline(prediction_start, color='gray', ls='--', lw=0.8)
+-        ax.set_title(f"{node}   Forecast {node_metric}={rhos[node]:.3f}", fontsize=10)
+-        ax.legend(fontsize=7, loc='upper right')
++        for ax, node in zip(axes, part_nodes):
++            node_metric = _metric_for(node, net_result['targets'], metric, target_metric)
++            actual = actual_df[node].to_numpy()
++            forecast_pred = forecast_out[node].to_numpy()
++            rhos[node] = tsls._score(actual[time_idx], forecast_pred, node_metric, gammaDelta=gamma_delta)
++
++            ax.plot(np.arange(plot_start, plot_end), actual[plot_start:plot_end],
++                     color='tab:blue', lw=1, alpha=0.6, label='Lib/actual')
++            if node in generate_out.columns:
++                ax.plot(generate_time, generate_out[node].to_numpy(),
++                        color='tab:red', lw=1, label='Generate()')
++            ax.plot(time_idx, forecast_pred, color='tab:purple', lw=1.2, ls=':', label='Forecast()')
++            ax.axvline(generate_start, color='gray', ls='--', lw=0.8)
++            ax.set_title(f"{node}   Forecast {node_metric}={rhos[node]:.3f}", fontsize=10)
++            ax.legend(fontsize=7, loc='upper right')
+ 
+-    fig.suptitle(f"Forecast() vs Generate() vs actual -- {net_result['network_id']}", fontsize=11)
+-    fig.tight_layout()
+-    fig.savefig(save_path, dpi=300)
+-    plt.close(fig)
++        fig.suptitle(f"Generate() vs Forecast() vs actual -- {net_result['network_id']} "
++                     f"(nodes {part * nodes_per_figure + 1}-"
++                     f"{part * nodes_per_figure + len(part_nodes)} of {len(nodes)})", fontsize=11)
++        fig.tight_layout()
++        part_path = save_path.with_name(f'{save_path.stem}_part{part + 1:02d}{save_path.suffix}')
++        fig.savefig(part_path, dpi=300)
++        plt.close(fig)
+ 
+     return Gf, rhos
+ 
+ 
+-def gmn_fidelity_rho(net_result, G, prediction_start, metric, target_metric, gamma_delta,
++def gmn_fidelity_rho(net_result, G, generate_start, metric, target_metric, gamma_delta,
+                       default_E=3, tau=-1):
++    '''Fig-4e-style generative fidelity: per node, a fresh proper_simplex
++    predicts the real actual series *from* the generated series on a 50/50
++    split of the generated window -- ported from simple-mde-gmn.py, scored
++    via _metric_for()/proper_simplex instead of pyEDM's plain Simplex/
++    ComputeError (proper_simplex is TSLS's own equivalent -- see
++    load_config()'s METRIC docstring). E defaults to node_dimensions (an
++    EmbedDimension-based estimate from build_network(), when computed).'''
+     actual_df = pd.read_csv(net_result['DATA_AFTER_MDE'])
+     generated = G.DataOut.reset_index(drop=True)
+     nodes = [c for c in generated.columns if c != 'Time']
+@@ -1397,7 +2796,7 @@
+     for node in nodes:
+         node_metric = _metric_for(node, net_result['targets'], metric, target_metric)
+         gen_vals = generated[node].to_numpy()
+-        actual_vals = actual_df[node].to_numpy()[prediction_start: prediction_start + n_gen]
++        actual_vals = actual_df[node].to_numpy()[generate_start: generate_start + n_gen]
+         pair_df = pd.DataFrame({
+             'Time': np.arange(n_gen),
+             f'{node}_gen': gen_vals,
+@@ -1436,14 +2835,20 @@
+ # MODE == 'GMN', same guard the notebook uses)
+ # =============================================================================
+ # NOTE: the notebook cell 15 diagnostic (dx.Evaluate: MDE selection vs.
+-# PCA/diffusion-map baselines) has no cleaned_helper_functions.py
+-# equivalent -- proper_mde replaced dimx.MDE for selection itself (see
+-# run_mde_for_target), but dx.Evaluate is a standalone dimx tool with no
+-# TSLS-aware port, and it depended on the dx.MDE result object (r['m'])
+-# this pipeline no longer constructs. Dropped rather than kept partially
+-# working against a dimx.MDE object this pipeline doesn't build anymore.
+-
+-def run_tp_vs_rho_sweep(mde_results, targets, max_tp, target_colors, results_dir, metric, gamma_delta):
++# PCA/diffusion-map baselines) has no cleaned_helper_functions.py equivalent
++# -- proper_mde replaced dimx.MDE for selection itself, but dx.Evaluate is a
++# standalone dimx tool with no TSLS-aware port, and it depended on the
++# dx.MDE result object this pipeline no longer constructs. Stays dropped,
++# exactly as this file's own architecture has always established (see this
++# module's own docstring).
++
++def run_tp_vs_rho_sweep(mde_results, targets, max_tp, target_colors, results_dir,
++                         target_metric, gamma_delta):
++    '''Both TARGETS' own self-predictability -- always target_metric
++    (continuous), never metric (see load_config()'s TARGET_METRIC
++    docstring). Reads r['m'].args.lib/pred/tau -- the 'm' namespace shape
++    every run_mde_for_target() result carries (see that function's own
++    docstring).'''
+     fig, ax = plt.subplots(figsize=(8, 5))
+     annotation_lines = []
+     for target in targets:
+@@ -1454,16 +2859,16 @@
+             continue
+         pi = tsls.proper_predict_interval(
+             r['mde_df'], columns=cols, target=target,
+-            lib=r['LIB'], pred=r['PRED'],
+-            E=len(cols), tau=r['TAU'],
+-            maxTp=max_tp, metric=metric, gammaDelta=gamma_delta,
++            lib=r['m'].args.lib, pred=r['m'].args.pred,
++            E=len(cols), tau=r['m'].args.tau,
++            maxTp=max_tp, metric=target_metric, gammaDelta=gamma_delta,
+         )
+-        ax.plot(pi['Tp'], pi[metric], marker='o', label=target, color=target_colors[target])
++        ax.plot(pi['Tp'], pi[target_metric], marker='o', label=target, color=target_colors[target])
+         annotation_lines.append(f'{target}: E={len(cols)}, vars={", ".join(cols)}')
+ 
+     ax.axvline(1, color='gray', ls=':', lw=1)
+     ax.set_xlabel('Forecast interval Tp (steps)')
+-    ax.set_ylabel(f'Prediction skill ({metric})')
++    ax.set_ylabel(f'Prediction skill ({target_metric})')
+     ax.set_title('MDE forecast skill vs. horizon')
+     ax.legend(loc='best')
+     fig.tight_layout()
+@@ -1473,7 +2878,7 @@
+ 
+ 
+ def run_univariate_e_tau_grid(mde_results, targets, e_range, tau_range, rho_threshold, results_dir,
+-                               metric, gamma_delta):
++                               target_metric, gamma_delta):
+     e_vals, tau_vals = list(e_range), list(tau_range)
+ 
+     for target in targets:
+@@ -1484,10 +2889,10 @@
+             for j, tau in enumerate(tau_vals):
+                 out = tsls.proper_simplex(
+                     r['mde_df'], columns=target, target=target,
+-                    E=E, tau=tau, lib=r['LIB'], pred=r['PRED'],
+-                    embedded=False, metric=metric, gammaDelta=gamma_delta,
++                    E=E, tau=tau, lib=r['m'].args.lib, pred=r['m'].args.pred,
++                    embedded=False, metric=target_metric, gammaDelta=gamma_delta,
+                 )
+-                rho_grid[i, j] = out['metrics'][metric]
++                rho_grid[i, j] = out['metrics'][target_metric]
+ 
+         fig, ax = plt.subplots(figsize=(8, 7))
+         im = ax.imshow(
+@@ -1498,7 +2903,7 @@
+         ax.set_yticks(range(len(e_vals))); ax.set_yticklabels(e_vals)
+         ax.set_xlabel('tau'); ax.set_ylabel('E')
+         ax.set_title(f'E, tau grid search: {target}')
+-        fig.colorbar(im, ax=ax, label=metric)
++        fig.colorbar(im, ax=ax, label=target_metric)
+ 
+         for i in range(len(e_vals)):
+             for j in range(len(tau_vals)):
+@@ -1511,6 +2916,7 @@
+         fig.savefig(results_dir / f'mde_E_tau_grid_{target}.png', dpi=300)
+         plt.close(fig)
+ 
++
+ def target_groups_for_mode(targets, gmn_mode):
+     if gmn_mode == 'combined':
+         return [list(targets)]
+@@ -1520,14 +2926,12 @@
+         raise ValueError(f"Unknown GMN_MODE: {gmn_mode!r}")
+ 
+ 
+-
+ # =============================================================================
+ # Orchestration
+ # =============================================================================
+ 
+ def main():
+     cfg = load_config()
+-    print('Config:', {k: v for k, v in cfg.items() if k != 'TARGET_COLORS'}, flush=True)
+ 
+     df_raw = pd.read_csv(cfg['DATA_DIR'] / cfg['DATA_FILE'])
+     print('Raw data shape:', df_raw.shape, flush=True)
+@@ -1537,23 +2941,99 @@
+     tsls_df_full, obs_cols = convert_to_tsls(df_raw, neuron_columns, cfg['TARGETS'], cfg['RESULTS_DIR'])
+     df = burn_in_trim(tsls_df_full, obs_cols, cfg['RESULTS_DIR'])
+ 
+-    cfg['PREDICTION_START'] = int(round(len(df) * cfg['LIB_RATIO']))
+-    cfg['PREDICTION_LENGTH'] = len(df) - cfg['PREDICTION_START']
+-    print(f"Usable rows N={len(df)}; lib_ratio={cfg['LIB_RATIO']} -> "
+-          f"PREDICTION_START={cfg['PREDICTION_START']} (lib), "
+-          f"PREDICTION_LENGTH={cfg['PREDICTION_LENGTH']} (pred)", flush=True)
++    # Three-way A/B/end split -- see load_config()'s docstring for the full
++    # rationale (identical to simple-mde-gmn.py, ported here), computed
++    # against the TSLS-converted, burn-in-trimmed row count (len(df)), not
++    # the raw file's row count.
++    cfg['PREDICTION_START'] = int(round(len(df) * cfg['LIB_RATIO']))                          # A
++    post_lib_remainder = len(df) - cfg['PREDICTION_START']
++    cfg['PREDICTION_LENGTH'] = int(round(post_lib_remainder * cfg['MDE_VALIDATION_RATIO']))   # B - A
++    cfg['GENERATE_VALIDATION_START'] = cfg['PREDICTION_START'] + cfg['PREDICTION_LENGTH']     # B
++    cfg['GENERATE_VALIDATION_LENGTH'] = len(df) - cfg['GENERATE_VALIDATION_START']            # end - B
++
++    if cfg['GENERATE_LENGTH'] <= 0:
++        cfg['GENERATE_LENGTH'] = cfg['GENERATE_VALIDATION_LENGTH']
++    elif cfg['GENERATE_LENGTH'] > cfg['GENERATE_VALIDATION_LENGTH']:
++        print(f"GENERATE_LENGTH={cfg['GENERATE_LENGTH']} exceeds the Generate/Forecast "
++              f"validation segment ({cfg['GENERATE_VALIDATION_LENGTH']} rows); clamping "
++              f"to it.", flush=True)
++        cfg['GENERATE_LENGTH'] = cfg['GENERATE_VALIDATION_LENGTH']
++
++    max_feasible_offset = cfg['GENERATE_VALIDATION_LENGTH'] - cfg['GENERATE_LENGTH']
++    start_offsets = list(range(cfg['GENERATE_START_MIN_OFFSET'], cfg['GENERATE_START_MAX_OFFSET'],
++                                cfg['GENERATE_START_STEP']))
++    feasible_offsets = [o for o in start_offsets if 0 <= o <= max_feasible_offset]
++    if feasible_offsets != start_offsets:
++        print(f'GENERATE_START offsets {start_offsets} include values outside the feasible '
++              f'range [0, {max_feasible_offset}]; using {feasible_offsets} instead.', flush=True)
++    cfg['GENERATE_START_OFFSETS'] = feasible_offsets or [0]
++
++    cfg['LAG_SET'] = derive_lag_set(
++        cfg['DELAY_SOURCE'], cfg['DELAY_SET'], cfg['LAG_MODE'], cfg['LAG_DENSITY'], cfg['LAG_STEP'],
++        cfg['GENERATE_LENGTH'], cfg['PREDICTION_START'],
++    )
++
++    # VERIFY (see this pipeline's own design-decision record for why this
++    # guard exists here and not in simple-mde-gmn.py): Stage 2's lag-
++    # embedding depth must fit within PREDICTION_START (A), the MDE library
++    # segment -- an implicit assumption in simple-mde-gmn.py too, but
++    # TSLS's own PREDICTION_START is data-driven (burn_in_trim() shrinks
++    # the usable row count depending on which channel fires slowest, unlike
++    # simple-mde-gmn.py's fixed-length 1 Hz input), so this fails fast with
++    # a clear message instead of a confusing downstream all-NaN/shape
++    # error deep inside proper_mde or gmn's own SMap calls.
++    max_lag_depth = max((abs(d) for d in cfg['LAG_SET']), default=0)
++    if max_lag_depth >= cfg['PREDICTION_START']:
++        raise ValueError(
++            f"Stage 2's lag-embedding depth ({max_lag_depth} rows, from LAG_SET= "
++            f"{cfg['LAG_SET']}) does not fit within PREDICTION_START "
++            f"({cfg['PREDICTION_START']} rows, the MDE library segment) -- every "
++            f"lagged candidate column would be all-NaN across the entire library. "
++            f"This is data-driven for TSLS (burn-in trim shrinks the usable row "
++            f"count depending on which channel fires slowest), unlike "
++            f"simple-mde-gmn.py's fixed-length input. Narrow "
++            f"TSLS_MDE_GMN_LAG_MODE/LAG_STEP, shrink TSLS_MDE_GMN_GENERATE_LENGTH, "
++            f"or raise TSLS_MDE_GMN_LIB_RATIO to fix."
++        )
++
++    print('Config:', {k: v for k, v in cfg.items() if k != 'TARGET_COLORS'}, flush=True)
++
++    data_file_sha256 = _hash_file(cfg['DATA_DIR'] / cfg['DATA_FILE']) if cfg['REUSE_BEST_PARAMS'] else None
++    code_fingerprint = build_code_fingerprint() if cfg['REUSE_BEST_PARAMS'] else None
+ 
+     # ---- MDE (or its full-channel-pool stand-in for MODE='GMN') -------
+     mde_results = {}
+     if cfg['MODE'] == 'MDE-GMN':
++        # Stage 1 seed: real-observable-only MDE, no delay expansion --
++        # matches build_nested_mde_network()'s own Stage-1 candidate pool
++        # exactly, so its depth-0 reuse of this result stays valid.
+         for target in cfg['TARGETS']:
+-            mde_results[target] = run_mde_for_target(
+-                target, df, obs_cols, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+-                cfg['MDE_D'], cfg['EMBED_DIM_RHO_MIN'], cfg['CROSS_MAP_RHO_MIN'],
+-                cfg['RESULTS_DIR'],
+-                cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'], cfg['CCM_WINDOW_ROWS'],
+-                cfg['CCM_LIB_SIZE_PCTS'], cfg['CCM_SAMPLE'], cfg['CCM_SLOPE'],
+-            )
++            candidate_pool = [c for c in obs_cols if c != target]
++            effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
++            try:
++                mde_results[target] = run_mde_for_target(
++                    target, df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
++                    effective_d, cfg['EMBED_DIM_RHO_MIN'], cfg['CROSS_MAP_RHO_MIN'],
++                    cfg['EXCLUSION_RADIUS_VALUE'], cfg['RESULTS_DIR'], [],
++                    tp=cfg['TP'],
++                    metric=cfg['METRIC'], target_metric=cfg['TARGET_METRIC'],
++                    gamma_delta=cfg['GAMMA_DELTA'],
++                    ccm_window_rows=cfg['CCM_WINDOW_ROWS'], ccm_lib_size_pcts=cfg['CCM_LIB_SIZE_PCTS'],
++                    ccm_sample=cfg['CCM_SAMPLE'], ccm_slope=cfg['CCM_SLOPE'],
++                    reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
++                    run_cache_dir=cfg['RUN_CACHE_DIR'],
++                    data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
++                    code_fingerprint=code_fingerprint,
++                )
++            except Exception as exc:
++                # Same failure mode _failed_mde_result() guards against in
++                # build_nested_mde_network()/attach_lag_embeddings() below
++                # -- this is the depth-0 seed for that same Stage-1 BFS, so
++                # it needs the identical guard or the exact crash just
++                # relocates one level up.
++                print(f'{target}: top-level MDE call FAILED: {exc!r} -- treating as a dead-end '
++                      f'(zero drivers selected for this target)', flush=True)
++                mde_results[target] = _failed_mde_result(target)
+ 
+         if cfg['RUN_MDE_DIAGNOSTICS']:
+             plot_mde_rho_vs_dimension(
+@@ -1561,7 +3041,7 @@
+                 cfg['RESULTS_DIR'] / 'mde_rho_vs_dimension_multi_target.png',
+             )
+             plot_3d_mde_projection(
+-                cfg['TARGETS'][0], cfg['SECOND_TARGET'], mde_results, df,
++                cfg['TARGETS'][0], cfg['SECOND_TARGET'], mde_results, df, obs_cols,
+                 cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+                 cfg['RESULTS_DIR'] / f"mde_3d_projection_{cfg['TARGETS'][0]}.png",
+             )
+@@ -1576,9 +3056,18 @@
+     for group in target_groups_for_mode(cfg['TARGETS'], cfg['GMN_MODE']):
+         net_result = build_network(
+             group, mde_results, df, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+-            cfg['MODE'], cfg['E_RANGE'], cfg['TAU_RANGE'], cfg['RESULTS_DIR'],
+-            cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
+-            cfg['CCM_WINDOW_ROWS'], cfg['CCM_LIB_SIZE_PCTS'], cfg['CCM_SAMPLE'], cfg['CCM_SLOPE'],
++            cfg['MODE'], cfg['E_RANGE'], cfg['TAU_RANGE'], cfg['RESULTS_DIR'], cfg['CORES'],
++            cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'], cfg['CCM_WINDOW_ROWS'],
++            cfg['CCM_LIB_SIZE_PCTS'], cfg['CCM_SAMPLE'], cfg['CCM_SLOPE'],
++            observable_columns=obs_cols, nested_n=cfg['MDE_D'], nested_m=cfg['NESTED_M'],
++            embed_dim_rho_min=cfg['EMBED_DIM_RHO_MIN'], cross_map_rho_min=cfg['CROSS_MAP_RHO_MIN'],
++            exclusion_radius=cfg['EXCLUSION_RADIUS_VALUE'],
++            lag_set=cfg['LAG_SET'], stage2_allow_real_observables=cfg['STAGE2_ALLOW_REAL_OBSERVABLES'],
++            tp=cfg['TP'],
++            reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
++            run_cache_dir=cfg['RUN_CACHE_DIR'],
++            data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
++            code_fingerprint=code_fingerprint,
+         )
+         draw_colored_network(
+             net_result, cfg['TARGET_COLORS'],
+@@ -1586,36 +3075,74 @@
+         )
+         gmn_runs[net_result['network_id']] = {'group': group, 'net_result': net_result}
+ 
+-    smap_search_results = run_smap_search(
+-        gmn_runs, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+-        cfg['E_RANGE'], cfg['TAU_RANGE'], cfg['THETA_RANGE'], cfg['COARSE_THETA_RANGE'],
+-        cfg['SMAP_SEARCH_MODE'], cfg['RESULTS_DIR'], cfg['CORES'],
++    fingerprints = None
++    if cfg['REUSE_BEST_PARAMS']:
++        fingerprints = {
++            network_id: build_search_fingerprint(cfg, run['net_result'], data_file_sha256, code_fingerprint)
++            for network_id, run in gmn_runs.items()
++        }
++
++    theta_search_results = run_theta_search(
++        gmn_runs, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'], cfg['THETA_RANGE'],
++        cfg['RESULTS_DIR'], cfg['CORES'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
++        generate_length=cfg['GENERATE_LENGTH'],
++        reuse_best_params=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
++        run_cache_dir=cfg['RUN_CACHE_DIR'],
++        fingerprints=fingerprints, exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
++        generate_validation_start=cfg['GENERATE_VALIDATION_START'],
++    )
++
++    generate_starts = sweep_generate_start(
++        gmn_runs, theta_search_results, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
++        cfg['RESULTS_DIR'], cfg['CORES'], cfg['GENERATE_LENGTH'], cfg['GENERATE_START_OFFSETS'],
+         cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
++        exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
++        reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
++        run_cache_dir=cfg['RUN_CACHE_DIR'], fingerprints=fingerprints,
++        generate_validation_start=cfg['GENERATE_VALIDATION_START'],
+     )
+ 
+     rebuild_at_best_params(
+-        gmn_runs, smap_search_results, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
++        gmn_runs, theta_search_results, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+         cfg['RESULTS_DIR'], cfg['CORES'], cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
++        generate_length=cfg['GENERATE_LENGTH'], generate_starts=generate_starts,
++        exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
++        generate_validation_start=cfg['GENERATE_VALIDATION_START'],
+     )
+ 
+     for network_id, run in gmn_runs.items():
++        if 'G' not in run:
++            # rebuild_at_best_params() already logged why and skipped this
++            # network -- nothing downstream has anything to work with
++            # without G.
++            print(f'{network_id}: no successful Generate() rebuild -- skipping '
++                  f'Forecast()/fidelity/output for this network', flush=True)
++            continue
++
+         Gf, forecast_rho = run_forecast_diagnostic(
+             run['net_result'], run['G'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+-            run['best_E'], run['best_tau'], run['best_node_theta'],
++            run['best_node_theta'],
+             cfg['RESULTS_DIR'], cfg['CORES'],
+-            cfg['RESULTS_DIR'] / f'gmn_forecast_vs_generate_{network_id}.png',
++            cfg['RESULTS_DIR'] / f'gmn_generate_forecast_{network_id}.png',
+             cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
++            generate_length=cfg['GENERATE_LENGTH'], generate_start=run['generate_start'],
++            exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
++            plot_range_mode=cfg['FORECAST_PLOT_RANGE'],
++            generate_validation_start=cfg['GENERATE_VALIDATION_START'], total_rows=len(df),
+         )
+         run['Gf'] = Gf
+         run['forecast_rho'] = forecast_rho
+-        print(f"{network_id} Forecast() score per node (weakest first):", flush=True)
+-        for node, rho in sorted(forecast_rho.items(), key=lambda kv: kv[1]):
+-            print(f"  {node:20s} {rho:.4f}", flush=True)
++        if Gf is None:
++            print(f'{network_id}: no Forecast() rho to report for this network', flush=True)
++        else:
++            print(f"{network_id} Forecast() rho per node (weakest first):", flush=True)
++            for node, rho in sorted(forecast_rho.items(), key=lambda kv: kv[1]):
++                print(f"  {node:20s} {rho:.4f}", flush=True)
+ 
+-        rho = gmn_fidelity_rho(run['net_result'], run['G'], cfg['PREDICTION_START'],
++        rho = gmn_fidelity_rho(run['net_result'], run['G'], run['generate_start'],
+                                 cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'])
+         plot_fidelity(rho, network_id, cfg['RESULTS_DIR'] / f'gmn_fidelity_{network_id}.png')
+-        print(f'{network_id} fidelity {cfg["METRIC"]} (weakest first):', flush=True)
++        print(f'{network_id} fidelity rho (weakest first):', flush=True)
+         for node in sorted(rho, key=lambda n: (np.isnan(rho[n]), -(rho[n] if not np.isnan(rho[n]) else 0))):
+             print(f'  {node:20s} {rho[node]:.4f}', flush=True)
+ 
+@@ -1623,13 +3150,7 @@
+         generated.to_csv(cfg['RESULTS_DIR'] / f'gmn_generate_output_{network_id}.csv', index=False)
+ 
+     # ---- MDE-only diagnostics -------------------------------------------
+-    # run_mde_evaluate (dx.Evaluate: MDE vs PCA/diffusion-map) dropped --
+-    # see the "MDE-only diagnostics" section docstring above
+-    # run_univariate_e_tau_grid for why.
+     if cfg['MODE'] == 'MDE-GMN' and cfg['RUN_MDE_DIAGNOSTICS']:
+-        # Both score a TARGETS column's own predictability -- always
+-        # TARGET_METRIC (continuous), never METRIC (see load_config()'s
+-        # TARGET_METRIC docstring).
+         run_tp_vs_rho_sweep(mde_results, cfg['TARGETS'], cfg['MAX_TP'], cfg['TARGET_COLORS'],
+                              cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'])
+         run_univariate_e_tau_grid(mde_results, cfg['TARGETS'], cfg['E_RANGE'], cfg['TAU_RANGE'],
+```
+
+---
+
+
+## Job 38883557
+
+Generated: 2026-08-18T19:33:10+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_38883556**
+
+### Plain-language summary
+
+Job 7 of 7 in a `Tp` sweep (jobs 38883548/549/551/554/555/556/557 =
+Tp 1/2/5/8/10/20/40), run at otherwise-full-scale settings identical to
+the currently-running job 38871293 (MDE_D=30, REGION_CHANNEL_CAP=999,
+NESTED_M=3, GENERATE_LENGTH=300, LAG_STEP=1, --cpus-per-task=64,
+--mem=300G -- baseline Tp=30 there, not part of this sweep). Purpose:
+`Tp` is the prediction interval every `dimx.MDE` forward-selection call
+ranks/validates candidates against (see simple-mde-gmn.sbatch's own TP
+comment and docs/simple-mde-gmn-pipeline.pdf Section 5's pitfall box) --
+a short Tp selects drivers purely for 1-step-ahead skill, a long Tp
+rewards drivers whose relationship with the target stays informative
+much further out. Sweeping it end-to-end (not just re-scoring an
+existing selection) tests whether MDE picks structurally *different*
+drivers -- and whether the resulting network's own Generate()/Forecast()
+fidelity changes -- as the pipeline is pointed at faster vs. slower
+dynamics. Job names (`run_simple_mde_gmn_tp<N>`) and this file's own
+diff chain (each entry compares only against the previous Tp in the
+sweep) are both set up so results stay easy to trace back to their Tp
+after the fact. `--cpus-per-task`/`--mem` were left unchanged from the
+already-right-sized baseline (Section~history in the PDF) since `Tp`
+does not change the per-node candidate-pool breadth or forward-selection
+depth that sizing was based on.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_38883556 | job_38883557 |
+|---|---|---|
+| TP | 20 | 40 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_38883556/simple-mde-gmn.sbatch
++++ job_38883557/simple-mde-gmn.sbatch
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-#SBATCH --job-name=run_simple_mde_gmn_tp20
++#SBATCH --job-name=run_simple_mde_gmn_tp40
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+ #SBATCH --mem=300G
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 38883556
+
+Generated: 2026-08-18T19:33:10+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_38883555**
+
+### Plain-language summary
+
+Job 6 of 7 in the `Tp` sweep (`Tp=20`) -- see job 38883557's own entry
+(the last job in this same sweep) for the full rationale and the
+complete list of sibling job IDs/Tp values.
+
+### Outcome
+
+**OOM-killed.** `sacct`'s `.batch`-step data: `MaxRSS` ~297GB against
+the `--mem=300G` request (`311369224K`). Job-level state shows `TIMEOUT`
+at exactly the 4-day wall clock rather than `OOM` -- both are true of
+the same event, just timestamped differently: the OOM kill happened
+mid-run, then the job kept running (minus whatever got killed) until
+the separate 4-day walltime also expired. Root cause (see job_39354205's
+own entry for the full diagnosis): a repeated, never-filtered pyEDM
+`FindNeighbors()` `UserWarning`, fired on effectively every prediction
+under `EXCLUSION_RADIUS=auto`, produced tens of GB of buffered/flushed
+stdio over the multi-day run -- a well-evidenced driver of both the OOM
+and the eventual timeout. Fixed via a `sitecustomize.py` warning filter;
+resumed (same `Tp=20` config) by job_39354311 after the fix.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_38883555 | job_38883556 |
+|---|---|---|
+| TP | 10 | 20 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_38883555/simple-mde-gmn.sbatch
++++ job_38883556/simple-mde-gmn.sbatch
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-#SBATCH --job-name=run_simple_mde_gmn_tp10
++#SBATCH --job-name=run_simple_mde_gmn_tp20
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+ #SBATCH --mem=300G
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 38883555
+
+Generated: 2026-08-18T19:33:10+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_38883554**
+
+### Plain-language summary
+
+Job 5 of 7 in the `Tp` sweep (`Tp=10`) -- see job 38883557's own entry
+(the last job in this same sweep) for the full rationale and the
+complete list of sibling job IDs/Tp values.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_38883554 | job_38883555 |
+|---|---|---|
+| TP | 8 | 10 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_38883554/simple-mde-gmn.sbatch
++++ job_38883555/simple-mde-gmn.sbatch
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-#SBATCH --job-name=run_simple_mde_gmn_tp8
++#SBATCH --job-name=run_simple_mde_gmn_tp10
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+ #SBATCH --mem=300G
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 38883554
+
+Generated: 2026-08-18T19:33:09+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_38883551**
+
+### Plain-language summary
+
+Job 4 of 7 in the `Tp` sweep (`Tp=8`) -- see job 38883557's own entry
+(the last job in this same sweep) for the full rationale and the
+complete list of sibling job IDs/Tp values.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_38883551 | job_38883554 |
+|---|---|---|
+| TP | 5 | 8 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_38883551/simple-mde-gmn.sbatch
++++ job_38883554/simple-mde-gmn.sbatch
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-#SBATCH --job-name=run_simple_mde_gmn_tp5
++#SBATCH --job-name=run_simple_mde_gmn_tp8
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+ #SBATCH --mem=300G
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 38883551
+
+Generated: 2026-08-18T19:33:09+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_38883549**
+
+### Plain-language summary
+
+Job 3 of 7 in the `Tp` sweep (`Tp=5`) -- see job 38883557's own entry
+(the last job in this same sweep) for the full rationale and the
+complete list of sibling job IDs/Tp values.
+
+### Outcome
+
+**OOM-killed.** `sacct`'s `.batch`-step data: `MaxRSS` ~298.7GB against
+the `--mem=300G` request (`313223152K`). Job-level state shows `TIMEOUT`
+at exactly the 4-day wall clock rather than `OOM` -- same dual-labeling
+as job_38883556's own entry (OOM kill mid-run, then the job kept running
+until the separate 4-day walltime also expired). Same root cause: the
+unfiltered pyEDM `FindNeighbors()` warning-spam bug (see job_39354205's
+own entry for the full diagnosis) -- fixed via a `sitecustomize.py`
+warning filter; resumed (same `Tp=5` config) by job_39354260 after the
+fix.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_38883549 | job_38883551 |
+|---|---|---|
+| TP | 2 | 5 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_38883549/simple-mde-gmn.sbatch
++++ job_38883551/simple-mde-gmn.sbatch
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-#SBATCH --job-name=run_simple_mde_gmn_tp2
++#SBATCH --job-name=run_simple_mde_gmn_tp5
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+ #SBATCH --mem=300G
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 38883549
+
+Generated: 2026-08-18T19:33:08+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_38883548**
+
+### Plain-language summary
+
+Job 2 of 7 in the `Tp` sweep (`Tp=2`) -- see job 38883557's own entry
+(the last job in this same sweep) for the full rationale and the
+complete list of sibling job IDs/Tp values.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_38883548 | job_38883549 |
+|---|---|---|
+| TP | 1 | 2 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_38883548/simple-mde-gmn.sbatch
++++ job_38883549/simple-mde-gmn.sbatch
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-#SBATCH --job-name=run_simple_mde_gmn_tp1
++#SBATCH --job-name=run_simple_mde_gmn_tp2
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+ #SBATCH --mem=300G
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 38883548
+
+Generated: 2026-08-18T19:33:08+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_38871293**
+
+### Plain-language summary
+
+Job 1 of 7 in a `Tp` sweep (`Tp=1`, this job through `Tp=40` in job
+38883557) -- see that job's own entry for the full rationale and the
+complete list of sibling job IDs/Tp values. Diffed here against
+job_38871293 (the currently-running full-scale baseline, `Tp=30`) since
+that was the most recent prior submission of this pipeline; every other
+job in this sweep instead diffs against its own immediate predecessor
+in the sweep, so each entry shows only the one-step `Tp` change.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_38871293 | job_38883548 |
+|---|---|---|
+| TP | 30 | 1 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_38871293/simple-mde-gmn.sbatch
++++ job_38883548/simple-mde-gmn.sbatch
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-#SBATCH --job-name=run_simple_mde_gmn
++#SBATCH --job-name=run_simple_mde_gmn_tp1
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+ #SBATCH --mem=300G
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 38871293
+
+Generated: 2026-08-18T17:52:19+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_38870714**
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_38870714/simple-mde-gmn.sbatch
++++ job_38871293/simple-mde-gmn.sbatch
+@@ -2,8 +2,8 @@
+ #SBATCH --job-name=run_simple_mde_gmn
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+-#SBATCH --mem=500G
+-#SBATCH --cpus-per-task=128
++#SBATCH --mem=300G
++#SBATCH --cpus-per-task=64
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell)
+ # runs, so no shell variable expansion happens here (this is why this
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 38870714
+
+Generated: 2026-08-18T17:35:48+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_38857309**
+
+### Plain-language summary
+
+job_38857309 (the previous submission) sat PENDING in the queue for
+about an hour, then FAILED 5 seconds after it finally started -- not a
+pipeline bug, a self-inflicted breakage: while it was still queued,
+`generate_job_description.sh`'s call signature was changed from 5
+arguments to 4 (dropping an `<out_dir>` argument that turned out to be
+dead weight -- see below), but that script is invoked by *path* at
+runtime, not frozen into the job at submission time the way the sbatch
+script itself is, so job_38857309's still-old 5-argument call hit the
+new script's "wrong number of arguments" usage error and the whole job
+aborted under `set -euo pipefail`. This job (38870714) was submitted
+after both sides were made consistent, so it doesn't hit that.
+
+Two unrelated changes bundled into this same resubmission, both direct
+requests:
+
+1. **Stopped creating an empty job directory on /home.**
+   `scripts/batch/submit.sh` used to `mkdir -p
+   $PROJ_DIR/results/job_<id>/` and pass it to
+   `generate_job_description.sh` as an `<out_dir>` argument -- but that
+   script never actually wrote anything into it (confirmed by reading it
+   end to end: it only ever writes to `JOB_LOG.md` and the shared
+   `.snapshots/` cache), so every submission left a permanently empty
+   directory behind on quota-limited /home. Removed the parameter
+   entirely from `generate_job_description.sh` (and updated all 4 call
+   sites: `submit.sh`, this sbatch script, `tsls-mde-gmn.sbatch`,
+   `tsls_example.sbatch`) rather than just papering over it in
+   `submit.sh` alone.
+
+2. **/flash now archives to bucket and self-cleans on success.**
+   Since the earlier home-quota fix, every pipeline output (not just
+   scratch) has landed on /flash and stayed there permanently. Per
+   explicit direction, that's now split by outcome: on a clean exit, the
+   `cleanup` EXIT trap copies everything under `$OUT_DIR` to a new
+   durable bucket location (`OUTPUT_ARCHIVE_DIR`, a full mirror -- distinct
+   from `RUN_CACHE_DIR`, which only ever held the fingerprinted
+   *reusable* cache artifacts, not the actual deliverables) and then
+   deletes the /flash copy, so /flash goes back to being genuine scratch.
+   On a crash/timeout/cancel, the /flash copy is left exactly where it is
+   for inspection, un-archived. Implemented by capturing
+   `python3 -u simple-mde-gmn.py`'s own exit status (`PY_STATUS`, captured
+   around a `set +e`/`set -e` pair so it's known even though the script
+   otherwise runs under `set -euo pipefail`) and branching on it inside
+   the trap; verified against both the success and failure paths with a
+   standalone smoke test before relying on it here.
+
+Also cleared out `$PROJ_DIR/results/` on /home: 18G down to 478M,
+removing ~17.5G of orphaned Slurm `.err`/`.out` log spam (the same
+pyEDM-warning-spam problem already diagnosed as the reason for the
+earlier /flash migration) and every now-empty vestigial job directory,
+while leaving the one directory that actually held real pipeline output
+(`job_36786285`) and the `.snapshots/` diff cache untouched.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_38857309/simple-mde-gmn.sbatch
++++ job_38870714/simple-mde-gmn.sbatch
+@@ -110,12 +110,18 @@
+ mkdir -p "${FLASH_BASE}"
+ chmod 2755 "${FLASH_BASE}"
+ 
+-# Persistent (not the ephemeral per-job tempdir further below, which is
+-# deleted on every exit including a timeout) -- matches
+-# $FLASH_BASE/pao_rotation_results, the literal path the #SBATCH
++# Live for the run's whole duration (not the ephemeral per-job tempdir
++# further below, which is deleted on every exit including a timeout) --
++# matches $FLASH_BASE/pao_rotation_results, the literal path the #SBATCH
+ # --output/--error directives above are hardcoded to, so this job's
+ # Slurm logs and its actual pipeline output end up side by side the same
+-# way they always have on /home.
++# way they always have on /home. Only persistent past this job's own
++# lifetime on a crash/timeout, though, not on a clean exit -- see the
++# `cleanup` EXIT trap in the SLURM LOG RELOCATION + OUTPUT ARCHIVING
++# section below and OUTPUT_ARCHIVE_DIR's own comment for the full
++# archive-then-clear behavior on success. /flash is scratch again for
++# this pipeline's purposes; the durable copy is OUTPUT_ARCHIVE_DIR
++# (bucket).
+ OUT_DIR="$FLASH_BASE/pao_rotation_results/job_${SLURM_JOB_ID}"
+ mkdir -p "$OUT_DIR"
+ 
+@@ -137,8 +143,25 @@
+ RUN_CACHE_DIR="$CACHE_ROOT/job_${SLURM_JOB_ID}"
+ mkdir -p "$RUN_CACHE_DIR"
+ 
++# Separate from CACHE_ROOT/RUN_CACHE_DIR above -- that pool holds only the
++# fingerprinted, cross-job-reusable *cache* artifacts (per-node MDE
++# selection pickles, best_params/generate_start_sweep json), not this
++# run's actual deliverables (network edge CSVs, every diagnostic PNG,
++# Generate() output CSVs, fidelity plots -- everything else OUT_DIR
++# collects). This is the full-output durable archive instead: on a
++# successful exit, the SLURM LOG RELOCATION section's `cleanup` trap below
++# copies everything under $OUT_DIR here, then deletes the /flash copy --
++# per explicit direction, /flash should go back to being genuine scratch
++# (not permanent storage) now that bucket has the headroom, while still
++# staying in place on /flash (not archived, not deleted) if the job
++# crashes/times out/gets cancelled, so a failed run's partial output is
++# still there to inspect.
++OUTPUT_ARCHIVE_ROOT="/bucket/FukaiU/tominaga/pao_rotation/mde_gmn_outputs"
++OUTPUT_ARCHIVE_DIR="$OUTPUT_ARCHIVE_ROOT/job_${SLURM_JOB_ID}"
++mkdir -p "$OUTPUT_ARCHIVE_DIR"
++
+ # ==============================================================================
+-# SLURM LOG RELOCATION
++# SLURM LOG RELOCATION + OUTPUT ARCHIVING
+ # ==============================================================================
+ # The #SBATCH --output/--error above write to $FLASH_BASE/
+ # pao_rotation_results/ (flat, not $OUT_DIR -- see the ADJUST comment on
+@@ -150,12 +173,32 @@
+ # including failure/timeout/cancel, which is exactly when you most want
+ # the log sitting next to the rest of that run's output instead of loose
+ # in pao_rotation_results/.
++#
++# Also decides $OUT_DIR's own fate, based on PY_STATUS (set around the
++# `python3 -u simple-mde-gmn.py` call below -- unset/non-"0" here means
++# either the pipeline itself failed, or this trap fired before that line
++# ever ran, e.g. an earlier setup failure): "0" means the pipeline
++# completed cleanly, so this run's full output is copied to the durable
++# OUTPUT_ARCHIVE_DIR (bucket -- see that variable's own comment) and the
++# /flash copy is then removed, since /flash is meant to be scratch again
++# now that bucket holds the real copy; anything else leaves $OUT_DIR
++# exactly where it is on /flash, untouched, for post-mortem inspection --
++# per explicit direction, crashes/OOMs/timeouts are exactly the case
++# where you want that data still sitting on fast, directly-browsable
++# storage rather than needing to dig it out of the archive.
+ SLURM_OUT="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.out"
+ SLURM_ERR="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.err"
+ cleanup() {
+-    [ -n "${tempdir:-}" ] && rm -rf "$tempdir"
+     [ -f "$SLURM_OUT" ] && mv -f "$SLURM_OUT" "$OUT_DIR"/
+     [ -f "$SLURM_ERR" ] && mv -f "$SLURM_ERR" "$OUT_DIR"/
++    if [ "${PY_STATUS:-1}" = "0" ] && [ -d "$OUT_DIR" ]; then
++        if cp -a "$OUT_DIR"/. "$OUTPUT_ARCHIVE_DIR"/; then
++            rm -rf "$OUT_DIR"
++        else
++            echo "WARNING: archive copy from $OUT_DIR to $OUTPUT_ARCHIVE_DIR failed -- leaving the /flash copy in place rather than risk deleting the only one." >&2
++        fi
++    fi
++    [ -n "${tempdir:-}" ] && rm -rf "$tempdir"
+     return 0
+ }
+ trap cleanup EXIT
+@@ -165,13 +208,18 @@
+ # ==============================================================================
+ # Diffs this run's simple-mde-gmn.py + simple-mde-gmn.sbatch against the
+ # rolling snapshot cache of the last simple-mde-gmn submission
+-# ($PROJ_DIR/results/.snapshots/ on /home, deliberately -- small, and not
+-# a per-job copy under $OUT_DIR; see generate_job_description.sh's own
+-# module docstring for why),
++# ($PROJ_DIR/results/.snapshots/ on /home, deliberately small and not a
++# per-job copy -- see generate_job_description.sh's own module docstring
++# for why),
+ # inserting a new entry into $PROJ_DIR/JOB_LOG.md (parameter-block changes
+ # as a table, everything else as unified diffs), then updates that cache
+ # to this run's files. Runs before the pipeline itself so the entry is
+-# written even if the run later fails or times out.
++# written even if the run later fails or times out. In the common case
++# (submitted via submit.sh) this call is a no-op -- submit.sh already
++# wrote this job's JOB_LOG.md entry at submission time, and this script
++# checks for that first (see generate_job_description.sh's own
++# idempotency comment) -- but still runs here so a job started via bare
++# `sbatch` (skipping submit.sh) still gets logged.
+ #
+ # sbatch_src is "$0", not a hardcoded path to this canonical file: sbatch
+ # copies whatever file it's given verbatim into the running job, and $0
+@@ -182,7 +230,7 @@
+ # whatever that file happens to contain *right now* instead of what this
+ # job actually launched with.
+ "$PROJ_DIR/scripts/batch/generate_job_description.sh" \
+-    "$PROJ_DIR" "$OUT_DIR" "$SLURM_JOB_ID" \
++    "$PROJ_DIR" "$SLURM_JOB_ID" \
+     "$0" \
+     "$PROJ_DIR/scripts/src/simple-mde-gmn.py"
+ 
+@@ -227,12 +275,15 @@
+ 
+ export MDE_GMN_DATA_DIR="$tempdir/data"
+ export MDE_GMN_DATA_FILE="${DATA_FILE}"
+-# Points directly at the persistent per-job OUT_DIR now (not a
+-# subdirectory of the ephemeral $tempdir) -- see the /flash scratch
+-# setup section's own comment: every pipeline output, including the
+-# theta search's/generate-start sweep's own intra-job checkpoint files,
+-# now survives a timeout/crash rather than being deleted with $tempdir
+-# before ever reaching $OUT_DIR.
++# Points directly at OUT_DIR (not a subdirectory of the ephemeral
++# $tempdir) -- see the /flash scratch setup section's own comment: every
++# pipeline output, including the theta search's/generate-start sweep's
++# own intra-job checkpoint files, now survives a timeout/crash rather
++# than being deleted with $tempdir before ever reaching $OUT_DIR. What
++# happens to OUT_DIR itself after the run -- archived to bucket and
++# cleared from /flash on success, left alone on /flash on a
++# crash/timeout -- is the `cleanup` EXIT trap's job (see OUTPUT_ARCHIVE_DIR
++# above); nothing here needs to change based on that.
+ export MDE_GMN_RESULTS_DIR="$OUT_DIR"
+ export MDE_GMN_MODE="${MODE}"
+ export MDE_GMN_GMN_MODE="${GMN_MODE}"
+@@ -267,28 +318,44 @@
+ export MDE_GMN_CORES="${SLURM_CPUS_PER_TASK}"
+ export MDE_GMN_INTERACTION_MATRIX_OUTER_CORES="${INTERACTION_MATRIX_OUTER_CORES}"
+ export MDE_GMN_REUSE_BEST_PARAMS="${REUSE_BEST_PARAMS}"
+-# Unlike MDE_GMN_RESULTS_DIR (pointed at $tempdir on /flash scratch,
+-# deleted at job exit -- see that export above / the /flash scratch
+-# setup section's own comment), these must point at the durable bucket
+-# cache pool set up above so a later job can actually find a past run's
+-# cached results to reuse, and so this run's own results survive even a
+-# crash partway through (see CACHE_ROOT/RUN_CACHE_DIR's own comment).
++# Separate from MDE_GMN_RESULTS_DIR (also persistent now, but per-job and
++# on /flash -- see that export's own comment) -- these point at the
++# durable *cross-job* bucket cache pool set up above so a later job can
++# actually find a past run's cached results to reuse, not just this run's
++# own (see CACHE_ROOT/RUN_CACHE_DIR's own comment).
+ export MDE_GMN_PREV_RUNS_DIR="$CACHE_ROOT"
+ export MDE_GMN_RUN_CACHE_DIR="$RUN_CACHE_DIR"
+ 
+ python3 -V
+ 
++# Deliberately not left under `set -e` for this one call -- PY_STATUS
++# needs to be captured either way (success or failure) so the `cleanup`
++# EXIT trap above knows whether to archive-and-clear $OUT_DIR or leave it
++# on /flash; under plain `set -e`, a nonzero exit here would jump straight
++# to the trap without ever reaching the capture line below.
++set +e
+ python3 -u simple-mde-gmn.py
++PY_STATUS=$?
++set -e
++
++if [ "$PY_STATUS" -ne 0 ]; then
++    echo "simple-mde-gmn.py exited with status ${PY_STATUS} -- leaving output on /flash at ${OUT_DIR} for inspection (not archived to bucket)." >&2
++    exit "$PY_STATUS"
++fi
+ 
+ # ==============================================================================
+ # SAVE OUTPUTS
+ # ==============================================================================
+ # No cp step needed here anymore -- MDE_GMN_RESULTS_DIR points directly
+ # at $OUT_DIR now (see that export's own comment), so the pipeline has
+-# already been writing straight to its final resting place throughout
+-# the run, not just at this point on a clean exit.
++# already been writing straight to /flash throughout the run. What
++# happens next -- archived to bucket and removed from /flash, since
++# PY_STATUS=0 here means the run completed cleanly -- is handled by the
++# `cleanup` EXIT trap above (see that section's own comment for why it's
++# there rather than here: it has to run on every exit path, not just this
++# clean one).
+ 
+ echo "========================================================"
+-echo "Job ${SLURM_JOB_ID} complete. Outputs saved to:"
+-echo "  ${OUT_DIR}"
++echo "Job ${SLURM_JOB_ID} complete. Archiving outputs to bucket and clearing the /flash copy:"
++echo "  ${OUT_DIR} -> ${OUTPUT_ARCHIVE_DIR}"
+ echo "========================================================"
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+```diff
+--- job_38857309/simple-mde-gmn.py
++++ job_38870714/simple-mde-gmn.py
+@@ -2891,11 +2891,13 @@
+     {results_dir, run_cache_dir} (deduplicated, order-preserving, so the
+     RUN_CACHE_DIR==RESULTS_DIR fallback for ad hoc runs outside the sbatch
+     script -- see load_config()'s docstring -- writes exactly once, not
+-    twice). results_dir is this run's ordinary per-job record, unchanged
+-    in behavior from before this cache existed: it still only reaches
+-    persistent storage at job end, on success, via simple-mde-gmn.sbatch's
+-    final `cp -av`. run_cache_dir is the durable bucket pool
+-    (MDE_GMN_RUN_CACHE_DIR) a future job's find_cached() searches --
++    twice). results_dir is this run's ordinary per-job record -- itself
++    also persistent and immediate now (MDE_GMN_RESULTS_DIR points
++    directly at the per-job /flash OUT_DIR, not a scratch tempdir copied
++    out only at job end -- see simple-mde-gmn.sbatch's RUN section), so
++    this call's two writes differ only in *where* they land, not in
++    *when*. run_cache_dir is the separate, durable *cross-job* bucket
++    pool (MDE_GMN_RUN_CACHE_DIR) a future job's find_cached() searches --
+     writing there *immediately*, right after this stage finishes, is what
+     lets its result survive even if this job crashes or times out later in
+     the pipeline, instead of being lost with the rest of the /flash
+```
+
+---
+
+
+## Job 38857309
+
+Generated: 2026-08-18T14:39:17+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_37946959**
+
+### Plain-language summary
+
+Retry of the full-scale run (job_37946756 died after 1d11h -- see that
+entry) with two fixes, per explicit direction:
+
+1. **Exception-guarding added to both nested-MDE stages.**
+   job_37946756's crash traceback showed dimx's own internal
+   EmbedDimension code hitting `ValueError: Encountered all NA values`
+   on some candidate column deep inside a Stage-1 wave, and that
+   exception propagated straight out of `build_nested_mde_network()`'s
+   `wave_results[futures[fut]] = fut.result()` (no try/except at all),
+   killing the entire 1.5-day run over one degenerate node. Now: a new
+   `_failed_mde_result()` fallback (shaped identically to a node that
+   legitimately selected zero drivers -- already one of this function's
+   own documented BFS termination conditions) is substituted in on any
+   exception, in three places -- `build_nested_mde_network()`'s wave
+   loop (Stage 1), `attach_lag_embeddings()`'s wave loop (Stage 2), and
+   main()'s own top-level per-target depth-0 seed call (same
+   vulnerability, one level up -- left unguarded, the exact same crash
+   would just relocate there instead). One bad node now dead-ends
+   cleanly; it no longer takes the whole job down.
+2. **MDE_D=999 -> 30.** job_37946756's own depth-0 targets had already
+   selected 200-300+ drivers *each* under MDE_D=999 (effectively "select
+   every real observable" against REGION_CHANNEL_CAP=999's ~500 real
+   channels) before the crash -- CrossMapColumns' own per-step ranking
+   cost grows with how many columns are already selected, so this wasn't
+   just slower, it made every node's own forward-selection call
+   quadratically worse than intended. MDE_D=999 is still the eventual
+   target (per explicit direction, "an ideal case"), but restricted to
+   30 for now to get a real completed full-scale run first.
+
+Everything else (NESTED_M=3, REGION_CHANNEL_CAP=999, GENERATE_LENGTH=300,
+LAG_STEP=1, TP=30, --cpus-per-task=128/--mem=500G/--time=4-00:00:00,
+/flash output) unchanged from job_37946756.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_37946959 | job_38857309 |
+|---|---|---|
+| GENERATE_LENGTH | 20 | 300 |
+| MDE_D | 4 | 30 |
+| NESTED_M | 1 | 3 |
+| REGION_CHANNEL_CAP | 15 | 999 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_37946959/simple-mde-gmn.sbatch
++++ job_38857309/simple-mde-gmn.sbatch
+@@ -1,9 +1,9 @@
+ #!/bin/bash
+ #SBATCH --job-name=run_simple_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=04:00:00
+-#SBATCH --mem=48G
+-#SBATCH --cpus-per-task=32
++#SBATCH --time=4-00:00:00
++#SBATCH --mem=500G
++#SBATCH --cpus-per-task=128
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell)
+ # runs, so no shell variable expansion happens here (this is why this
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+```diff
+--- job_37946959/simple-mde-gmn.py
++++ job_38857309/simple-mde-gmn.py
+@@ -1537,6 +1537,32 @@
+         return fallback
+ 
+ 
++def _failed_mde_result(target):
++    '''Fallback run_mde_for_target()-shaped result for a node/target whose
++    MDE call raised, instead of returning normally -- a real, observed
++    failure mode (job 37946756: dimx's own internal EmbedDimension hit an
++    all-NaN rho column deep inside dimx.Run.Run(), ValueError:
++    "Encountered all NA values", not something this pipeline's own gates
++    catch or control), not a hypothetical one. Shaped to be
++    indistinguishable, to every downstream consumer, from a node that
++    legitimately selected zero drivers (SELECTED_COLUMNS=[], empty
++    MDErho) -- already one of build_nested_mde_network()'s documented
++    ordinary BFS termination conditions -- so a single degenerate node
++    dead-ends cleanly (no edges, no further nesting through it) instead
++    of the exception propagating out of a ProcessPoolExecutor wave and
++    crashing everything already computed alongside it, in this stage and
++    every other node's still-pending work in the same wave.'''
++    return {
++        'target': target,
++        'mde_df': None,
++        'm': types.SimpleNamespace(
++            MDEcolumns=[], MDErho=np.array([]), MDEOut=None,
++            args=types.SimpleNamespace(lib=None, pred=None, tau=None, Tp=None),
++        ),
++        'SELECTED_COLUMNS': [],
++    }
++
++
+ def _accept_mde_result_edges(graph, edges, node, result, raw_columns):
+     '''Shared MDE-edge-acceptance rules -- self-loop guard, NaN marginal-
+     gain rejection, eager cycle rejection (see build_nested_mde_network()'s
+@@ -1826,7 +1852,19 @@
+                     )
+                     futures[fut] = node
+                 for fut in as_completed(futures):
+-                    wave_results[futures[fut]] = fut.result()
++                    node = futures[fut]
++                    try:
++                        wave_results[node] = fut.result()
++                    except Exception as exc:
++                        # See _failed_mde_result()'s own docstring -- a
++                        # single node's MDE call failing (dimx's own
++                        # internal code, not this pipeline's) must not
++                        # crash the rest of this wave or every already-
++                        # completed node in prior waves.
++                        print(f'nested MDE: {node} MDE call FAILED: {exc!r} -- treating as a '
++                              f'dead-end (zero drivers selected, no further nesting from this '
++                              f'node)', flush=True)
++                        wave_results[node] = _failed_mde_result(node)
+ 
+         next_wave = []
+         for node, depth in wave_nodes:
+@@ -1947,7 +1985,17 @@
+             )
+             futures[fut] = node
+         for fut in as_completed(futures):
+-            results[futures[fut]] = fut.result()
++            node = futures[fut]
++            try:
++                results[node] = fut.result()
++            except Exception as exc:
++                # See _failed_mde_result()'s own docstring -- a single
++                # node's Stage-2 MDE call failing must not crash every
++                # other node's already-completed lag-embedding attachment
++                # in this same wave.
++                print(f'lag embedding (Stage 2): {node} MDE call FAILED: {exc!r} -- treating as '
++                      f'a dead-end (zero lagged drivers attached for this node)', flush=True)
++                results[node] = _failed_mde_result(node)
+ 
+     for node in nodes:
+         _accept_mde_result_edges(graph, edges, node, results[node], raw_columns)
+@@ -3735,16 +3783,27 @@
+         for target in cfg['TARGETS']:
+             candidate_pool = [c for c in obs_cols if c != target]
+             effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
+-            mde_results[target] = run_mde_for_target(
+-                target, df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+-                effective_d, cfg['EMBED_DIM_RHO_MIN'], cfg['CROSS_MAP_RHO_MIN'],
+-                cfg['EXCLUSION_RADIUS_VALUE'], cfg['CORES'], cfg['RESULTS_DIR'], [],
+-                tp=cfg['TP'],
+-                reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
+-                run_cache_dir=cfg['RUN_CACHE_DIR'],
+-                data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
+-                code_fingerprint=code_fingerprint,
+-            )
++            try:
++                mde_results[target] = run_mde_for_target(
++                    target, df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
++                    effective_d, cfg['EMBED_DIM_RHO_MIN'], cfg['CROSS_MAP_RHO_MIN'],
++                    cfg['EXCLUSION_RADIUS_VALUE'], cfg['CORES'], cfg['RESULTS_DIR'], [],
++                    tp=cfg['TP'],
++                    reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
++                    run_cache_dir=cfg['RUN_CACHE_DIR'],
++                    data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
++                    code_fingerprint=code_fingerprint,
++                )
++            except Exception as exc:
++                # Same failure mode _failed_mde_result() guards against in
++                # build_nested_mde_network()/attach_lag_embeddings() below
++                # (dimx's own internal code, e.g. an all-NaN EmbedDimension
++                # column) -- this is the depth-0 seed for that same Stage-1
++                # BFS, so it needs the identical guard or the exact crash
++                # just relocates one level up.
++                print(f'{target}: top-level MDE call FAILED: {exc!r} -- treating as a dead-end '
++                      f'(zero drivers selected for this target)', flush=True)
++                mde_results[target] = _failed_mde_result(target)
+ 
+         if cfg['RUN_MDE_DIAGNOSTICS']:
+             plot_mde_rho_vs_dimension(
+```
+
+---
+
+
+## Job 37946959
+
+Generated: 2026-08-14T17:16:15+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_37946756**
+
+### Plain-language summary
+
+Re-run of the smoke test at the same tiny scale as job_37939058
+(MDE_D=4, NESTED_M=1, REGION_CHANNEL_CAP=15, GENERATE_LENGTH=20,
+LAG_STEP=1) -- that earlier attempt TIMED OUT at 30 minutes mid-Stage-2,
+so this doesn't yet have a completed end-to-end validation of the
+two-stage algorithm's correctness, only confirmation that Stage 1 runs
+correctly and Stage 2 launches correctly. --time raised to 4 hours (from
+30 minutes) to actually let this tiny-scale run finish and produce a
+real result to check, rather than timing out again -- --mem/--cpus-per-
+task left at modest levels (48G/32) since the smoke test's own MaxRSS
+was only ~7.5GB, no OOM risk at this scale, only a time budget that was
+too tight. Also picks up the same /home-to-/flash output move as
+job_37946756 (see that entry's own summary for the full rationale).
+`scripts/batch/simple-mde-gmn.sbatch` was restored to job_37946756's
+full-scale values immediately after this job was submitted -- Slurm
+snapshots a script's full contents at submission time, so this
+round-trip doesn't affect either job.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_37946756 | job_37946959 |
+|---|---|---|
+| GENERATE_LENGTH | 300 | 20 |
+| MDE_D | 999 | 4 |
+| NESTED_M | 3 | 1 |
+| REGION_CHANNEL_CAP | 999 | 15 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_37946756/simple-mde-gmn.sbatch
++++ job_37946959/simple-mde-gmn.sbatch
+@@ -1,9 +1,9 @@
+ #!/bin/bash
+ #SBATCH --job-name=run_simple_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=4-00:00:00
+-#SBATCH --mem=500G
+-#SBATCH --cpus-per-task=128
++#SBATCH --time=04:00:00
++#SBATCH --mem=48G
++#SBATCH --cpus-per-task=32
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell)
+ # runs, so no shell variable expansion happens here (this is why this
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 37946756
+
+Generated: 2026-08-14T17:15:31+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_37939119**
+
+### Plain-language summary
+
+Replaces job_37939119 (cancelled via `scancel` ~39 minutes in, still
+presumably early Stage 1/Stage 2, so minimal lost work) -- same
+full-scale parameters, corrected resource/storage configuration.
+job_37939119 was submitted with the *previous* --cpus-per-task=32/
+--mem=200G/home-output settings, before job_37939058's smoke test (also
+submitted this round, alongside job_37939119) came back with a
+concrete, load-bearing finding: it TIMED OUT at 30 minutes with its
+first Stage-2 wave still mid-forward-selection, even at a tiny scale
+(REGION_CHANNEL_CAP=15, GENERATE_LENGTH=20, only 900 candidate columns/
+node -- see that job's own JOB_LOG entry). Per explicit direction
+("provide sufficient headroom to prevent out of memory or time out"),
+this job instead uses:
+
+- **--cpus-per-task=128** (was 32) and **--mem=500G** (was 200G) -- this
+  partition's own stated ceiling (40-128 cores/node, 500G mem/node) for
+  both, since Stage 2's own wave-pool parallelism (outer x inner cores,
+  see attach_lag_embeddings()'s docstring) scales close to linearly with
+  core count, and it's the only real lever available -- --time is
+  already at this partition's separate 4-day hard cap and can't be
+  raised further regardless.
+- **All output moved from /home to /flash**, per explicit direction
+  ("home storage is very limited... save all outputs to flash", reversing
+  the earlier flash-is-temporary-only instruction for now): OUT_DIR is
+  now `$FLASH_BASE/pao_rotation_results/job_<id>` instead of
+  `$PROJ_DIR/results/job_<id>`, and MDE_GMN_RESULTS_DIR now points
+  directly at OUT_DIR instead of the ephemeral per-job tempdir -- which,
+  as a side effect, also fixes a previously-documented (but unfixed)
+  caveat: theta-search/generate-start-sweep checkpoint files no longer
+  get deleted by the tempdir-cleanup trap before ever reaching
+  persistent storage on a timeout. JOB_LOG.md and the small
+  .snapshots/ job-description cache stay on /home (small, git-facing
+  provenance, not pipeline output).
+
+**Honest caveat, not resolved by the above:** based on job_37939058's
+own (incomplete) pace, full completion of this job within one 4-day
+submission is still genuinely uncertain -- see LAG_STEP's own sbatch
+comment for the extrapolated math. If this job also fails to finish,
+resubmitting it unchanged should resume from whatever MDE_GMN_
+REUSE_BEST_PARAMS/RUN_CACHE_DIR already cached to bucket storage,
+node by node, rather than restarting from scratch.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_37939119/simple-mde-gmn.sbatch
++++ job_37946756/simple-mde-gmn.sbatch
+@@ -2,12 +2,16 @@
+ #SBATCH --job-name=run_simple_mde_gmn
+ #SBATCH --partition=compute
+ #SBATCH --time=4-00:00:00
+-#SBATCH --mem=200G
+-#SBATCH --cpus-per-task=32
+-# ADJUST: must be a literal absolute path, not $HOME/$PROJ_DIR -- Slurm
++#SBATCH --mem=500G
++#SBATCH --cpus-per-task=128
++# ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell)
+-# runs, so no shell variable expansion happens here. Pointed directly at
+-# results/ (a fixed path that already exists) rather than results/job_%j/
++# runs, so no shell variable expansion happens here (this is why this
++# can't just read $FLASH_BASE/pao_rotation_results below, even though
++# that's the exact same literal value). Pointed directly at
++# /flash/FukaiU/j-tominaga/pao_rotation_results/ (a fixed path that must
++# already exist -- created once via `mkdir -p`, persists across jobs the
++# same way $FLASH_BASE itself already does) rather than .../job_%j/
+ # because Slurm opens these files before the job starts, i.e. before
+ # $SLURM_JOB_ID is known and before this script's own `mkdir -p
+ # "$OUT_DIR"` below could create that subdirectory -- a per-job
+@@ -15,8 +19,16 @@
+ # since Slurm doesn't create missing directories. The EXIT trap further
+ # down (search SLURM LOG RELOCATION) moves these into $OUT_DIR once it
+ # exists, so they still end up alongside the rest of that job's output.
+-#SBATCH --output=/home/j/j-tominaga/pao_rotation/results/%x-%j.out
+-#SBATCH --error=/home/j/j-tominaga/pao_rotation/results/%x-%j.err
++# On /flash, not /home (per explicit direction: home storage is limited,
++# so every output this pipeline produces -- not just scratch -- now
++# lands on /flash instead; see OUT_DIR/MDE_GMN_RESULTS_DIR below for the
++# rest of that change) -- these two files alone can reach tens of MB per
++# job on their own (job 37939058's .err was ~23MB, almost entirely
++# pyEDM UserWarning spam from Stage 2's exhaustive per-node candidate
++# pools), which was a real, measured contributor to the home-quota
++# problem, not a hypothetical one.
++#SBATCH --output=/flash/FukaiU/j-tominaga/pao_rotation_results/%x-%j.out
++#SBATCH --error=/flash/FukaiU/j-tominaga/pao_rotation_results/%x-%j.err
+ #SBATCH --mail-user=j-tominaga@oist.jp
+ #SBATCH --mail-type=END,FAIL
+ 
+@@ -83,21 +95,43 @@
+ 
+ # ADJUST: project checkout location and lab/group allocation on this cluster.
+ PROJ_DIR="$HOME/pao_rotation"
+-OUT_DIR="$PROJ_DIR/results/job_${SLURM_JOB_ID}"
++
++# ADJUST: <GROUP> to this lab's actual flash allocation. Defined here
++# (rather than down in the /flash scratch setup section below, where it
++# used to live) because OUT_DIR now needs it too -- per explicit
++# direction, ALL of this pipeline's output now lands on /flash, not
++# /home ($PROJ_DIR/results): home storage is limited, and this isn't
++# hypothetical -- job 37939058 alone (a tiny smoke test) left a ~23MB
++# .err file (see the #SBATCH --error comment above). Only JOB_LOG.md and
++# the small .snapshots/ job-description cache (see JOB DESCRIPTION below)
++# stay on $PROJ_DIR -- both are small, human/git-facing provenance
++# records, not pipeline output data.
++FLASH_BASE="/flash/FukaiU/${USER}"
++mkdir -p "${FLASH_BASE}"
++chmod 2755 "${FLASH_BASE}"
++
++# Persistent (not the ephemeral per-job tempdir further below, which is
++# deleted on every exit including a timeout) -- matches
++# $FLASH_BASE/pao_rotation_results, the literal path the #SBATCH
++# --output/--error directives above are hardcoded to, so this job's
++# Slurm logs and its actual pipeline output end up side by side the same
++# way they always have on /home.
++OUT_DIR="$FLASH_BASE/pao_rotation_results/job_${SLURM_JOB_ID}"
+ mkdir -p "$OUT_DIR"
+ 
+ # ADJUST: durable cross-job cache pool for expensive, fingerprint-reusable
+ # pipeline stages (MDE forward-selection, nested-MDE/CCM network
+ # construction, theta search, generate-start sweep -- see the module
+ # docstring's SEARCH REUSE section and each stage's own docstring).
+-# Deliberately NOT under $PROJ_DIR/results (/home) -- that quota is meant
+-# for this project's own human-facing per-job output, not a growing pool
+-# of machine-only cache artifacts across every run ever submitted. Bucket
+-# storage has the headroom for that instead. CACHE_ROOT is the read side
+-# (searched recursively, across every past job's subdirectory, by
+-# find_cached_best_params()-style lookups); RUN_CACHE_DIR is this job's
+-# own write side -- each cacheable stage syncs its result here
+-# *immediately* upon completing (not just at job end like $OUT_DIR),
++# Deliberately NOT under $OUT_DIR (/flash) or $PROJ_DIR (/home) -- this
++# is a growing pool of machine-only cache artifacts across every run ever
++# submitted, not this project's own human-facing per-job output; bucket
++# storage has the headroom (and durability -- unlike /flash, not subject
++# to the same scratch-cleanup expectations) for that instead. CACHE_ROOT
++# is the read side (searched recursively, across every past job's
++# subdirectory, by find_cached_best_params()-style lookups); RUN_CACHE_DIR
++# is this job's own write side -- each cacheable stage syncs its result
++# here *immediately* upon completing (not just at job end like $OUT_DIR),
+ # so it survives even if this job later crashes or times out.
+ CACHE_ROOT="/bucket/FukaiU/tominaga/pao_rotation/mde_gmn_cache"
+ RUN_CACHE_DIR="$CACHE_ROOT/job_${SLURM_JOB_ID}"
+@@ -106,17 +140,18 @@
+ # ==============================================================================
+ # SLURM LOG RELOCATION
+ # ==============================================================================
+-# The #SBATCH --output/--error above write to $PROJ_DIR/results/ (flat,
+-# not $OUT_DIR -- see the ADJUST comment on those directives for why).
+-# Move them into $OUT_DIR once it exists, via a single combined EXIT trap
+-# (merged with the /flash tempdir cleanup trap below, since bash only
+-# honors the most recently registered EXIT trap -- a second `trap ...
+-# EXIT` later in this script would silently replace this one rather than
+-# stacking). Runs on every exit path, including failure/timeout/cancel,
+-# which is exactly when you most want the log sitting next to the rest
+-# of that run's output instead of loose in results/.
+-SLURM_OUT="$PROJ_DIR/results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.out"
+-SLURM_ERR="$PROJ_DIR/results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.err"
++# The #SBATCH --output/--error above write to $FLASH_BASE/
++# pao_rotation_results/ (flat, not $OUT_DIR -- see the ADJUST comment on
++# those directives for why). Move them into $OUT_DIR once it exists, via
++# a single combined EXIT trap (merged with the /flash tempdir cleanup
++# trap below, since bash only honors the most recently registered EXIT
++# trap -- a second `trap ... EXIT` later in this script would silently
++# replace this one rather than stacking). Runs on every exit path,
++# including failure/timeout/cancel, which is exactly when you most want
++# the log sitting next to the rest of that run's output instead of loose
++# in pao_rotation_results/.
++SLURM_OUT="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.out"
++SLURM_ERR="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.err"
+ cleanup() {
+     [ -n "${tempdir:-}" ] && rm -rf "$tempdir"
+     [ -f "$SLURM_OUT" ] && mv -f "$SLURM_OUT" "$OUT_DIR"/
+@@ -130,8 +165,9 @@
+ # ==============================================================================
+ # Diffs this run's simple-mde-gmn.py + simple-mde-gmn.sbatch against the
+ # rolling snapshot cache of the last simple-mde-gmn submission
+-# ($PROJ_DIR/results/.snapshots/ -- not a per-job copy under $OUT_DIR;
+-# see generate_job_description.sh's own module docstring for why),
++# ($PROJ_DIR/results/.snapshots/ on /home, deliberately -- small, and not
++# a per-job copy under $OUT_DIR; see generate_job_description.sh's own
++# module docstring for why),
+ # inserting a new entry into $PROJ_DIR/JOB_LOG.md (parameter-block changes
+ # as a table, everything else as unified diffs), then updates that cache
+ # to this run's files. Runs before the pipeline itself so the entry is
+@@ -156,28 +192,19 @@
+ 
+ umask 002
+ 
+-# ADJUST: <GROUP> to this lab's actual flash allocation.
+-FLASH_BASE="/flash/FukaiU/${USER}"
+-mkdir -p "${FLASH_BASE}"
+-chmod 2755 "${FLASH_BASE}"
+-
++# FLASH_BASE itself is defined earlier now (OUT_DIR needs it too -- see
++# that section's own comment); only the ephemeral per-job tempdir is set
++# up here.
+ tempdir="$(mktemp -d "${FLASH_BASE}/run_simple_mde_gmn.${SLURM_JOB_ID}.XXXXXX")"
+ # Cleanup on exit (including this tempdir) is handled by the combined
+ # `cleanup` EXIT trap registered in the SLURM LOG RELOCATION section
+ # above -- deliberately not a second `trap ... EXIT` here, which would
+-# silently replace that one instead of stacking.
+-
+-# NOTE: the theta search below checkpoints to disk after every network
+-# so a resubmitted job can resume instead of restarting a multi-hour
+-# search from scratch (see the script's run_theta_search()) -- but
+-# $tempdir lives under $FLASH_BASE and is deleted by the `trap` above
+-# the moment this script exits, including on a SLURM timeout/cancellation
+-# (SIGTERM), *before* results get copied to $OUT_DIR. If your search
+-# might not finish within --time, checkpoints will be lost across
+-# resubmissions under this scratch layout -- consider pointing
+-# MDE_GMN_RESULTS_DIR directly at a subdirectory of $OUT_DIR instead of
+-# $tempdir/simple_mde_gmn_outputs if that matters for your run (trades
+-# some I/O speed on /flash for surviving a timeout).
++# silently replace that one instead of stacking. Only ever holds the
++# staged source/data copy below (COPY SOURCE FILE + INPUT DATA) -- actual
++# pipeline output no longer passes through here at all (see
++# MDE_GMN_RESULTS_DIR below), so this directory being wiped on every
++# exit, including a timeout, is no longer a data-loss concern the way it
++# used to be.
+ 
+ # ==============================================================================
+ # COPY SOURCE FILE + INPUT DATA
+@@ -200,7 +227,13 @@
+ 
+ export MDE_GMN_DATA_DIR="$tempdir/data"
+ export MDE_GMN_DATA_FILE="${DATA_FILE}"
+-export MDE_GMN_RESULTS_DIR="$tempdir/simple_mde_gmn_outputs"
++# Points directly at the persistent per-job OUT_DIR now (not a
++# subdirectory of the ephemeral $tempdir) -- see the /flash scratch
++# setup section's own comment: every pipeline output, including the
++# theta search's/generate-start sweep's own intra-job checkpoint files,
++# now survives a timeout/crash rather than being deleted with $tempdir
++# before ever reaching $OUT_DIR.
++export MDE_GMN_RESULTS_DIR="$OUT_DIR"
+ export MDE_GMN_MODE="${MODE}"
+ export MDE_GMN_GMN_MODE="${GMN_MODE}"
+ export MDE_GMN_TARGETS="${TARGETS}"
+@@ -250,8 +283,10 @@
+ # ==============================================================================
+ # SAVE OUTPUTS
+ # ==============================================================================
+-
+-cp -av simple_mde_gmn_outputs/. "$OUT_DIR"/
++# No cp step needed here anymore -- MDE_GMN_RESULTS_DIR points directly
++# at $OUT_DIR now (see that export's own comment), so the pipeline has
++# already been writing straight to its final resting place throughout
++# the run, not just at this point on a clean exit.
+ 
+ echo "========================================================"
+ echo "Job ${SLURM_JOB_ID} complete. Outputs saved to:"
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 37939119
+
+Generated: 2026-08-14T16:35:56+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_37939058**
+
+### Plain-language summary
+
+Full-scale run of the newly-implemented two-stage nested-MDE algorithm
+(see job_37939058's own summary for what that is) -- this run restores
+every parameter to the same "real" production values the pipeline was
+using before this session's refactor (MDE_D=999, NESTED_M=3,
+REGION_CHANNEL_CAP=999, GENERATE_LENGTH=300, TP=30, full 4-day/200G
+resource request), submitted immediately after job_37939058's smoke test
+came back clean at small scale. `scripts/batch/simple-mde-gmn.sbatch`
+was round-tripped back to these values right after this job was
+submitted -- Slurm snapshots a script's full contents at submission
+time, so this doesn't affect either job.
+
+The one deliberate, permanent change carried over from the smoke test
+(not reverted): **LAG_STEP=1**. Per explicit direction, this initial
+implementation of the two-stage design must never use a step ("tau")
+other than 1 for Stage 2's lagged-candidate pool -- every consecutive
+row is offered as its own candidate delay, not a strided subset.
+
+**Cost/risk flag, not something I decided to work around:** with
+LAG_MODE=generation_length_adjusted (default), Stage 2's lag bound is
+GENERATE_LENGTH=300, and LAG_STEP=1 makes that dense -- up to ~300
+distinct lag columns per real observable in Stage 2's candidate pool,
+roughly 5x more candidate columns than any run before this session
+(which used LAG_STEP=5 or the old flat 5-entry DELAY_SET). Against
+REGION_CHANNEL_CAP=999 (~470 real channels historically), that's a
+candidate pool an order of magnitude larger than anything this pipeline
+has run so far -- a real risk of this job running very long or hitting
+the 4-day cap without finishing. Worth checking on directly rather than
+assuming it'll behave like past full-scale runs.
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_37939058 | job_37939119 |
+|---|---|---|
+| GENERATE_LENGTH | 20 | 300 |
+| MDE_D | 4 | 999 |
+| NESTED_M | 1 | 3 |
+| REGION_CHANNEL_CAP | 15 | 999 |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_37939058/simple-mde-gmn.sbatch
++++ job_37939119/simple-mde-gmn.sbatch
+@@ -1,8 +1,8 @@
+ #!/bin/bash
+ #SBATCH --job-name=run_simple_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=00:30:00
+-#SBATCH --mem=48G
++#SBATCH --time=4-00:00:00
++#SBATCH --mem=200G
+ #SBATCH --cpus-per-task=32
+ # ADJUST: must be a literal absolute path, not $HOME/$PROJ_DIR -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell)
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 37939058
+
+Generated: 2026-08-14T16:35:06+09:00
+
+Git commit at submission: `e33810e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_36969861**
+
+### Plain-language summary
+
+Small-scale smoke test of this session's two-stage nested-MDE rework --
+the first job to actually run this new code path end-to-end. Replaces
+the previous single-stage algorithm (real and lagged observables
+searched together in one nested-MDE pass) with two explicit stages:
+Stage 1 (build_nested_mde_network()) discovers the "main node" backbone
+using *only* real (delay=0) observables; Stage 2 (new
+attach_lag_embeddings()) then runs once per Stage-1 node, attaching each
+node's own generalized (multi-lag) embedding from the *whole* observable
+universe's lagged columns, never spawning new backbone nodes itself.
+
+Also exercises, for the first time, the new three-way A/B/end lib/pred
+split (MDE_VALIDATION_RATIO=0.5, new this session) that keeps network
+construction's own validation window completely separate from the
+Generate()/Forecast() fidelity window -- previously these overlapped,
+which was a real (if unintentional) form of data leakage between model
+construction and validation; see this session's design discussion for
+the full rationale. TP=30 was kept (not shrunk for the smoke test)
+specifically to exercise the new Tp-row leakage buffer this split
+required.
+
+New toggles, all left at their recommended defaults except LAG_STEP:
+DELAY_SOURCE=lag_mode, LAG_MODE=generation_length_adjusted,
+LAG_DENSITY=strided, STAGE2_ALLOW_REAL_OBSERVABLES=false. **LAG_STEP=1**
+is not a default -- per explicit direction, this initial implementation
+must always use a step ("tau") of exactly 1 for Stage 2's lagged-
+candidate pool, so this is forced the same way in both this smoke test
+and the full-scale job_37939119 submitted right after it.
+GENERATE_LENGTH=20 (vs. the real run's 300) keeps Stage 2's
+generation_length_adjusted lag bound small alongside MDE_D=4/NESTED_M=1/
+REGION_CHANNEL_CAP=15, matching this repo's usual "shrink everything for
+a fast end-to-end check" smoke-test pattern (--time=00:30:00,
+--mem=48G). `scripts/batch/simple-mde-gmn.sbatch` was restored to the
+real run's values (999/3/999/300, LAG_STEP still 1, full 4-day/200G
+resources) immediately after this job was submitted -- Slurm snapshots a
+script's full contents at submission time, so this round-trip doesn't
+affect this job. `scripts/src/simple-mde-gmn.py` was not touched between
+this job and job_37939119 (identical two-stage implementation).
+
+### Parameter changes (simple-mde-gmn.sbatch)
+
+| Parameter | job_36969861 | job_37939058 |
+|---|---|---|
+| DELAY_SOURCE | _(unset)_ | lag_mode |
+| GENERATE_LENGTH | 300 | 20 |
+| LAG_DENSITY | _(unset)_ | strided |
+| LAG_MODE | _(unset)_ | generation_length_adjusted |
+| LAG_STEP | _(unset)_ | 1 |
+| MDE_D | 999 | 4 |
+| MDE_VALIDATION_RATIO | _(unset)_ | 0.5 |
+| NESTED_M | 3 | 1 |
+| REGION_CHANNEL_CAP | 999 | 15 |
+| STAGE2_ALLOW_REAL_OBSERVABLES | _(unset)_ | false |
+
+### Batch script design changes (simple-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_36969861/simple-mde-gmn.sbatch
++++ job_37939058/simple-mde-gmn.sbatch
+@@ -1,8 +1,8 @@
+ #!/bin/bash
+ #SBATCH --job-name=run_simple_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=4-00:00:00
+-#SBATCH --mem=200G
++#SBATCH --time=00:30:00
++#SBATCH --mem=48G
+ #SBATCH --cpus-per-task=32
+ # ADJUST: must be a literal absolute path, not $HOME/$PROJ_DIR -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell)
+@@ -210,9 +210,15 @@
+ export MDE_GMN_CROSS_MAP_RHO_MIN="${CROSS_MAP_RHO_MIN}"
+ export MDE_GMN_EXCLUSION_RADIUS="${EXCLUSION_RADIUS}"
+ export MDE_GMN_NESTED_M="${NESTED_M}"
++export MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES="${STAGE2_ALLOW_REAL_OBSERVABLES}"
+ export MDE_GMN_REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP}"
++export MDE_GMN_DELAY_SOURCE="${DELAY_SOURCE}"
++export MDE_GMN_LAG_MODE="${LAG_MODE}"
++export MDE_GMN_LAG_DENSITY="${LAG_DENSITY}"
++export MDE_GMN_LAG_STEP="${LAG_STEP}"
+ export MDE_GMN_DELAY_SET="${DELAY_SET}"
+ export MDE_GMN_LIB_RATIO="${LIB_RATIO}"
++export MDE_GMN_MDE_VALIDATION_RATIO="${MDE_VALIDATION_RATIO}"
+ export MDE_GMN_GENERATE_LENGTH="${GENERATE_LENGTH}"
+ export GMN_EXCLUSION_RADIUS="${GMN_EXCLUSION_RADIUS}"
+ export MDE_GMN_FORECAST_PLOT_RANGE="${FORECAST_PLOT_RANGE}"
+```
+
+### Python pipeline changes (simple-mde-gmn.py)
+
+```diff
+--- job_36969861/simple-mde-gmn.py
++++ job_37939058/simple-mde-gmn.py
+@@ -830,14 +830,40 @@
+     cfg['TARGETS'] = _env_list('MDE_GMN_TARGETS', ['head_position_x', 'head_position_y'])
+     cfg['SECOND_TARGET'] = cfg['TARGETS'][1] if len(cfg['TARGETS']) > 1 else None
+ 
+-    # Lib/pred split as a fraction of the full dataset -- e.g. LIB_RATIO=0.5
+-    # means the first 50% of rows are library, the remaining 50% are the
+-    # held-out pred/Generate() window. PREDICTION_START/PREDICTION_LENGTH
+-    # (row counts derived from this ratio and the data's length) are filled
+-    # in by main() once the data is loaded, and are what the rest of the
+-    # pipeline reads: the MDE lib/pred split, CCM/EmbedDimension calls, and
+-    # the held-out window Generate() results are validated against.
++    # Three-way temporal split of the full dataset, resolved by main() once
++    # the data's row count is known:
++    #   [0, A)      MDE library    -- LIB_RATIO fraction of the full dataset
++    #   [A, B)      MDE validation -- dx.MDE's own held-out `pred` window
++    #               (CCM/EmbedDimension/crossMapRhoMin gates, both nested-
++    #               MDE stages) -- MDE_VALIDATION_RATIO fraction of the
++    #               *remainder* after A
++    #   [B, end)    Generate/Forecast validation -- generate_start floats
++    #               only within this segment (GENERATE_START_MIN/MAX/STEP_
++    #               OFFSET below), for GENERATE_LENGTH steps
++    # This exists so network construction (both nested-MDE stages) and
++    # the reported Generate()/Forecast() fidelity never touch the same
++    # rows -- see run_mde_for_target()'s docstring for the mechanics
++    # (mde_df truncated to end exactly at B, a Tp-row buffer before B) and
++    # main()'s window-resolution block for the actual arithmetic.
++    # PREDICTION_START/PREDICTION_LENGTH (row counts, filled in by main())
++    # are A and B-A respectively -- MDE's own lib/pred split, unchanged
++    # names from before this three-way split existed. GENERATE_VALIDATION_
++    # START/LENGTH (new) are B and end-B.
+     cfg['LIB_RATIO'] = float(os.environ.get('MDE_GMN_LIB_RATIO', 0.5))
++    # Fraction of the *post-library* remainder (i.e. of [A, end)) given to
++    # the MDE validation segment [A, B) rather than the Generate/Forecast
++    # validation segment [B, end) -- e.g. LIB_RATIO=0.5, MDE_VALIDATION_
++    # RATIO=0.5 on a 1000-row dataset: A=500, remainder=500, B=500+250=750,
++    # so MDE validation gets rows 500-749 and Generate/Forecast validation
++    # gets rows 750-999. Widen this (toward 1.0) if MDE's own CCM/rho
++    # gates need a larger held-out window to be meaningful; narrow it
++    # (toward 0.0) to leave more room for GENERATE_LENGTH/the start-point
++    # sweep.
++    cfg['MDE_VALIDATION_RATIO'] = float(os.environ.get('MDE_GMN_MDE_VALIDATION_RATIO', 0.5))
++    if not (0.0 < cfg['MDE_VALIDATION_RATIO'] < 1.0):
++        raise ValueError(
++            f"MDE_GMN_MDE_VALIDATION_RATIO must be in (0, 1): {cfg['MDE_VALIDATION_RATIO']!r}"
++        )
+ 
+     # Step count for each Generate() call, decoupled from PREDICTION_LENGTH:
+     # every Generate() call (in the theta search, the start sweep, and
+@@ -973,23 +999,94 @@
+     # down for a fast test job.
+     cfg['REGION_CHANNEL_CAP'] = int(os.environ.get('MDE_GMN_REGION_CHANNEL_CAP', 999))
+ 
+-    # Delay set nested-MDE searches per observable (MODE='MDE-GMN' only):
+-    # each candidate observable is offered to dimx.MDE's forward selection
+-    # as len(DELAY_SET) separate columns, one per delay -- e.g. 200
+-    # observables x 5 delays = 1000 candidate columns -- so MDE picks
+-    # specific (observable, delay) pairs rather than being stuck with one
+-    # fixed contemporaneous (delay=0) copy of every observable. This is a
+-    # generalized/non-uniform Takens embedding (Deyle & Sugihara 2011):
+-    # different driving variables, and even repeats of the *same* driver,
+-    # can each carry their own delay rather than sharing one embedding
+-    # depth/lag network-wide. Values must be <= 0 (0 = contemporaneous,
+-    # negative = that many rows in the past) -- a positive delay would
+-    # need future data that doesn't exist during a real free-running
+-    # Generate() call. See build_nested_mde_network()'s docstring for how
+-    # a node's per-driver delay is recorded and how nesting only recurses
+-    # through delay=0 selections. 0 is always included in every node's
+-    # own self-embedding regardless of whether it's listed here (see
+-    # build_network()'s self_delay_set comment) -- a node's present
++    # ---- Two-stage nested-MDE network construction (MODE='MDE-GMN' only) --
++    # Per explicit direction, network construction is split into two
++    # stages -- see build_nested_mde_network() (Stage 1) and
++    # attach_lag_embeddings() (Stage 2) for the full algorithm:
++    #   Stage 1: nested-MDE over *real* (delay=0) observables only --
++    #     builds the "main node" backbone DAG (unchanged BFS/cycle-
++    #     rejection machinery, just given a delay-less candidate pool).
++    #   Stage 2: for every Stage-1 node, one non-recursive MDE round over
++    #     the *lagged* candidate pool of the whole observable universe
++    #     (not just that node's own lags) -- attaches each node's own
++    #     generalized (multi-lag) embedding coordinates. Never itself
++    #     spawns new Stage-1-style targets, regardless of what delay a
++    #     selected driver carries -- Stage 1 alone owns backbone-node
++    #     discovery.
++    #
++    # STAGE2_ALLOW_REAL_OBSERVABLES: whether Stage 2's candidate pool also
++    # includes delay=0 (real-observable) columns -- i.e. whether Stage 2
++    # can introduce a real observable Stage 1 never reached. Default
++    # False: Stage 2 stays lagged-only, keeping Stage 1 the sole authority
++    # over which real observables become backbone nodes (a real observable
++    # worth hub status belongs in a wider Stage-1 MDE_D/NESTED_M search,
++    # not as a Stage-2-only leaf that's discovered but never itself
++    # expanded). When True, a Stage-2-selected delay=0 driver is still
++    # subject to the same eager cycle-rejection as every other edge (see
++    # build_nested_mde_network()'s docstring) -- acyclicity is guarded
++    # structurally, not by restricting which stage can propose an edge --
++    # but such a driver is *never* enqueued for further nesting even if
++    # accepted, unlike a Stage-1 delay=0 selection.
++    cfg['STAGE2_ALLOW_REAL_OBSERVABLES'] = _env_bool('MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES', False)
++
++    # DELAY_SOURCE picks what determines the nonzero-delay set used for
++    # (a) every node's unconditional self_delay_set (self-history, always
++    # present regardless of MDE-selected drivers) and (b) Stage 2's
++    # lagged-candidate pool:
++    #   'explicit' (legacy): the hand-picked MDE_GMN_DELAY_SET list below,
++    #     unchanged pre-existing behavior.
++    #   'lag_mode' (default): auto-derived from LAG_MODE/LAG_DENSITY/
++    #     LAG_STEP below instead -- MDE_GMN_DELAY_SET is ignored.
++    cfg['DELAY_SOURCE'] = os.environ.get('MDE_GMN_DELAY_SOURCE', 'lag_mode').strip().lower()
++    if cfg['DELAY_SOURCE'] not in ('explicit', 'lag_mode'):
++        raise ValueError(f"MDE_GMN_DELAY_SOURCE must be 'explicit' or 'lag_mode': {cfg['DELAY_SOURCE']!r}")
++
++    # LAG_MODE (only used when DELAY_SOURCE='lag_mode') sets the *bound*
++    # (deepest lag magnitude, in rows) the auto-derived delay set reaches:
++    #   'generation_length_adjusted' (default): bound = GENERATE_LENGTH --
++    #     ties the deepest embedding coordinate to the length of one full
++    #     Generate() run, per explicit direction.
++    #   'every_lag_possible': bound = as deep as the MDE library segment
++    #     [0, A) structurally allows (its own row count minus a small
++    #     fixed safety buffer so forward-selection still has a meaningful
++    #     library left after the deepest lag's warm-up NaN rows are
++    #     skipped -- see derive_lag_set()) -- exhaustive, and
++    #     correspondingly the more expensive of the two.
++    cfg['LAG_MODE'] = os.environ.get('MDE_GMN_LAG_MODE', 'generation_length_adjusted').strip().lower()
++    if cfg['LAG_MODE'] not in ('generation_length_adjusted', 'every_lag_possible'):
++        raise ValueError(f"MDE_GMN_LAG_MODE must be 'generation_length_adjusted' or "
++                          f"'every_lag_possible': {cfg['LAG_MODE']!r}")
++
++    # LAG_DENSITY (only used when DELAY_SOURCE='lag_mode') samples LAG_MODE's
++    # bound at LAG_STEP-row intervals ('strided', default) rather than
++    # every single integer lag ('dense') -- density is tunable
++    # independently of the bound for compute tractability: e.g.
++    # every_lag_possible against a several-thousand-row library would
++    # otherwise mean tens of thousands of candidate columns per Stage-2
++    # node. 'dense' accepts that cost -- keep REGION_CHANNEL_CAP/MDE_D/
++    # GENERATE_LENGTH small if using it.
++    cfg['LAG_DENSITY'] = os.environ.get('MDE_GMN_LAG_DENSITY', 'strided').strip().lower()
++    if cfg['LAG_DENSITY'] not in ('strided', 'dense'):
++        raise ValueError(f"MDE_GMN_LAG_DENSITY must be 'strided' or 'dense': {cfg['LAG_DENSITY']!r}")
++    cfg['LAG_STEP'] = int(os.environ.get('MDE_GMN_LAG_STEP', 5))
++    if cfg['LAG_STEP'] < 1:
++        raise ValueError(f"MDE_GMN_LAG_STEP must be >= 1: {cfg['LAG_STEP']!r}")
++
++    # Explicit delay set nested-MDE searches per observable (MODE='MDE-GMN'
++    # only, DELAY_SOURCE='explicit' only -- see above): each candidate
++    # observable is offered to dimx.MDE's forward selection as one column
++    # per delay -- e.g. 200 observables x 5 delays = 1000 candidate
++    # columns -- so MDE picks specific (observable, delay) pairs rather
++    # than being stuck with one fixed contemporaneous (delay=0) copy of
++    # every observable. This is a generalized/non-uniform Takens embedding
++    # (Deyle & Sugihara 2011): different driving variables, and even
++    # repeats of the *same* driver, can each carry their own delay rather
++    # than sharing one embedding depth/lag network-wide. Values must be <=
++    # 0 (0 = contemporaneous, negative = that many rows in the past) -- a
++    # positive delay would need future data that doesn't exist during a
++    # real free-running Generate() call. 0 is always included in every
++    # node's own self-embedding regardless of whether it's listed here
++    # (see build_network()'s self_delay_set comment) -- a node's present
+     # value is the anchor SMap predicts from/to, not an optional driver
+     # delay choice, so it can't be omitted even from a DELAY_SET that
+     # doesn't otherwise include 0.
+@@ -1136,6 +1233,50 @@
+     return expanded, expanded_columns
+ 
+ 
++def derive_lag_set(delay_source, explicit_delay_set, lag_mode, lag_density, lag_step,
++                    generate_length, mde_lib_size, min_lib_rows=50):
++    '''Resolves the nonzero-delay set used for Stage 2's lagged-driver
++    candidate pool (attach_lag_embeddings()) and, unioned with {0}, every
++    node's unconditional self_delay_set -- see load_config()'s
++    DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP docstrings for the
++    parameter semantics.
++
++    delay_source='explicit': just the hand-picked delay_set list,
++    stripped of any 0 entry (0 is added back in separately by callers --
++    matches expand_delay_columns()'s convention that delay=0 needs no
++    shifted column of its own).
++
++    delay_source='lag_mode': auto-derived --
++      lag_mode='generation_length_adjusted': bound = generate_length.
++      lag_mode='every_lag_possible': bound = mde_lib_size - min_lib_rows
++        (clamped to >= 1) -- as deep as the MDE library segment [0, A)
++        structurally allows while reserving min_lib_rows real rows so
++        MDE's own forward-selection still has a meaningful library left
++        after the deepest lag's warm-up NaN rows (see run_mde_for_target()'s
++        `warmup`) are skipped.
++    Either bound is then sampled every lag_step rows (lag_density=
++    'strided') or every single integer lag (lag_density='dense').
++
++    Returns a sorted-descending list of negative ints, e.g.
++    [-1, -6, -11, ...] for a strided bound of 15 at step 5 -- no 0 entry,
++    same convention as the explicit-source path above.'''
++    if delay_source == 'explicit':
++        return sorted((d for d in explicit_delay_set if d != 0), reverse=True)
++
++    if lag_mode == 'generation_length_adjusted':
++        bound = max(1, generate_length)
++    elif lag_mode == 'every_lag_possible':
++        bound = max(1, mde_lib_size - min_lib_rows)
++    else:
++        raise ValueError(f"Unknown lag_mode: {lag_mode!r}")
++
++    step = lag_step if lag_density == 'strided' else 1
++    if lag_density not in ('strided', 'dense'):
++        raise ValueError(f"Unknown lag_density: {lag_density!r}")
++
++    return list(range(-1, -bound - 1, -step))
++
++
+ def effective_mde_dimension(mde_d, candidate_columns, num_delays):
+     '''MDE_D names the desired count of distinct *real* observables
+     dimx.MDE should be able to select -- not delay-expanded columns. Each
+@@ -1163,7 +1304,8 @@
+                         mde_d, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                         cores, results_dir, delay_set, tp=1,
+                         reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+-                        data_file=None, data_file_sha256=None, code_fingerprint=None):
++                        data_file=None, data_file_sha256=None, code_fingerprint=None,
++                        cache_stage='stage1'):
+     '''Run dimx.MDE's forward selection for a single target variable.
+     `mde_d` here is already the *effective* dimension count (see
+     effective_mde_dimension()) -- callers compute that from the
+@@ -1183,6 +1325,22 @@
+     original single-delay rationale (identical logic otherwise, just
+     cores threaded through).
+ 
++    LEAKAGE (see load_config()'s three-way A/B/end window docstring):
++    `prediction_start`/`prediction_length` here are always A and B-A --
++    the MDE-only library/validation window, never the Generate/Forecast
++    validation segment [B, end). `mde_df` (below) is truncated to
++    `.iloc[:prediction_start+prediction_length]` == `.iloc[:B]` -- this
++    is the actual leakage guard, not just the `lib=`/`pred=` args below:
++    dimx.MDE's own internal CCM() call ignores those bounds and samples
++    its library/prediction sets from *whatever DataFrame it's given*
++    (confirmed by reading pyEDM/CCM.py directly), so physically excluding
++    every row at or past B from the DataFrame object itself is what
++    prevents CCM() -- and by extension exclusionRadius, which only ever
++    narrows an already-available candidate set, never expands it -- from
++    ever seeing segment 3. `pred`'s upper bound is further shortened by
++    `tp` rows (B-tp, not B) so the last validated row's own t+tp target
++    label can never land at or past B either.
++
+     CACHE (reuse_cache, gated by MDE_GMN_REUSE_BEST_PARAMS same as every
+     other stage -- see the module docstring's SEARCH REUSE section):
+     every downstream consumer of the returned 'm' object only ever reads
+@@ -1191,10 +1349,15 @@
+     file) -- never anything else, never a second .Run(). So a cache hit
+     reconstructs a types.SimpleNamespace exposing exactly those seven
+     attributes instead of a live dx.MDE object, and skips calling
+-    dx.MDE(...).Run() entirely. Called both from main()'s top-level
+-    per-target loop and from every per-node wave inside
+-    build_nested_mde_network()'s ProcessPoolExecutor, so caching here
+-    covers both at full per-node granularity for free.'''
++    dx.MDE(...).Run() entirely. Called from main()'s top-level per-target
++    loop, every per-node wave inside build_nested_mde_network() (Stage 1),
++    and every node inside attach_lag_embeddings() (Stage 2), so caching
++    here covers all three at full per-node granularity for free.
++    `cache_stage` ('stage1' default, 'stage2' from attach_lag_embeddings())
++    keeps the two stages' cache files from ever colliding on the same
++    node name -- their candidate pools (and so their fingerprints) always
++    differ anyway, but distinct filenames also keep find_cached()'s glob
++    from scanning irrelevant entries.'''
+     mde_df = df[[target] + observable_columns].iloc[:prediction_start + prediction_length]
+ 
+     # expand_delay_columns() shifts each observable forward by abs(delay)
+@@ -1208,12 +1371,12 @@
+     warmup = max((abs(d) for d in delay_set), default=0)
+ 
+     fingerprint = None
+-    cache_filename = f'mde_selection_{target}.pkl'
++    cache_filename = f'mde_selection_{cache_stage}_{target}.pkl'
+     if reuse_cache:
+         fingerprint = build_mde_selection_fingerprint(
+             target, observable_columns, mde_d, tp, embed_dim_rho_min, cross_map_rho_min,
+             exclusion_radius, delay_set, prediction_start, prediction_length,
+-            data_file, data_file_sha256, code_fingerprint,
++            data_file, data_file_sha256, code_fingerprint, cache_stage,
+         )
+         hit = find_cached(prev_runs_dir, cache_filename, fingerprint,
+                            load_one=_load_pickle_cache_entry)
+@@ -1226,7 +1389,7 @@
+                 args=types.SimpleNamespace(lib=entry['lib'], pred=entry['pred'],
+                                             tau=entry['tau'], Tp=entry['Tp']),
+             )
+-            m.MDEOut.to_csv(results_dir / f'mde_output_{target}.csv', index=False)
++            m.MDEOut.to_csv(results_dir / f'mde_output_{cache_stage}_{target}.csv', index=False)
+             selected_columns = list(m.MDEcolumns)
+             print(f'MDE selected columns for {target}:', selected_columns, flush=True)
+             return {
+@@ -1241,7 +1404,11 @@
+     m = dx.MDE( mde_df, target = target, D = mde_d,
+                 removeColumns = [target],
+                 lib  = [warmup + 1, prediction_start],
+-                pred = [prediction_start + 1, prediction_start + prediction_length],
++                # -tp: the last validated row's own t+tp target label
++                # must land strictly before B (== prediction_start +
++                # prediction_length) -- see this function's LEAKAGE
++                # docstring.
++                pred = [prediction_start + 1, prediction_start + prediction_length - tp],
+                 Tp = tp,
+                 embedDimRhoMin = embed_dim_rho_min,
+                 crossMapRhoMin = cross_map_rho_min,
+@@ -1250,7 +1417,7 @@
+ 
+     m.Run()
+ 
+-    m.MDEOut.to_csv(results_dir / f'mde_output_{target}.csv', index=False)
++    m.MDEOut.to_csv(results_dir / f'mde_output_{cache_stage}_{target}.csv', index=False)
+ 
+     selected_columns = list(m.MDEcolumns)
+     print(f'MDE selected columns for {target}:', selected_columns, flush=True)
+@@ -1370,15 +1537,84 @@
+         return fallback
+ 
+ 
++def _accept_mde_result_edges(graph, edges, node, result, raw_columns):
++    '''Shared MDE-edge-acceptance rules -- self-loop guard, NaN marginal-
++    gain rejection, eager cycle rejection (see build_nested_mde_network()'s
++    docstring for the full rationale on each) -- applied to every column
++    run_mde_for_target() selected for `node`. Mutates `graph` (adds nodes/
++    edges, or removes a cycle-causing edge immediately after adding it)
++    and appends accepted rows to `edges` in place.
++
++    Used by both build_nested_mde_network() (Stage 1, real-observable-
++    only nested-MDE -- BFS-continues through delay=0 accepted drivers,
++    using the (driver, delay) pairs this returns) and
++    attach_lag_embeddings() (Stage 2, per-node lagged-embedding
++    attachment -- never recurses regardless of what this returns, since
++    Stage 1 alone owns backbone-node discovery). Kept as one function
++    rather than duplicated so the acyclicity/self-loop/NaN-rejection
++    rules can never drift between the two call sites.
++
++    Returns the list of (driver, delay) pairs actually accepted as edges
++    into `node` (in selection order).'''
++    accepted = []
++    cols = result['SELECTED_COLUMNS']
++    gains = np.diff(np.concatenate(([0.0], result['m'].MDErho)))
++
++    for col, gain in zip(cols, gains):
++        driver, delay = observable_and_delay(col, raw_columns)
++
++        if driver == node:
++            continue  # explicit self-loop guard (belt-and-suspenders)
++
++        if np.isnan(gain):
++            # Degenerate marginal-gain computation -- dead-end this
++            # specific edge (see build_nested_mde_network()'s docstring
++            # for why NaN weights can't just be added anyway).
++            print(f'MDE edge accept: rejected {driver} (delay {delay}) -> {node} '
++                  f'(marginal MDE rho gain is NaN -- treating as a dead-end edge)', flush=True)
++            continue
++
++        graph.add_node(driver)
++        key = graph.add_edge(driver, node, delay=delay, weight=gain)
++
++        if not nx.is_directed_acyclic_graph(graph):
++            graph.remove_edge(driver, node, key=key)
++            if graph.degree(driver) == 0:
++                graph.remove_node(driver)
++            print(f'MDE edge accept: rejected {driver} (delay {delay}) -> {node} '
++                  f'(would create a cycle)', flush=True)
++            continue
++
++        edges.append({'driver': driver, 'node': node, 'delay': delay, 'weight': gain})
++        accepted.append((driver, delay))
++
++    return accepted
++
++
+ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns,
+                               prediction_start, prediction_length, nested_n, nested_m,
+                               embed_dim_rho_min, cross_map_rho_min, exclusion_radius, cores,
+                               results_dir, mde_results, delay_set, tp=1,
+                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                               data_file=None, data_file_sha256=None, code_fingerprint=None):
+-    '''Nested-MDE network construction -- MODE='MDE-GMN' only. MODE='GMN'
+-    still uses the original CCM-across-the-full-observable-pool path in
+-    build_network(), untouched.
++    '''Stage 1 of two-stage nested-MDE network construction -- MODE='MDE-GMN'
++    only. MODE='GMN' still uses the original CCM-across-the-full-
++    observable-pool path in build_network(), untouched.
++
++    Per explicit direction, network construction is split into two
++    stages: this function builds the "main node" backbone DAG from
++    *real* (delay=0) observables only -- `expanded_df`/`expanded_columns`
++    are typically just the raw, unexpanded observable pool for this call
++    (build_network() passes delay_set=[] here), so num_delays below is
++    always 1 and every edge this function finds necessarily has delay=0.
++    attach_lag_embeddings() (Stage 2) runs afterward, once per node this
++    function discovers, to attach each node's own lagged-embedding
++    coordinates from the full observable universe -- see that function's
++    docstring. This function's own delay==0 nesting-continuation rule
++    (still present below, now trivially true against a delay-less pool)
++    is kept rather than special-cased away, so this function still works
++    unmodified if ever called with a delay-expanded pool directly (e.g.
++    for a future single-stage comparison run).
+ 
+     No notebook precedent: replaces "CCM over the union of each target's
+     MDE-selected columns" with an algorithm built purely from repeated
+@@ -1598,38 +1834,9 @@
+             result = wave_results[node]
+             nested_mde_results[node] = result
+ 
+-            cols = result['SELECTED_COLUMNS']
+-            gains = np.diff(np.concatenate(([0.0], result['m'].MDErho)))
+-
+-            for col, gain in zip(cols, gains):
+-                driver, delay = observable_and_delay(col, raw_columns)
+-
+-                if driver == node:
+-                    continue  # explicit self-loop guard (belt-and-suspenders)
+-
+-                if np.isnan(gain):
+-                    # Degenerate marginal-gain computation -- dead-end
+-                    # this specific edge without nesting further through
+-                    # it (see this function's docstring for why NaN
+-                    # weights can't just be added anyway).
+-                    print(f'nested MDE: rejected {driver} (delay {delay}) -> {node} '
+-                          f'(marginal MDE rho gain is NaN -- treating as a dead-end edge, '
+-                          f'no further nesting from this driver via this path)', flush=True)
+-                    continue
+-
+-                graph.add_node(driver)
+-                key = graph.add_edge(driver, node, delay=delay, weight=gain)
+-
+-                if not nx.is_directed_acyclic_graph(graph):
+-                    graph.remove_edge(driver, node, key=key)
+-                    if graph.degree(driver) == 0:
+-                        graph.remove_node(driver)
+-                    print(f'nested MDE: rejected {driver} (delay {delay}) -> {node} '
+-                          f'(would create a cycle)', flush=True)
+-                    continue
+-
+-                edges.append({'driver': driver, 'node': node, 'delay': delay, 'weight': gain})
++            accepted = _accept_mde_result_edges(graph, edges, node, result, raw_columns)
+ 
++            for driver, delay in accepted:
+                 # Only a delay=0 (contemporaneous) selection continues the
+                 # nested search -- see this function's docstring for why a
+                 # delayed coordinate is a terminal placeholder, not a new
+@@ -1653,43 +1860,142 @@
+     return graph, edges_df, nested_mde_results
+ 
+ 
++def attach_lag_embeddings(graph, raw_columns, df, prediction_start, prediction_length,
++                           stage2_n, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                           cores, results_dir, lag_set, stage2_allow_real_observables, tp=1,
++                           reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
++                           data_file=None, data_file_sha256=None, code_fingerprint=None):
++    '''Stage 2 of two-stage nested-MDE network construction (MODE='MDE-GMN'
++    only) -- attaches each Stage-1 node's own generalized (multi-lag)
++    embedding coordinates, per explicit direction. Runs exactly one
++    non-recursive dimx.MDE round per node already in `graph` (every node
++    Stage 1 -- build_nested_mde_network() -- discovered, targets
++    included). The candidate pool spans lag_set x *every* real observable
++    in `raw_columns` -- deliberately not restricted to just the node's
++    own real-observable identity's lags, per explicit direction, so a
++    node's best lagged predictor can come from any real observable in the
++    pool, not only ones Stage 1 already connected to it.
++
++    Never itself recurses -- Stage 1 alone owns which real observables
++    become backbone/"main" nodes (see build_nested_mde_network()'s
++    docstring). This holds even when stage2_allow_real_observables lets a
++    delay=0 (real-observable) column into this stage's own candidate
++    pool: such a driver is still accepted as a real edge (subject to the
++    same eager cycle-rejection every edge gets, via
++    _accept_mde_result_edges() -- acyclicity is a structural graph
++    property, not something restricted to one stage), it just never gets
++    enqueued for its own further MDE round the way a Stage-1 delay=0
++    selection would. stage2_allow_real_observables=False (default) keeps
++    Stage 2 lagged-columns-only, so Stage 1 remains the sole path by
++    which a real observable can become an expandable backbone node -- see
++    load_config()'s STAGE2_ALLOW_REAL_OBSERVABLES docstring for the full
++    rationale.
++
++    `lag_set` is the fully-resolved nonzero-delay list (derive_lag_set())
++    -- expanded into columns here (not by the caller) since Stage 2,
++    unlike Stage 1, always needs the delay-expanded pool regardless of
++    caller context. expand_delay_columns() always emits raw_columns
++    (delay=0) first, then the lag-shifted columns in order (see that
++    function's docstring), so slicing off the first len(raw_columns)
++    entries cleanly isolates the lagged-only candidates without needing
++    an observable_and_delay() scan.
++
++    LEAKAGE: identical lib/pred window (prediction_start/prediction_length
++    = the MDE validation segment [A, B), never the Generate/Forecast
++    segment [B, end)) as Stage 1 and every run_mde_for_target() call --
++    see that function's own LEAKAGE docstring; nothing about being Stage
++    2 changes that guarantee.
++
++    Mutates `graph` in place (the same MultiDiGraph Stage 1 built) and
++    returns edges_df (only the rows this call itself added, same
++    ['driver','node','delay','weight'] shape as
++    build_nested_mde_network()'s own return) for the caller to
++    concatenate/export alongside Stage 1's.'''
++    expanded_df, expanded_columns = expand_delay_columns(df, raw_columns, lag_set)
++    lag_only_columns = expanded_columns[len(raw_columns):]
++    candidate_universe = expanded_columns if stage2_allow_real_observables else lag_only_columns
++    num_delays = len(lag_set) + (1 if stage2_allow_real_observables else 0)
++
++    nodes = sorted(graph.nodes)
++    edges = []
++    if not nodes:
++        return pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
++
++    outer_workers = min(len(nodes), max(1, cores))
++    inner_cores = max(1, cores // outer_workers)
++    print(f'lag embedding (Stage 2): {len(nodes)} node(s) -- {outer_workers} parallel '
++          f'worker(s) x {inner_cores} core(s) each, candidate pool size '
++          f'{len(candidate_universe)} (lag_set={lag_set}, '
++          f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
++
++    results = {}
++    with ProcessPoolExecutor(max_workers=outer_workers,
++                              mp_context=mp.get_context('fork'),
++                              initializer=_mde_wave_worker_init) as executor:
++        futures = {}
++        for node in nodes:
++            candidate_pool = [c for c in candidate_universe
++                               if observable_and_delay(c, raw_columns)[0] != node]
++            effective_d = effective_mde_dimension(stage2_n, candidate_pool, num_delays)
++            fut = executor.submit(
++                run_mde_for_target, node, expanded_df, candidate_pool,
++                prediction_start, prediction_length, effective_d,
++                embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
++                inner_cores, results_dir, lag_set, tp,
++                reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
++                code_fingerprint, 'stage2',
++            )
++            futures[fut] = node
++        for fut in as_completed(futures):
++            results[futures[fut]] = fut.result()
++
++    for node in nodes:
++        _accept_mde_result_edges(graph, edges, node, results[node], raw_columns)
++
++    edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
++    print(f'lag embedding (Stage 2): {len(edges_df)} edges added across {len(nodes)} node(s) '
++          f'(N={stage2_n})', flush=True)
++    return edges_df
++
++
+ def build_network(targets, mde_results, df, prediction_start, prediction_length,
+                    mode, e_range, tau_range, results_dir, cores, interaction_matrix_outer_cores,
+                    observable_columns=None, nested_n=None, nested_m=None,
+                    embed_dim_rho_min=None, cross_map_rho_min=None, exclusion_radius=None,
+-                   expanded_df=None, expanded_observable_columns=None, delay_set=None, tp=1,
++                   lag_set=None, stage2_allow_real_observables=False, tp=1,
+                    threshold=0, fallback_node_dimension=4, max_node_dimension=15,
+                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                    data_file=None, data_file_sha256=None, code_fingerprint=None):
+     '''Build one network spanning `targets` and their driver candidates,
+     via one of two unrelated constructions depending on `mode`:
+-      - mode == 'MDE-GMN': build_nested_mde_network()'s own graph IS the
+-        final network, handed to gmn.GMN directly -- no
+-        apps.CreateNetwork() call. Per explicit direction: nested-MDE
+-        already does the network-discovery job CreateNetwork exists for
+-        (BFS out from targets, rejecting cycles as edges are proposed),
+-        using real MDE-driven edge selection, so re-deriving a network
+-        from an interaction matrix afterward would just be redundant
+-        work. Safe because gmn.Network only ever reads the pickled
+-        network file's 'Graph' entry (gmn/Network.py:43-46) via
+-        Graph.predecessors(node) (gmn/Node.py:104) -- the 'Map' entry
+-        CreateNetwork also writes is explicitly unused (that file's own
+-        comment) -- so a {'Graph': graph, 'Map': ...} pickle built
+-        directly from build_nested_mde_network()'s MultiDiGraph is
+-        exactly what CreateNetwork would have handed back anyway.
+-        observable_columns/nested_n/nested_m/embed_dim_rho_min/
+-        cross_map_rho_min/expanded_df/expanded_observable_columns/
+-        delay_set are required in this mode -- expanded_df/
+-        expanded_observable_columns are built once in main() via
+-        expand_delay_columns() (see build_nested_mde_network()'s
+-        docstring for why the search needs a delay-expanded pool rather
+-        than the raw `df`/`observable_columns`, which are still used
+-        as-is below for the real data every node actually simulates
+-        from). delay_set is stored on the returned graph
++      - mode == 'MDE-GMN': two-stage nested-MDE, no apps.CreateNetwork()
++        call. Stage 1 (build_nested_mde_network()) runs real-observable-
++        only nested-MDE straight against `df`/`observable_columns` (no
++        delay expansion -- delay_set=[] is passed in) to discover the
++        "main node" backbone DAG; Stage 2 (attach_lag_embeddings()) then
++        runs once per Stage-1 node to attach each node's own lagged-
++        embedding coordinates from `lag_set` x the whole observable
++        universe. Both stages mutate the *same* MultiDiGraph in place, so
++        the final graph -- handed to gmn.GMN directly -- already has
++        every edge from both by the time either function returns. Per
++        explicit direction: nested-MDE already does the network-discovery
++        job CreateNetwork exists for (BFS out from targets, rejecting
++        cycles as edges are proposed), using real MDE-driven edge
++        selection, so re-deriving a network from an interaction matrix
++        afterward would just be redundant work. Safe because gmn.Network
++        only ever reads the pickled network file's 'Graph' entry
++        (gmn/Network.py:43-46) via Graph.predecessors(node)
++        (gmn/Node.py:104) -- the 'Map' entry CreateNetwork also writes is
++        explicitly unused (that file's own comment) -- so a {'Graph':
++        graph, 'Map': ...} pickle built directly from this two-stage
++        MultiDiGraph is exactly what CreateNetwork would have handed back
++        anyway. observable_columns/nested_n/nested_m/embed_dim_rho_min/
++        cross_map_rho_min/lag_set are required in this mode.
++        lag_set is stored on the returned graph
+         (graph.graph['self_delay_set']) so gmn's own generalized-
+         embedding patches (see the module docstring) know which delays
+-        to always give each node's own self-history, regardless of
+-        what nested-MDE discovered for its external drivers.
++        to always give each node's own self-history, regardless of what
++        either nested-MDE stage discovered for its external drivers.
+         node_dimensions is NOT computed here (see gmn_fidelity_rho()'s
+         default_E fallback for its one remaining consumer).
+       - mode == 'GMN': the original CCM interaction matrix (data-driven
+@@ -1747,9 +2053,10 @@
+     if reuse_cache:
+         fingerprint = build_network_fingerprint(
+             mode, targets, observable_columns, nested_n, nested_m, tp,
+-            embed_dim_rho_min, cross_map_rho_min, exclusion_radius, delay_set,
++            embed_dim_rho_min, cross_map_rho_min, exclusion_radius, lag_set,
+             e_range, tau_range, prediction_start, prediction_length,
+             data_file, data_file_sha256, code_fingerprint,
++            stage2_allow_real_observables=stage2_allow_real_observables,
+         )
+         hit = find_cached(prev_runs_dir, cache_filename, fingerprint, load_one=_load_pickle_cache_entry)
+         if hit is not None:
+@@ -1764,22 +2071,41 @@
+         if cache_hit is not None:
+             graph = cache_hit['graph']
+         else:
++            # Stage 1: real-observable-only nested-MDE -- expanded_df/
++            # expanded_columns are just df/observable_columns unchanged
++            # (delay_set=[]), so num_delays inside build_nested_mde_network()
++            # resolves to 1 and every edge it finds necessarily has
++            # delay=0. See build_network()'s own docstring for the
++            # two-stage split.
+             graph, _, _ = build_nested_mde_network(
+-                targets, expanded_df, observable_columns, expanded_observable_columns,
++                targets, df, observable_columns, observable_columns,
+                 prediction_start, prediction_length,
+                 nested_n, nested_m, embed_dim_rho_min, cross_map_rho_min, exclusion_radius, cores,
+-                results_dir, mde_results, delay_set, tp,
++                results_dir, mde_results, [], tp,
+                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+                 code_fingerprint,
+             )
+-        # 0 is forced into self_delay_set regardless of DELAY_SET: gmn's
++            # Stage 2: attaches each Stage-1 node's own lagged-embedding
++            # coordinates in place onto the same graph -- see
++            # attach_lag_embeddings()'s docstring. Return value discarded
++            # (not `_,`) since the edges CSV below is rebuilt straight
++            # from `graph` regardless of which stage added which edge.
++            attach_lag_embeddings(
++                graph, observable_columns, df, prediction_start, prediction_length,
++                nested_n, embed_dim_rho_min, cross_map_rho_min, exclusion_radius, cores,
++                results_dir, lag_set, stage2_allow_real_observables, tp,
++                reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
++                code_fingerprint,
++            )
++        # 0 is forced into self_delay_set regardless of lag_set: gmn's
+         # own SMap target-lookup convention (Parameters.target + '(t-0)',
+         # mirrored by this pipeline's _generalized_node_forecast/Generate)
+         # requires a node's own present-value coordinate to exist in its
+         # embedding -- this isn't a driver delay choice, it's the anchor
+-        # point being predicted, so it can't be left out even if a user
+-        # configures a DELAY_SET without 0 in it.
+-        graph.graph['self_delay_set'] = sorted(set(delay_set) | {0}, reverse=True)
++        # point being predicted, so it can't be left out even if lag_set
++        # doesn't otherwise include 0 (it never does -- see
++        # derive_lag_set()'s own no-zero-entry convention).
++        graph.graph['self_delay_set'] = sorted(set(lag_set) | {0}, reverse=True)
+         selected_union = [n for n in graph.nodes if n not in targets]
+         # Rebuilt from the graph itself (rather than build_nested_mde_
+         # network()'s own returned edges_df) so this works identically on
+@@ -1803,9 +2129,18 @@
+                 if c not in selected_union:
+                     selected_union.append(c)
+ 
++    # Sliced to the *full* dataset (len(df), a no-op slice -- df is never
++    # pre-truncated by any caller), not prediction_start+prediction_length
++    # -- under the three-way A/B/end split (see load_config()'s
++    # docstring) that sum is only B (the MDE validation segment's own
++    # end), and Generate()/Forecast()/their diagnostics need real data
++    # all the way through end (the Generate/Forecast validation segment
++    # [B, end)) to score and plot against. Only run_mde_for_target()'s
++    # own `mde_df` needs to stay truncated at B -- see that function's
++    # LEAKAGE docstring.
+     data_after_mde = (
+         df[targets + selected_union]
+-        .iloc[:prediction_start + prediction_length]
++        .iloc[:len(df)]
+         .reset_index(drop=True)
+     )
+     data_after_mde.insert(0, 'Time', np.arange(len(data_after_mde)))
+@@ -2338,11 +2673,22 @@
+         'cross_map_rho_min': cfg['CROSS_MAP_RHO_MIN'],
+         'exclusion_radius': 'auto' if cfg['EXCLUSION_RADIUS_AUTO'] else cfg['EXCLUSION_RADIUS_VALUE'],
+         'gmn_exclusion_radius': cfg['GMN_EXCLUSION_RADIUS'],
++        'stage2_allow_real_observables': cfg['STAGE2_ALLOW_REAL_OBSERVABLES'],
+         'nested_m': cfg['NESTED_M'],
+         'region_channel_cap': cfg['REGION_CHANNEL_CAP'],
+         'lib_ratio': cfg['LIB_RATIO'],
+         'generate_length': cfg['GENERATE_LENGTH'],
+-        'delay_set': list(cfg['DELAY_SET']),
++        # LAG_SET (the fully-resolved list actually used, whichever of
++        # DELAY_SOURCE='explicit'/'lag_mode' produced it), NOT the raw
++        # DELAY_SET -- DELAY_SET alone is silently ignored under
++        # DELAY_SOURCE='lag_mode', so two runs with different LAG_MODE/
++        # LAG_DENSITY/LAG_STEP settings would otherwise fingerprint
++        # identically (same unused DELAY_SET default) despite the network
++        # actually being built from different lag sets -- exactly the
++        # "dangerous case" (a knob that changes output but isn't
++        # reflected in any fingerprint field) find_cached()'s own
++        # docstring warns against.
++        'lag_set': list(cfg['LAG_SET']),
+         'e_vals': list(cfg['E_RANGE']),
+         'tau_vals': list(cfg['TAU_RANGE']),
+         'theta_vals': list(cfg['THETA_RANGE']),
+@@ -2359,23 +2705,35 @@
+ def build_network_fingerprint(mode, targets, observable_columns, nested_n, nested_m, tp,
+                                embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                                delay_set, e_range, tau_range, prediction_start,
+-                               prediction_length, data_file, data_file_sha256, code_fingerprint):
++                               prediction_length, data_file, data_file_sha256, code_fingerprint,
++                               stage2_allow_real_observables=False):
+     '''Everything that determines one group's network-construction outcome
+-    (build_nested_mde_network(), or the CCM/apps.CreateNetwork path for
+-    MODE='GMN') -- unlike build_search_fingerprint() above, computable
+-    *before* that construction runs, since the whole point is deciding
+-    whether to skip it. Takes build_network()'s own already-resolved
+-    parameters directly (e.g. `observable_columns` -- REGION_CHANNEL_CAP's
+-    effect is already fully captured by exactly which channels ended up
+-    in that list, so the raw cap number doesn't need its own field; same
+-    for LIB_RATIO via prediction_start/prediction_length) rather than raw
+-    cfg knobs, so this needs no `cfg` dependency. Skips
+-    build_search_fingerprint()'s network_nodes sanity check (nothing
+-    built yet to check) and GMN_MODE (irrelevant to one already-resolved
+-    `targets` group's own topology -- see target_groups_for_mode()).
+-    'stage' is what keeps this from ever being confused with a
+-    theta_search/mde_selection fingerprint even if the remaining fields
+-    happened to collide.'''
++    (build_nested_mde_network() Stage 1 + attach_lag_embeddings() Stage 2,
++    or the CCM/apps.CreateNetwork path for MODE='GMN') -- unlike
++    build_search_fingerprint() above, computable *before* that
++    construction runs, since the whole point is deciding whether to skip
++    it. Takes build_network()'s own already-resolved parameters directly
++    (e.g. `observable_columns` -- REGION_CHANNEL_CAP's effect is already
++    fully captured by exactly which channels ended up in that list, so
++    the raw cap number doesn't need its own field; same for LIB_RATIO/
++    MDE_VALIDATION_RATIO via prediction_start/prediction_length) rather
++    than raw cfg knobs, so this needs no `cfg` dependency. `delay_set`
++    here is Stage 2's own fully-*resolved* nonzero-delay list (whatever
++    DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP produced, or the explicit
++    MDE_GMN_DELAY_SET list) -- since it's the resolved list rather than
++    the raw toggle settings, two different toggle combinations that
++    happen to resolve to the identical list are (correctly) treated as
++    the identical network-construction input; no separate field is
++    needed for the toggles themselves. `stage2_allow_real_observables`
++    IS its own separate field regardless, since it's an independent
++    structural choice (whether Stage 2's candidate pool also includes
++    delay=0 columns) that the resolved delay_set list alone can't imply.
++    Skips build_search_fingerprint()'s network_nodes sanity check
++    (nothing built yet to check) and GMN_MODE (irrelevant to one
++    already-resolved `targets` group's own topology -- see
++    target_groups_for_mode()). 'stage' is what keeps this from ever being
++    confused with a theta_search/mde_selection fingerprint even if the
++    remaining fields happened to collide.'''
+     return {
+         'mode': mode,
+         'targets': sorted(targets),
+@@ -2387,6 +2745,7 @@
+         'cross_map_rho_min': cross_map_rho_min,
+         'exclusion_radius': exclusion_radius,
+         'delay_set': list(delay_set) if delay_set is not None else None,
++        'stage2_allow_real_observables': stage2_allow_real_observables,
+         'e_vals': list(e_range),
+         'tau_vals': list(tau_range),
+         'prediction_start': prediction_start,
+@@ -2401,7 +2760,8 @@
+ def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_rho_min,
+                                      cross_map_rho_min, exclusion_radius, delay_set,
+                                      prediction_start, prediction_length,
+-                                     data_file, data_file_sha256, code_fingerprint):
++                                     data_file, data_file_sha256, code_fingerprint,
++                                     cache_stage='stage1'):
+     '''Everything that determines one run_mde_for_target() call's outcome,
+     computable before that call runs. `candidate_pool` is the exact
+     (possibly delay-expanded) column list dx.MDE searched over, kept in
+@@ -2412,7 +2772,11 @@
+     does) since run_mde_for_target() itself has no visibility into
+     EXCLUSION_RADIUS_AUTO -- see that function's own docstring on why the
+     argument is a harmless placeholder in AUTO mode; at worst this costs
+-    an occasional unnecessary cache miss, never an incorrect hit.'''
++    an occasional unnecessary cache miss, never an incorrect hit.
++    `cache_stage` ('stage1'/'stage2') folds into 'stage' below -- belt-
++    and-suspenders alongside the two stages' already-distinct cache
++    filenames (see run_mde_for_target()'s own docstring) and their
++    naturally-different `candidate_pool` content.'''
+     return {
+         'node': node,
+         'candidate_pool': list(candidate_pool),
+@@ -2427,7 +2791,7 @@
+         'data_file': data_file,
+         'data_file_sha256': data_file_sha256,
+         'code_fingerprint': code_fingerprint,
+-        'stage': 'mde_selection',
++        'stage': f'mde_selection_{cache_stage}',
+     }
+ 
+ 
+@@ -2589,15 +2953,23 @@
+ 
+ def evaluate_smap_candidate(net_result, prediction_start, prediction_length,
+                              node_theta, variant, results_dir, cores,
+-                             generate_length=None, generate_start=None, exclusion_radius=0):
++                             generate_length=None, generate_start=None, exclusion_radius=0,
++                             generate_validation_start=None):
+     '''Runs one Generate() call and scores it as mean rho, across
+     `net_result['targets']` only (not every driver node), between the
+     simulated and real held-out series -- this is "generative skill" as
+     this pipeline defines it everywhere: the theta search
+     (run_theta_search) and the start-point sweep (sweep_generate_start)
+     both call this same function, at the same objective, so a search
+-    over either axis is comparable to the other.'''
+-    generate_start = generate_start if generate_start is not None else prediction_start
++    over either axis is comparable to the other.
++
++    generate_start defaults to generate_validation_start (== cfg's B --
++    the start of the Generate/Forecast validation segment, load_config()'s
++    three-way A/B/end split docstring), NOT prediction_start (== A, the
++    MDE validation segment's own start) -- a Generate() call scored here
++    must never launch from inside the segment MDE's own driver selection
++    already validated against.'''
++    generate_start = generate_start if generate_start is not None else generate_validation_start
+     config_file = build_gmn_config(
+         net_result, prediction_start, prediction_length, results_dir,
+         mode='Generate', node_theta_overrides=node_theta,
+@@ -2623,7 +2995,8 @@
+ 
+ def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range, results_dir,
+                       cores, generate_length=None, reuse_best_params=False, prev_runs_dir=None,
+-                      run_cache_dir=None, fingerprints=None, exclusion_radius=0):
++                      run_cache_dir=None, fingerprints=None, exclusion_radius=0,
++                      generate_validation_start=None):
+     '''Retunes each network's per-node theta once
+     (retune_theta_for_all_nodes()), then scores the result with a single
+     Generate() call -- replacing this pipeline's old combined (E, tau,
+@@ -2679,6 +3052,7 @@
+                 net_result, prediction_start, prediction_length, best_node_theta,
+                 'theta_search', results_dir, cores, generate_length=generate_length,
+                 exclusion_radius=exclusion_radius,
++                generate_validation_start=generate_validation_start,
+             )
+             print(f'{network_id}: theta search score={score:.4f}', flush=True)
+         except Exception as exc:
+@@ -2725,7 +3099,7 @@
+ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, prediction_length,
+                           results_dir, cores, generate_length, start_offsets, exclusion_radius=0,
+                           reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+-                          fingerprints=None):
++                          fingerprints=None, generate_validation_start=None):
+     '''Finds, per network, which row Generate() should start free-running
+     from to best match the real held-out data -- at the per-node theta
+     run_theta_search() already chose, not re-searched here (E and each
+@@ -2738,8 +3112,11 @@
+     best model."
+ 
+     One evaluate_smap_candidate() call per offset in `start_offsets`
+-    (each offset a row count added to prediction_start), scored on the
+-    exact same mean-rho-across-targets objective the theta search uses
++    (each offset a row count added to generate_validation_start -- see
++    load_config()'s three-way A/B/end split docstring; never
++    prediction_start, which anchors the unrelated MDE validation
++    segment), scored on the exact same mean-rho-across-targets objective
++    the theta search uses
+     -- see that function's docstring. Checkpoints to disk after every
+     offset (same resume pattern as run_theta_search's cache) since each
+     candidate is its own full Generate() call and this shouldn't have to
+@@ -2762,7 +3139,7 @@
+     best_starts = {}
+     for network_id, run in gmn_runs.items():
+         if len(start_offsets) == 1:
+-            best_starts[network_id] = prediction_start + start_offsets[0]
++            best_starts[network_id] = generate_validation_start + start_offsets[0]
+             continue
+ 
+         net_result = run['net_result']
+@@ -2780,7 +3157,7 @@
+                 entry, source = hit
+                 scores = {int(k): v for k, v in entry['scores'].items()}
+                 best_offset = entry['best_offset']
+-                best_starts[network_id] = prediction_start + best_offset
++                best_starts[network_id] = generate_validation_start + best_offset
+                 print(f'{network_id}: MDE_GMN_REUSE_BEST_PARAMS matched cached start sweep '
+                       f'{source} -- skipping sweep entirely (best offset {best_offset}, '
+                       f'score={scores.get(best_offset, float("nan")):.4f})', flush=True)
+@@ -2788,7 +3165,7 @@
+                 fig, ax = plt.subplots(figsize=(7, 4))
+                 ax.plot(start_offsets, [scores.get(o, np.nan) for o in start_offsets], marker='o')
+                 ax.axvline(best_offset, color='gray', ls='--', lw=0.8)
+-                ax.set_xlabel('Start offset from PREDICTION_START (rows)')
++                ax.set_xlabel('Start offset from GENERATE_VALIDATION_START (rows)')
+                 ax.set_ylabel('Generate() rho (mean over targets)')
+                 ax.set_title(f'Generate() start-point sweep -- {network_id} (cached)')
+                 fig.tight_layout()
+@@ -2813,7 +3190,7 @@
+             if offset in scores and not np.isnan(scores[offset]):
+                 continue
+ 
+-            generate_start = prediction_start + offset
++            generate_start = generate_validation_start + offset
+             try:
+                 score, _, _ = evaluate_smap_candidate(
+                     net_result, prediction_start, prediction_length,
+@@ -2837,7 +3214,7 @@
+ 
+         valid_offsets = [o for o in start_offsets if not np.isnan(scores.get(o, np.nan))]
+         best_offset = max(valid_offsets, key=lambda o: scores[o]) if valid_offsets else start_offsets[0]
+-        best_starts[network_id] = prediction_start + best_offset
++        best_starts[network_id] = generate_validation_start + best_offset
+         print(f'{network_id}: best generate start = row {best_starts[network_id]} '
+               f'(offset {best_offset}, score={scores.get(best_offset, float("nan")):.4f})', flush=True)
+ 
+@@ -2857,7 +3234,7 @@
+         fig, ax = plt.subplots(figsize=(7, 4))
+         ax.plot(start_offsets, [scores.get(o, np.nan) for o in start_offsets], marker='o')
+         ax.axvline(best_offset, color='gray', ls='--', lw=0.8)
+-        ax.set_xlabel('Start offset from PREDICTION_START (rows)')
++        ax.set_xlabel('Start offset from GENERATE_VALIDATION_START (rows)')
+         ax.set_ylabel('Generate() rho (mean over targets)')
+         ax.set_title(f'Generate() start-point sweep -- {network_id}')
+         fig.tight_layout()
+@@ -2874,11 +3251,14 @@
+ 
+ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, prediction_length,
+                             results_dir, cores, generate_length=None, generate_starts=None,
+-                            exclusion_radius=0):
++                            exclusion_radius=0, generate_validation_start=None):
+     '''Reruns Generate() at the winning per-node theta found by
+     run_theta_search(), and the winning start row found by
+-    sweep_generate_start() (generate_starts; defaults to prediction_start
+-    per network when None). Plotting is deliberately NOT done here -- it
++    sweep_generate_start() (generate_starts; defaults to
++    generate_validation_start -- the Generate/Forecast validation
++    segment's own start, load_config()'s three-way A/B/end split
++    docstring -- per network when None). Plotting is deliberately NOT
++    done here -- it
+     used to draw its own actual-vs-Generate() figure, but that was a
+     strict subset of run_forecast_diagnostic()'s own actual-vs-
+     Generate()-vs-Forecast() figure (same two of its three lines, same
+@@ -2905,7 +3285,7 @@
+     for network_id, run in gmn_runs.items():
+         net_result = run['net_result']
+         node_theta = theta_search_results[network_id]['best_node_theta']
+-        generate_start = generate_starts[network_id] if generate_starts else prediction_start
++        generate_start = generate_starts[network_id] if generate_starts else generate_validation_start
+ 
+         try:
+             config_file = build_gmn_config(
+@@ -2945,14 +3325,18 @@
+ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
+                              node_theta, results_dir, cores, save_path,
+                              generate_length=None, generate_start=None, nodes_per_figure=10,
+-                             exclusion_radius=0, plot_range_mode='full'):
++                             exclusion_radius=0, plot_range_mode='full',
++                             generate_validation_start=None, total_rows=None):
+     '''Runs the Forecast() diagnostic and draws the one actual-vs-
+     Generate()-vs-Forecast() figure for this network (see
+     rebuild_at_best_params()'s docstring for why there's only one figure
+     here rather than a separate Generate()-only one).
+ 
+-    generate_start (defaults to prediction_start when None) anchors both
+-    Forecast()'s own pred window and the plotted window to the same row
++    generate_start (defaults to generate_validation_start when None --
++    the Generate/Forecast validation segment's own start, load_config()'s
++    three-way A/B/end split docstring, never prediction_start) anchors
++    both Forecast()'s own pred window and the plotted window to the same
++    row
+     sweep_generate_start() picked for G's own Generate() run -- so all
+     three lines on the figure (actual, Generate(), Forecast()) describe
+     the same starting point, "to be consistent with the generative mode."
+@@ -2979,8 +3363,7 @@
+         2*generate_length rows before it (actual/lib only -- Generate()
+         never ran that far back) and 2*generate_length rows after it,
+         clamped to the data actually available (can't plot before row 0,
+-        and can't plot past this network's held-out
+-        prediction_start+prediction_length rows -- see actual_df's own
++        and can't plot past total_rows -- see actual_df's own
+         construction in build_network()). Forecast() (this function's own
+         call, independent of Generate()'s own generate_length -- Forecast
+         is a direct per-row SMap prediction against real held-out
+@@ -3021,8 +3404,15 @@
+     every other, unrelated network in the same job. Callers must check
+     for a None first return value before using it.'''
+     generate_length = generate_length if generate_length is not None else prediction_length
+-    generate_start = generate_start if generate_start is not None else prediction_start
+-    total_rows = prediction_start + prediction_length  # == len(actual_df) -- see build_network()
++    generate_start = generate_start if generate_start is not None else generate_validation_start
++    # total_rows must be the *full* dataset length (len(df), passed in by
++    # the caller), not prediction_start+prediction_length -- under the
++    # three-way A/B/end split (load_config()'s docstring) that sum is
++    # only B (the MDE validation segment's own end); actual_df (loaded
++    # from net_result['DATA_AFTER_MDE'], see build_network()'s own fix to
++    # that slicing) spans all the way to end, and 'windowed' mode below
++    # needs the real row count to clamp against, not the shorter MDE-only
++    # window.
+ 
+     if plot_range_mode == 'windowed':
+         forecast_compute_length = min(2 * generate_length, max(total_rows - generate_start, 0))
+@@ -3269,25 +3659,34 @@
+     df = pd.read_csv(cfg['DATA_DIR'] / cfg['DATA_FILE'])
+     print('Data shape:', df.shape, flush=True)
+ 
+-    cfg['PREDICTION_START'] = int(round(len(df) * cfg['LIB_RATIO']))
+-    cfg['PREDICTION_LENGTH'] = len(df) - cfg['PREDICTION_START']
+-
+-    # Resolve GENERATE_LENGTH now that PREDICTION_LENGTH is known: 0
+-    # (unset) means "use the full held-out window", and anything
+-    # requesting more steps than there is real held-out data to score
+-    # against gets clamped down to it (see load_config()'s docstring).
++    # Three-way A/B/end split -- see load_config()'s docstring for the
++    # full rationale (MDE construction must never see, or leak into, the
++    # Generate/Forecast validation segment).
++    cfg['PREDICTION_START'] = int(round(len(df) * cfg['LIB_RATIO']))                          # A
++    post_lib_remainder = len(df) - cfg['PREDICTION_START']
++    cfg['PREDICTION_LENGTH'] = int(round(post_lib_remainder * cfg['MDE_VALIDATION_RATIO']))   # B - A
++    cfg['GENERATE_VALIDATION_START'] = cfg['PREDICTION_START'] + cfg['PREDICTION_LENGTH']     # B
++    cfg['GENERATE_VALIDATION_LENGTH'] = len(df) - cfg['GENERATE_VALIDATION_START']            # end - B
++
++    # Resolve GENERATE_LENGTH now that GENERATE_VALIDATION_LENGTH is
++    # known: 0 (unset) means "use the entire Generate/Forecast validation
++    # segment", and anything requesting more steps than that segment has
++    # gets clamped down to it (see load_config()'s docstring).
+     if cfg['GENERATE_LENGTH'] <= 0:
+-        cfg['GENERATE_LENGTH'] = cfg['PREDICTION_LENGTH']
+-    elif cfg['GENERATE_LENGTH'] > cfg['PREDICTION_LENGTH']:
+-        print(f"GENERATE_LENGTH={cfg['GENERATE_LENGTH']} exceeds the held-out window "
+-              f"({cfg['PREDICTION_LENGTH']} rows); clamping to it.", flush=True)
+-        cfg['GENERATE_LENGTH'] = cfg['PREDICTION_LENGTH']
++        cfg['GENERATE_LENGTH'] = cfg['GENERATE_VALIDATION_LENGTH']
++    elif cfg['GENERATE_LENGTH'] > cfg['GENERATE_VALIDATION_LENGTH']:
++        print(f"GENERATE_LENGTH={cfg['GENERATE_LENGTH']} exceeds the Generate/Forecast "
++              f"validation segment ({cfg['GENERATE_VALIDATION_LENGTH']} rows); clamping "
++              f"to it.", flush=True)
++        cfg['GENERATE_LENGTH'] = cfg['GENERATE_VALIDATION_LENGTH']
+ 
+     # Resolve the generate-start sweep's candidate offsets now that
+-    # PREDICTION_LENGTH/GENERATE_LENGTH are known: drop any offset that
+-    # would leave too little real data to score GENERATE_LENGTH steps
+-    # against (see load_config()'s docstring on GENERATE_START_MAX_OFFSET).
+-    max_feasible_offset = cfg['PREDICTION_LENGTH'] - cfg['GENERATE_LENGTH']
++    # GENERATE_VALIDATION_LENGTH/GENERATE_LENGTH are known: offsets are
++    # rows added to GENERATE_VALIDATION_START (B), not PREDICTION_START
++    # (A) -- see load_config()'s three-way split docstring -- dropping
++    # any offset that would leave too little real data to score
++    # GENERATE_LENGTH steps against.
++    max_feasible_offset = cfg['GENERATE_VALIDATION_LENGTH'] - cfg['GENERATE_LENGTH']
+     start_offsets = list(range(cfg['GENERATE_START_MIN_OFFSET'], cfg['GENERATE_START_MAX_OFFSET'],
+                                 cfg['GENERATE_START_STEP']))
+     feasible_offsets = [o for o in start_offsets if 0 <= o <= max_feasible_offset]
+@@ -3296,6 +3695,15 @@
+               f'range [0, {max_feasible_offset}]; using {feasible_offsets} instead.', flush=True)
+     cfg['GENERATE_START_OFFSETS'] = feasible_offsets or [0]
+ 
++    # Resolve Stage 2's / self_delay_set's nonzero-delay list now that
++    # PREDICTION_START (the MDE library's own size, for LAG_MODE=
++    # every_lag_possible) and GENERATE_LENGTH (for LAG_MODE=
++    # generation_length_adjusted) are both known.
++    cfg['LAG_SET'] = derive_lag_set(
++        cfg['DELAY_SOURCE'], cfg['DELAY_SET'], cfg['LAG_MODE'], cfg['LAG_DENSITY'], cfg['LAG_STEP'],
++        cfg['GENERATE_LENGTH'], cfg['PREDICTION_START'],
++    )
++
+     print('Config:', {k: v for k, v in cfg.items() if k != 'TARGET_COLORS'}, flush=True)
+ 
+     obs_cols = observable_columns(df, cfg['REGION_CHANNEL_CAP'])
+@@ -3315,24 +3723,22 @@
+ 
+     # ---- MDE (or its full-channel-pool stand-in for MODE='GMN') -------
+     mde_results = {}
+-    expanded_df = expanded_obs_cols = None  # MDE-GMN only -- see below
+     if cfg['MODE'] == 'MDE-GMN':
+-        # Built once, shared by every depth-0 target below and by
+-        # build_nested_mde_network()'s own nested calls (via build_network()
+-        # -- see expand_delay_columns()'s and build_nested_mde_network()'s
+-        # docstrings) -- both need to search the exact same delay-expanded
+-        # candidate pool for the depth-0 reuse (build_nested_mde_network's
+-        # own docstring) to be valid.
+-        expanded_df, expanded_obs_cols = expand_delay_columns(df, obs_cols, cfg['DELAY_SET'])
+-
++        # Stage 1 seed: real-observable-only MDE, no delay expansion --
++        # matches build_nested_mde_network()'s own Stage-1 candidate pool
++        # exactly (raw df/obs_cols, delay_set=[]), so its depth-0 reuse of
++        # this result stays valid (same candidate_pool/effective_d/
++        # fingerprint either way) -- see build_network()'s docstring for
++        # the two-stage split, and derive_lag_set()/attach_lag_embeddings()
++        # for Stage 2, which builds its own delay-expanded pool
++        # separately.
+         for target in cfg['TARGETS']:
+-            candidate_pool = [c for c in expanded_obs_cols
+-                              if observable_and_delay(c, obs_cols)[0] != target]
+-            effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, len(cfg['DELAY_SET']))
++            candidate_pool = [c for c in obs_cols if c != target]
++            effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
+             mde_results[target] = run_mde_for_target(
+-                target, expanded_df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
++                target, df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+                 effective_d, cfg['EMBED_DIM_RHO_MIN'], cfg['CROSS_MAP_RHO_MIN'],
+-                cfg['EXCLUSION_RADIUS_VALUE'], cfg['CORES'], cfg['RESULTS_DIR'], cfg['DELAY_SET'],
++                cfg['EXCLUSION_RADIUS_VALUE'], cfg['CORES'], cfg['RESULTS_DIR'], [],
+                 tp=cfg['TP'],
+                 reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
+                 run_cache_dir=cfg['RUN_CACHE_DIR'],
+@@ -3366,8 +3772,8 @@
+             observable_columns=obs_cols, nested_n=cfg['MDE_D'], nested_m=cfg['NESTED_M'],
+             embed_dim_rho_min=cfg['EMBED_DIM_RHO_MIN'], cross_map_rho_min=cfg['CROSS_MAP_RHO_MIN'],
+             exclusion_radius=cfg['EXCLUSION_RADIUS_VALUE'],
+-            expanded_df=expanded_df, expanded_observable_columns=expanded_obs_cols,
+-            delay_set=cfg['DELAY_SET'], tp=cfg['TP'],
++            lag_set=cfg['LAG_SET'], stage2_allow_real_observables=cfg['STAGE2_ALLOW_REAL_OBSERVABLES'],
++            tp=cfg['TP'],
+             reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
+             run_cache_dir=cfg['RUN_CACHE_DIR'],
+             data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
+@@ -3393,6 +3799,7 @@
+         reuse_best_params=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
+         run_cache_dir=cfg['RUN_CACHE_DIR'],
+         fingerprints=fingerprints, exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
++        generate_validation_start=cfg['GENERATE_VALIDATION_START'],
+     )
+ 
+     generate_starts = sweep_generate_start(
+@@ -3401,6 +3808,7 @@
+         exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
+         reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
+         run_cache_dir=cfg['RUN_CACHE_DIR'], fingerprints=fingerprints,
++        generate_validation_start=cfg['GENERATE_VALIDATION_START'],
+     )
+ 
+     rebuild_at_best_params(
+@@ -3408,6 +3816,7 @@
+         cfg['RESULTS_DIR'], cfg['CORES'],
+         generate_length=cfg['GENERATE_LENGTH'], generate_starts=generate_starts,
+         exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
++        generate_validation_start=cfg['GENERATE_VALIDATION_START'],
+     )
+ 
+     for network_id, run in gmn_runs.items():
+@@ -3427,6 +3836,7 @@
+             generate_length=cfg['GENERATE_LENGTH'], generate_start=run['generate_start'],
+             exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
+             plot_range_mode=cfg['FORECAST_PLOT_RANGE'],
++            generate_validation_start=cfg['GENERATE_VALIDATION_START'], total_rows=len(df),
+         )
+         run['Gf'] = Gf
+         run['forecast_rho'] = forecast_rho
+```
+
+---
+
+
 ## Job 36969861
 
 Generated: 2026-08-10T01:21:32+09:00
