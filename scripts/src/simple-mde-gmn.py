@@ -164,28 +164,78 @@ def _embedding_spec_for(graph, node_name):
     any gmn.GMN object exists).
 
     MultiDiGraph (MODE='MDE-GMN', built by build_nested_mde_network()):
-    self always gets the full self_delay_set (graph.graph['self_delay_set'],
-    set once in build_network()) regardless of how many external drivers
-    nested-MDE found for this node -- the same unconditional fallback a
-    driverless leaf node already needed, just now built from the same
-    delay machinery as everything else rather than a special case. Each
-    real in-edge contributes one coordinate at that edge's own
-    discovered delay (see build_nested_mde_network()'s docstring for why
-    the same driver can appear more than once, at different delays).
+    R14 (docs/review-actions-v1.md), corrected after this pipeline's own
+    R14 test found the original "built only from discovered drivers"
+    framing doesn't survive contact with pyEDM: self no longer
+    unconditionally gets the FULL self_delay_set (the deep lags -- t-1,
+    t-3, t-5, ... -- that used to ride along regardless of what nested-MDE
+    actually found) -- those are removed. But self ALWAYS keeps its own
+    delay=0 "anchor" coordinate unconditionally, on every node, for two
+    reasons that are both load-bearing, not cosmetic: (1) gmn's own SMap
+    call sets `target = node_name + '(t-0)'`, which pyEDM requires to
+    exist as an actual column in the embedded dataframe regardless of
+    what the predictor `columns` are -- with no self-anchor and no
+    in-edge ever able to supply it (self-loops are excluded, see
+    _accept_mde_result_edges()'s docstring), every interior node would
+    have no target column at all and pyEDM would raise outright, not just
+    on a small-driver-count edge case; (2) this is also standard
+    generalized-embedding practice, not merely a workaround -- a node's
+    own present value is conventionally one of its own state-space
+    coordinates alongside whichever other coordinates come from selected
+    drivers (the classic Takens embedding is literally E lags of a
+    variable's own history; substituting some of those coordinates for
+    other variables' lags, per Deyle & Sugihara's generalized embedding,
+    doesn't mean dropping the variable's own present-value coordinate
+    too). So: self(t-0) unconditional (double duty as both the SMap
+    target and a real predictor coordinate -- not excluded from
+    `columns`), plus one coordinate per discovered driver in-edge at that
+    edge's own delay; deeper self-lags are admissible only when
+    nested-MDE genuinely selects them as an actual driver (i.e., appear
+    only via an in-edge, never via an unconditional default). See
+    partition_network()'s docstring for the interior (>=1 driver) vs.
+    external-input (0 drivers) split this enables, and
+    EXTERNAL_INPUT_MODE's own load_config() docstring for what happens to
+    a zero-driver node: under 'self_simulate' it reaches this function
+    normally and, having no in-edges by definition, ends up with the
+    anchor-only spec [(node_name, 0)] -- no special-casing needed here,
+    the same formula below already produces that; under the 'real_data'
+    default, such a node never reaches this function at all --
+    _generalized_node_generate()/_generalized_node_forecast() short-circuit
+    it before any embedding is built, and _generalized_node_init() skips
+    the libEnd_i correction below that would otherwise need a spec to
+    exist at all.
+
+    On the historical "leaf duplicate" degeneracy this decision's
+    rationale originally cited (a real observable B and "a lagged copy of
+    B" ending up as two separate zero-driver nodes with identical
+    embeddings): confirmed against _accept_mde_result_edges() and
+    observable_and_delay() that this does not describe this graph.
+    observable_and_delay() always resolves a candidate column back to its
+    RAW observable name (delay lives separately), and
+    _accept_mde_result_edges() calls graph.add_node(driver) using only
+    that raw name -- so there is exactly one graph node per raw
+    observable regardless of how many different delays reference it; "a
+    lagged copy of B" is never a second node, only a (B, some-negative-
+    delay) edge into whatever node selected it. The surviving
+    justification for partitioning out zero-driver nodes is simpler and
+    still correct on its own: a zero-driver node isn't something
+    nested-MDE discovered as a network member at all, so counting it as
+    an interior (simulated) node overstates what was actually found.
 
     Plain DiGraph (MODE='GMN', from apps.CreateNetwork -- no per-edge
     delay data exists in that mode at all): falls back to the original
     uniform E-lagged-copies-of-every-column scheme, using
     graph.graph['fallback_E']/['fallback_tau'] (set in build_network()
     from that mode's own CCM E/tau grid search) in place of a per-node
-    nested-MDE result it doesn't have.
+    nested-MDE result it doesn't have. R14 doesn't touch this branch --
+    MODE='GMN' never runs build_nested_mde_network() at all, so it has
+    no nested-MDE "discovered driver" concept to partition on.
 
     Either way, this is what replaced gmn's own Embed(E, tau, columns)
     call -- see _generalized_embed()'s docstring -- since a single
     uniform (E, tau) can't express a per-driver, per-delay embedding.'''
     if isinstance(graph, nx.MultiDiGraph):
-        self_delays = graph.graph.get('self_delay_set', [0])
-        spec = [(node_name, d) for d in self_delays]
+        spec = [(node_name, 0)]
         spec += [(u, data['delay']) for u, v, data in graph.in_edges(node_name, data=True)]
     else:
         E = graph.graph.get('fallback_E', 3)
@@ -201,7 +251,13 @@ def network_max_embedding_offset(graph):
     the old shared (E, tau)), this is used by build_gmn_config()'s
     Forecast mode to size a single, network-wide lib/pred window that
     stays valid for every node (see that function's docstring for the
-    row-alignment tradeoff this implies for lower-offset nodes).'''
+    row-alignment tradeoff this implies for lower-offset nodes). Still
+    safe post-R14: self_max stays an upper bound on any node's real
+    offset even though interior nodes no longer unconditionally carry
+    self_delay_set themselves (their own in-edge delays are,
+    structurally, never deeper than the delays self_delay_set/LAG_SET
+    already span) -- this can only over-count, never under-count, so the
+    window stays valid.'''
     if isinstance(graph, nx.MultiDiGraph):
         self_delays = graph.graph.get('self_delay_set', [0])
         self_max = max(abs(d) for d in self_delays)
@@ -257,9 +313,21 @@ def _generalized_node_init(self, args, Network, nodeName):
     meant to reflect that original library size before any values get
     appended during a Generate() run (gmn/Node.py's own docstring: "the
     data library is limited to Parameters.predictionStart... does not
-    grow") -- not something to recompute on every later call.'''
+    grow") -- not something to recompute on every later call.
+
+    R14: skipped entirely for a real-data-mode external input (see
+    partition_network()'s docstring) -- such a node has no generalized
+    embedding at all (_embedding_spec_for() is never reached for it; its
+    Generate()/Forecast() short-circuit to a real-data passthrough), so
+    there is no spec to size libEnd_i from. `_real_node_init`'s own
+    (otherwise-uncorrected) formula is left in place; it's inert dead
+    data for a node that never runs an SMap/Embed call.'''
     _real_node_init(self, args, Network, nodeName)
     if self.FunctionType == FunctionType.SMap:
+        graph = Network.Graph
+        is_external = nodeName in graph.graph.get('external_inputs', set())
+        if is_external and graph.graph.get('external_input_mode', 'real_data') == 'real_data':
+            return
         spec = _node_embedding_spec(self)
         offset = max(abs(delay) for _, delay in spec)
         self.libEnd_i = self.data.shape[0] - offset
@@ -303,10 +371,40 @@ def _generalized_node_forecast(self):
     silently change behavior for a future non-SMap node). Monkeypatched
     onto gmn.Node (gmn/__init__.py's `from .Node import Node` shadows the
     submodule name with the class) rather than editing the installed
-    package, so this script stays self-contained on other machines.'''
+    package, so this script stays self-contained on other machines.
+
+    R14: a real-data-mode external input (see partition_network()'s
+    docstring) short-circuits here too, before any SMap/embedding logic.
+    Forecast()'s own one-step-ahead skill metric is meaningless for a
+    variable this network doesn't predict at all (self.data is already
+    fully real throughout Forecast mode -- no iterative lastDataOut
+    feeding, unlike Generate() -- so there is nothing to "forecast" here
+    beyond the real series itself). Returns (time, real values) as a
+    trivial passthrough, matching Forecast()'s own (time, predictions)
+    return shape, so gmn's per-node Forecast loop (which iterates every
+    graph node structurally, with no partition awareness of its own)
+    doesn't crash on an empty embedding spec.
+
+    Also fixes a pre-existing `columns=df.columns[1:-1]` bug (found via
+    this pipeline's own R14 test): that slice dropped BOTH `time` (first)
+    AND the embedding spec's own last entry -- since spec is
+    self-lags-then-in-edges, that last entry is always the node's last
+    discovered driver whenever it has any in-edges. Harmless pre-R14
+    (self_delay_set padded every node with several self-lags, so losing
+    one entry barely mattered); a hard crash post-R14 for a node with
+    exactly one discovered driver (zero columns left -- pyEDM's "columns
+    required" RuntimeError) and silent driver-loss for any node with
+    more. Fixed to `df.columns[1:]` (drop only `time`) -- general, not
+    R14-specific, but found and fixed together with R14 since R14 is
+    what turns it from a latent quirk into a real risk.'''
     if self.args.DEBUG :
         print( '-----> Node:Forecast() : ',self.FunctionType.name, self.name)
         print( self.data.tail( 2 ), flush = True );
+
+    graph = self.Network.Graph
+    is_external = self.name in graph.graph.get('external_inputs', set())
+    if is_external and graph.graph.get('external_input_mode', 'real_data') == 'real_data':
+        return (self.data[self.data.columns[0]], self.data[self.name])
 
     Parameters = self.Parameters
     data       = self.data
@@ -367,7 +465,7 @@ def _generalized_node_forecast(self):
                            tau             = 1,
                            theta           = Parameters.theta,
                            exclusionRadius = Parameters.exclusionRadius,
-                           columns         = df.columns[1:-1],
+                           columns         = df.columns[1:],
                            target          = Parameters.target + '(t-0)',
                            solver          = None,
                            embedded        = Parameters.embedded,
@@ -420,7 +518,26 @@ def _generalized_node_generate(self, lastDataOut):
     added because gmn/Generate.py's SMap branch needed the same
     Embed()-call replacement, and this pipeline had no reason to patch
     Node.Generate at all before this pipeline's generalized-embedding
-    feature existed.'''
+    feature existed.
+
+    R14: a real-data-mode external input (see partition_network()'s
+    docstring) short-circuits here, before any SMap/embedding logic --
+    genuinely not simulated, its "generated" value each step is just the
+    real recorded value at that row, read straight from
+    self.Network.data (loaded once, in full, from the network's own data
+    file -- see build_gmn_config()'s own docstring). self.data has
+    already had lastDataOut appended above by the time this check runs,
+    so its length IS the absolute row index of the next real row to hand
+    back (both start in lockstep at generate_start real rows, then grow
+    by exactly one row per step, for every node, via the same shared
+    lastDataOut).
+
+    Also fixes the same `columns=df.columns[1:-1]` -> `df.columns[1:]`
+    driver-drop bug as _generalized_node_forecast()'s own docstring
+    describes (found via this pipeline's own R14 test) -- the old slice
+    silently excluded a node's LAST discovered driver from its SMap
+    embedding, harmless pre-R14 (self_delay_set padding masked it) but a
+    hard crash post-R14 for a 1-driver interior node.'''
     if self.args.DEBUG :
         print( '-----> Node:Generate() : ', self.FunctionType.name, self.name )
         print( self.data.tail( 2 ) );
@@ -428,6 +545,19 @@ def _generalized_node_generate(self, lastDataOut):
 
     if not ( lastDataOut is None ):
         self.data = pd.concat( [ self.data, lastDataOut ] )
+
+    graph = self.Network.Graph
+    is_external = self.name in graph.graph.get('external_inputs', set())
+    if is_external and graph.graph.get('external_input_mode', 'real_data') == 'real_data':
+        row_i = len(self.data)
+        real_data = self.Network.data
+        if row_i >= len(real_data):
+            raise RuntimeError(
+                f"Generate: external input '{self.name}' ran out of real data at row {row_i} "
+                f"(only {len(real_data)} rows available) -- shrink GENERATE_LENGTH or switch "
+                f"EXTERNAL_INPUT_MODE to 'self_simulate'."
+            )
+        return float(real_data[self.name].iloc[row_i])
 
     Parameters = self.Parameters
     data       = self.data
@@ -489,7 +619,7 @@ def _generalized_node_generate(self, lastDataOut):
                            tau             = 1,
                            theta           = Parameters.theta,
                            exclusionRadius = Parameters.exclusionRadius,
-                           columns         = df.columns[1:-1],
+                           columns         = df.columns[1:],
                            target          = Parameters.target + '(t-0)',
                            solver          = None,
                            embedded        = Parameters.embedded,
@@ -1063,6 +1193,35 @@ def load_config():
     # -- that was the bug the 2026-08-25 revision fixed, and R12 preserves
     # the fix while restoring Stage 1/Stage 2 sequencing).
     cfg['STAGE2_ALLOW_REAL_OBSERVABLES'] = _env_bool('MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES', False)
+
+    # R14 (docs/review-actions-v1.md): a zero-driver leaf is partitioned out
+    # of the simulated network as an "external input" (partition_network())
+    # rather than getting the old unconditional self-history embedding.
+    # EXTERNAL_INPUT_MODE picks what Generate()/Forecast() actually do with
+    # such a node -- see _generalized_node_generate()'s own docstring for
+    # the full rationale (this was an explicit ask-before-implementing
+    # decision, not a default guessed at):
+    #   'real_data' (default): the node is genuinely exogenous -- its
+    #     Generate() call short-circuits to the real recorded value at each
+    #     step (self.Network.data, already loaded in full), never running
+    #     an SMap self-regression. The INTERIOR network still free-runs
+    #     autonomously; only external inputs are fed from real data.
+    #   'self_simulate': keeps today's exact pre-R14 behavior for these
+    #     nodes (unconditional self_delay_set embedding, genuinely self-
+    #     predicted every step, never touching real data past the initial
+    #     seed) -- R14's partition becomes reporting/visualization-only in
+    #     this mode, with no behavior change from before R14.
+    # Either way, a TARGET that itself selects zero drivers is NEVER
+    # classified as an external input regardless of this setting --
+    # partition_network() raises instead (feeding a target's own real
+    # values back in as its "simulation" and then scoring fidelity against
+    # those same real values would be circular).
+    cfg['EXTERNAL_INPUT_MODE'] = os.environ.get('MDE_GMN_EXTERNAL_INPUT_MODE', 'real_data')
+    if cfg['EXTERNAL_INPUT_MODE'] not in ('real_data', 'self_simulate'):
+        raise ValueError(
+            f"MDE_GMN_EXTERNAL_INPUT_MODE must be 'real_data' or 'self_simulate': "
+            f"{cfg['EXTERNAL_INPUT_MODE']!r}"
+        )
 
     # DELAY_SOURCE picks what determines the nonzero-delay set used for
     # (a) every node's unconditional self_delay_set (self-history, always
@@ -2211,6 +2370,102 @@ def ccm_prefilter_observables(df, candidate_columns, targets, prediction_start,
     return kept, scores
 
 
+def partition_network(graph, targets, external_input_mode):
+    '''R14 (docs/review-actions-v1.md): partitions a MultiDiGraph built by
+    build_nested_mde_network() into interior nodes (>=1 discovered driver
+    -- genuinely simulated, their embedding built from those in-edges only,
+    see _embedding_spec_for()'s docstring) and external inputs (0
+    discovered drivers -- what EXTERNAL_INPUT_MODE does with them is that
+    function's own concern, not this one's). Stored explicitly on the
+    graph object (`graph.graph['interior_nodes']`/`['external_inputs']`/
+    `['external_input_mode']`) rather than left implicit in edge counts,
+    so every consumer (embedding-spec construction, theta search, the 3D
+    figure, run-log reporting) reads the same authoritative classification
+    instead of re-deriving it.
+
+    A TARGET with zero discovered drivers is NEVER classified as an
+    external input, regardless of `external_input_mode` -- raises instead.
+    This is a failed network, not a valid one: feeding a target's own real
+    values back in as its "simulation" (EXTERNAL_INPUT_MODE='real_data')
+    and then scoring Generate() fidelity against those same real values
+    would be circular, producing a spuriously perfect score for exactly
+    the case that most needs to be flagged as a failure.
+
+    Mutates `graph` in place; returns (interior_nodes, external_inputs) as
+    plain sets for convenience.'''
+    interior_nodes = set()
+    external_inputs = set()
+    for node in graph.nodes:
+        if graph.in_degree(node) == 0:
+            if node in targets:
+                raise ValueError(
+                    f"{node}: target selected zero drivers after nested-MDE (both stages) -- "
+                    f"this is a failed network, not a valid external input. A target can never "
+                    f"be exogenous: EXTERNAL_INPUT_MODE='real_data' would feed its own real "
+                    f"values back in as its \"simulation\" and then score fidelity against those "
+                    f"same real values, which is circular. Investigate why {node} found no "
+                    f"drivers (EMBED_DIM_RHO_MIN/CROSS_MAP_RHO_MIN too strict? too few candidate "
+                    f"observables?) rather than working around it here."
+                )
+            external_inputs.add(node)
+        else:
+            interior_nodes.add(node)
+
+    graph.graph['interior_nodes'] = interior_nodes
+    graph.graph['external_inputs'] = external_inputs
+    graph.graph['external_input_mode'] = external_input_mode
+    return interior_nodes, external_inputs
+
+
+def _simulated_nodes(graph):
+    '''Nodes that actually go through gmn's own SMap/embedding machinery --
+    interior nodes always, plus external inputs too under
+    EXTERNAL_INPUT_MODE='self_simulate' (where they keep the old
+    unconditional self_delay_set embedding, see _embedding_spec_for()'s
+    docstring). Excludes real-data-mode external inputs: their Generate()/
+    Forecast() short-circuit to a real-data passthrough with no embedding
+    at all, so retuning theta for them (retune_theta_for_all_nodes(), which
+    calls _embedding_spec_for() directly) would either waste effort on an
+    inert result or crash on an empty spec.'''
+    external_inputs = graph.graph.get('external_inputs', set())
+    mode = graph.graph.get('external_input_mode', 'real_data')
+    if mode == 'self_simulate':
+        return list(graph.nodes)
+    return [n for n in graph.nodes if n not in external_inputs]
+
+
+def report_partition(graph, network_id, results_dir):
+    '''R14's own explicit reporting requirement: how many external inputs,
+    which observables and delays, and which interior nodes each feeds --
+    printed to the run log and written to a per-network CSV in
+    `results_dir` (partition_{network_id}.csv). Reads the classification
+    partition_network() already stored on `graph.graph` rather than
+    recomputing it.'''
+    external_inputs = graph.graph.get('external_inputs', set())
+    interior_nodes = graph.graph.get('interior_nodes', set())
+    mode = graph.graph.get('external_input_mode', 'real_data')
+
+    print(f'{network_id}: partition -- {len(interior_nodes)} interior node(s), '
+          f'{len(external_inputs)} external input(s) (EXTERNAL_INPUT_MODE={mode!r})', flush=True)
+
+    rows = []
+    for node in sorted(external_inputs):
+        out_edges = list(graph.out_edges(node, data=True))
+        if not out_edges:
+            print(f'  external input {node}: feeds nothing (dead-end leaf)', flush=True)
+            rows.append({'node': node, 'role': 'external_input', 'feeds': '', 'delay': ''})
+            continue
+        for _, fed_node, data in out_edges:
+            print(f'  external input {node} -> {fed_node} (delay {data["delay"]})', flush=True)
+            rows.append({'node': node, 'role': 'external_input', 'feeds': fed_node,
+                         'delay': data['delay']})
+    for node in sorted(interior_nodes):
+        rows.append({'node': node, 'role': 'interior', 'feeds': '', 'delay': ''})
+
+    partition_file = results_dir / f'partition_{network_id}.csv'
+    pd.DataFrame(rows, columns=['node', 'role', 'feeds', 'delay']).to_csv(partition_file, index=False)
+
+
 def build_network(targets, mde_results, df, prediction_start, prediction_length,
                    mode, e_range, tau_range, results_dir, cores, interaction_matrix_outer_cores,
                    observable_columns=None, nested_n=None, nested_m=None,
@@ -2218,7 +2473,8 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                    lag_set=None, stage2_allow_real_observables=False, tp=1,
                    threshold=0, fallback_node_dimension=4, max_node_dimension=15,
                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
-                   data_file=None, data_file_sha256=None, code_fingerprint=None):
+                   data_file=None, data_file_sha256=None, code_fingerprint=None,
+                   external_input_mode='real_data'):
     '''Build one network spanning `targets` and their driver candidates,
     via one of two unrelated constructions depending on `mode`:
       - mode == 'MDE-GMN': two-stage nested-MDE, no apps.CreateNetwork()
@@ -2362,6 +2618,8 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
         # doesn't otherwise include 0 (it never does -- see
         # derive_lag_set()'s own no-zero-entry convention).
         graph.graph['self_delay_set'] = sorted(set(lag_set) | {0}, reverse=True)
+        partition_network(graph, targets, external_input_mode)
+        report_partition(graph, network_id, results_dir)
         selected_union = [n for n in graph.nodes if n not in targets]
         # Rebuilt from the graph itself (rather than build_nested_mde_
         # network()'s own returned edges_df) so this works identically on
@@ -2592,6 +2850,78 @@ def draw_colored_network(net_result, target_colors, save_path):
     ax.set_title(f"GMN network ({net_result['network_id']})")
     fig.tight_layout()
     fig.savefig(save_path, dpi=300)
+    plt.close(fig)
+
+
+def plot_3d_network(net_result, target_colors, save_path):
+    '''R14 (docs/review-actions-v1.md): the explicit 3D representation its
+    "leaf nodes become external inputs" decision requires -- MODE='MDE-GMN'
+    only (needs the per-edge delay data and interior/external partition
+    only that mode's MultiDiGraph has, both absent from MODE='GMN''s plain
+    DiGraph). x-y plane: a standard graph layout of the real-observable
+    (delay=0) backbone from Stages 1 and 2 -- the same structural skeleton
+    draw_colored_network() draws in 2D. z axis: for every node, one
+    vertical stick per delay!=0 driver nested-MDE discovered for it,
+    rising from z=0 to z=|delay| at that node's own (x, y) -- literally
+    "the delayed observables that further drive each node," stacked above
+    it rather than laid out in the plane, since a lagged driver is a copy
+    of an existing real observable at a different point in time, not a new
+    spatial position. External inputs (partition_network()'s own
+    classification, read from graph.graph -- not re-derived here) are
+    drawn as a distinct marker shape (triangle vs. circle) from interior
+    nodes, per the task's own explicit requirement, independent of target
+    coloring.'''
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 -- registers the 3d projection
+
+    graph = net_result['network']['Graph']
+    interior_nodes = graph.graph.get('interior_nodes', set())
+    external_inputs = graph.graph.get('external_inputs', set())
+
+    real_edges = [(u, v) for u, v, d in graph.edges(data=True) if d['delay'] == 0]
+    backbone = nx.DiGraph()
+    backbone.add_nodes_from(graph.nodes)
+    backbone.add_edges_from(real_edges)
+    pos = nx.spring_layout(backbone, seed=0)
+
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+
+    for u, v in real_edges:
+        xu, yu = pos[u]
+        xv, yv = pos[v]
+        ax.plot([xu, xv], [yu, yv], [0, 0], color='gray', linewidth=1, alpha=0.6, zorder=1)
+
+    for u, v, data in graph.edges(data=True):
+        if data['delay'] == 0:
+            continue
+        x, y = pos[v]
+        z = abs(data['delay'])
+        ax.plot([x, x], [y, y], [0, z], color='steelblue', linewidth=1, alpha=0.5, zorder=2)
+        ax.scatter([x], [y], [z], color='steelblue', marker='s', s=15, zorder=6)
+        ax.text(x, y, z, u, fontsize=5, color='steelblue')
+
+    for node in graph.nodes:
+        x, y = pos[node]
+        is_external = node in external_inputs
+        color = target_colors.get(node, 'tab:orange' if is_external else 'tab:blue')
+        marker = '^' if is_external else 'o'
+        ax.scatter([x], [y], [0], color=color, marker=marker, s=100,
+                   edgecolors='black', linewidths=0.8, zorder=5)
+        ax.text(x, y, 0, node, fontsize=7, fontweight='bold')
+
+    node_handles = [
+        plt.Line2D([0], [0], marker='o', color='w', markersize=10,
+                   markerfacecolor='tab:blue', markeredgecolor='black', label='interior'),
+        plt.Line2D([0], [0], marker='^', color='w', markersize=10,
+                   markerfacecolor='tab:orange', markeredgecolor='black', label='external input'),
+    ]
+    ax.legend(handles=node_handles, loc='upper left', bbox_to_anchor=(1.0, 1.0),
+              title=f"n_interior={len(interior_nodes)}, n_external={len(external_inputs)}")
+    ax.set_xlabel('X (real-observable network layout)')
+    ax.set_ylabel('Y (real-observable network layout)')
+    ax.set_zlabel('|delay| (lagged driver depth)')
+    ax.set_title(f"3D network projection ({net_result['network_id']})")
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -2953,6 +3283,10 @@ def build_search_fingerprint(cfg, net_result, data_file_sha256, code_fingerprint
         'prediction_start': cfg['PREDICTION_START'],
         'prediction_length': cfg['PREDICTION_LENGTH'],
         'network_nodes': sorted(graph.nodes),
+        # R14: doesn't change topology (build_network_fingerprint()'s own
+        # concern), but does change what Generate()/theta search actually
+        # do with a zero-driver node -- belongs here, not there.
+        'external_input_mode': cfg['EXTERNAL_INPUT_MODE'],
         'code_fingerprint': code_fingerprint,
         'stage': 'theta_search',
     }
@@ -3284,7 +3618,9 @@ def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range,
     for network_id, run in gmn_runs.items():
         net_result = run['net_result']
         graph = net_result['network']['Graph']
-        all_nodes = list(graph.nodes)
+        # R14: exclude real-data-mode external inputs -- they have no
+        # embedding to retune theta for (see _simulated_nodes()'s docstring).
+        all_nodes = _simulated_nodes(graph)
         data_after_mde_lib = pd.read_csv(net_result['DATA_AFTER_MDE']).iloc[:prediction_start]
 
         fingerprint = fingerprints[network_id] if fingerprints else None
@@ -4072,11 +4408,17 @@ def main():
             run_cache_dir=cfg['RUN_CACHE_DIR'],
             data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
             code_fingerprint=code_fingerprint,
+            external_input_mode=cfg['EXTERNAL_INPUT_MODE'],
         )
         draw_colored_network(
             net_result, cfg['TARGET_COLORS'],
             cfg['RESULTS_DIR'] / f"gmn_network_{net_result['network_id']}.png",
         )
+        if cfg['MODE'] == 'MDE-GMN':
+            plot_3d_network(
+                net_result, cfg['TARGET_COLORS'],
+                cfg['RESULTS_DIR'] / f"network_3d_{net_result['network_id']}.png",
+            )
         gmn_runs[net_result['network_id']] = {'group': group, 'net_result': net_result}
 
     fingerprints = None

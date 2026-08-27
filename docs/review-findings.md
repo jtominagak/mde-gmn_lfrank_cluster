@@ -276,3 +276,236 @@ without exploring it. Passed on first run, both pipelines.
 `python3 -m py_compile` passed on both pipeline files. `bash -n` passed on
 both sbatch scripts.
 
+---
+
+## R14 — Leaf nodes become external inputs, not network nodes
+
+**Status:** Done, with two corrections to the task as written (recorded
+below per explicit instruction) and one pre-existing bug found and fixed
+along the way.
+
+### A1 verification
+
+Read `_embedding_spec_for()`, the `gmn.Node.__init__`/`.Generate`/
+`.Forecast` monkeypatches, `gmn.GMN.Generate()`'s time loop and
+`gmn.Network.__init__`'s `TopologicalSorted` construction (both in the
+installed `gmn` package, not this codebase), and `build_gmn_config()`, in
+both pipeline files.
+
+**Premise confirmed true.** `_embedding_spec_for()`'s MultiDiGraph branch
+unconditionally prepended `graph.graph['self_delay_set']` (every delay in
+`{0} ∪ LAG_SET`) to every node's spec regardless of discovered in-edges.
+`gmn.Network.__init__` puts every graph node (leaf or not) into
+`TopologicalSorted`, and `gmn.GMN.Generate()`'s per-step loop calls
+`node.Generate()` for all of them unconditionally — so today, a zero-driver
+leaf genuinely self-predicts its own future every step via SMap regression
+on nothing but its own unconditional self-history, never touching real
+data past the initial seed. This is exactly what let §1.1's "runs freely...
+without ever seeing the real behavior again" claim hold for every node,
+leaf or not.
+
+### Ask-before-implementing (step 4, and two more surfaced by testing)
+
+**Round 1 (the task's own explicit gate).** §8.2's unconditional
+self-history is what lets a zero-driver leaf simulate at all today; if
+R14's external inputs are fed real data during `Generate()`, the free-
+running claim no longer holds universally. Reported both readings and
+asked. **User decision:** implement both as a config toggle,
+`EXTERNAL_INPUT_MODE` (`'real_data'` default: exogenous, fed the real
+recorded trajectory, self-consistent with "external input" in the
+standard control-theory sense; `'self_simulate'`: keeps pre-R14 behavior).
+**User also caught a case I had not accounted for:** a *target* can end up
+with zero discovered drivers (Run A's own `head_position_y`, per
+`docs/tsls-mde-gmn-pipeline.tex`) — under `'real_data'` mode this would
+feed a target's own real values back in as its "simulation" and then score
+fidelity against those same real values, a circular, spuriously-perfect
+result for exactly the case that most needs flagging as a failure.
+`partition_network()` therefore raises for this case rather than
+classifying it as external, regardless of `EXTERNAL_INPUT_MODE`.
+
+**Round 2 (found during testing, not anticipated by the task text).**
+Building a real (tiny, synthetic) `gmn.GMN.Generate()` run the same way
+`build_network()`/`build_gmn_config()` build one for real — see the test
+below — surfaced a **pre-existing bug**: `_generalized_node_generate()`/
+`_generalized_node_forecast()`'s SMap call used
+`columns=df.columns[1:-1]`, dropping `time` (first) *and* the spec's own
+last entry. Since spec order is self-terms-then-in-edges, that last entry
+is a node's own last discovered driver whenever it has any in-edges at
+all — confirmed empirically (`spec=[T(t-0), T(t-1), A(t-3), B(t-0)]` →
+`columns` silently excluded `B(t-0)`, though it stayed in `df` itself).
+Pre-R14 this was harmless (self_delay_set always padded a node with
+several self-lags, so losing one entry rarely mattered); post-R14, a
+node's spec *is* its discovered drivers, so a 1-driver interior node has
+zero columns left at all — a hard crash (pyEDM's `RuntimeError: Validate()
+SMap: columns required.`), and a 2+-driver node silently loses its last
+one. This is outside R14's stated scope (a latent bug in code the task
+didn't name), so I stopped and reported it rather than fixing it quietly.
+**User decision:** fix it, in both `_generalized_node_generate`/
+`_generalized_node_forecast`, both pipelines — `columns=df.columns[1:]`
+(drop only `time`). General fix, not R14-specific, but found and landed
+together with R14 since R14 is what turns it from a masked quirk into a
+real risk.
+
+**Round 3 (found immediately after, same test).** Removing
+`self_delay_set` *entirely* (as R14's text literally says: "built only
+from drivers discovered by nested-MDE") breaks pyEDM outright for every
+interior node, not just an edge case: `target=node_name+'(t-0)'` is a hard
+pyEDM requirement — that column must exist in the embedded dataframe
+regardless of what the predictor `columns` are, and no in-edge can ever
+supply it (self-loops are excluded, `_accept_mde_result_edges()`'s own
+guard). Reported this and proposed keeping the node's own delay=0
+"anchor" coordinate unconditionally (structurally required, and standard
+generalized-embedding practice besides — a variable's own present value is
+conventionally one of its own state-space coordinates), removing only the
+*deeper* self-lags R14 actually objects to. **User asked two clarifying
+questions before approving:**
+  - Whether the anchor is target-only or also stays in the predictor
+    (`columns`) set. **Resolved: both** — it is not excluded from
+    `columns`; this is intended (standard EDM practice), not a leftover.
+  - Whether "external nodes keep the anchor under `self_simulate`" meant
+    leaves now self-simulate by default, contradicting round 1's
+    `'real_data'` default. **Resolved: no** — under the default, external
+    inputs never reach `_embedding_spec_for()` at all (short-circuited
+    earlier in `Generate()`/`Forecast()`); the anchor fix only matters for
+    nodes that actually reach the SMap branch (interior nodes always,
+    external nodes only under `self_simulate`), and for those the same
+    unified formula (`[(node_name, 0)] + in_edges`) already produces the
+    right spec with no separate branching needed.
+  User confirmed this design once both points were clarified.
+
+### Two corrections to R14 as written (per explicit instruction — recorded
+here so the documentation-rewrite pass does not carry the stale text
+forward)
+
+1. **Step 1's "built only from drivers discovered by nested-MDE" is
+   inaccurate.** Corrected: a node's embedding is discovered drivers
+   *plus* an unconditional delay-0 self-anchor (see Round 3 above for
+   why the anchor cannot be removed). The acceptance test ("no node's
+   embedding contains a self-lag that nested-MDE did not select") is
+   satisfied under the reading that it means **nonzero** self-lags only —
+   the delay=0 anchor is expected on every node and does not fail it (see
+   `tests/test_r14_external_inputs.py`'s explicit check of this).
+
+2. **The "leaf duplicate" degeneracy rationale does not describe this
+   graph — confirmed against source, not asserted.** R14's own rationale
+   was: "a leaf may be either a real observable or a lagged observable. If
+   nested-MDE selects real observable B and a lagged copy of B as two
+   separate zero-driver nodes, taking a lagged embedding of each makes the
+   two identical." Read `observable_and_delay()`
+   (`scripts/src/tsls-mde-gmn.py:1113-1117`, identical in
+   `simple-mde-gmn.py`): it always resolves a candidate column back to its
+   *raw* observable name (`if column_name in raw_columns: return
+   column_name, 0`; delay lives separately). Read
+   `_accept_mde_result_edges()`: `graph.add_node(driver)` uses only that
+   raw name. So there is exactly **one** graph node per raw observable,
+   regardless of how many different delays reference it — "a lagged copy
+   of B" is never a second node, only a `(B, some-negative-delay)` edge
+   into whatever node selected it. Two zero-driver nodes with identical
+   embeddings, both "about" the same underlying observable, cannot arise
+   in this graph's node-identity scheme. **The surviving justification
+   for partitioning out zero-driver nodes is simpler and still correct on
+   its own:** a zero-driver node is not something nested-MDE discovered as
+   a network member at all, so counting it as an interior (simulated) node
+   overstates what was actually found. This is the rationale
+   `partition_network()`'s own docstring now records.
+
+### What changed
+
+- `partition_network(graph, targets, external_input_mode)` (new, both
+  files): classifies every node as interior (`in_degree >= 1`) or external
+  input (`in_degree == 0`), raising if a *target* has zero drivers (see
+  Round 1). Stores the classification explicitly on `graph.graph`
+  (`interior_nodes`/`external_inputs`/`external_input_mode`) rather than
+  leaving it implicit in edge counts, per the task's own requirement.
+  Called from `build_network()` right after `graph.graph['self_delay_set']`
+  is set.
+- `report_partition(graph, network_id, results_dir)` (new, both files):
+  prints the partition to the run log and writes
+  `partition_{network_id}.csv` (node, role, feeds, delay) to `results_dir`.
+- `EXTERNAL_INPUT_MODE` config knob (new, both files, default `'real_data'`,
+  validated against `('real_data', 'self_simulate')`).
+- `_embedding_spec_for()`: simplified to `[(node_name, 0)] + in_edges` for
+  every node that reaches it (see Round 3) — no more separate interior/
+  external branching inside this function; the mode-driven behavior lives
+  entirely in the Generate()/Forecast()/init short-circuits below.
+- `_generalized_node_generate()`/`_generalized_node_forecast()`/
+  `_generalized_node_init()`: each short-circuits for a
+  `real_data`-mode external input — Generate() returns the real recorded
+  value at the current row (`self.Network.data[self.name].iloc[len(self.data)]`,
+  since `self.data`'s length is already the absolute row index by the time
+  `lastDataOut` has been appended); Forecast() returns the real series as
+  a trivial `(time, values)` passthrough; `__init__` skips the
+  spec-dependent `libEnd_i` correction entirely. Also fixes the
+  `columns[1:-1]` → `columns[1:]` bug (Round 2) in both Generate() and
+  Forecast().
+- `_simulated_nodes(graph)` (new, both files): nodes that actually run
+  gmn's SMap machinery (interior always; external only under
+  `self_simulate`) — used by `run_theta_search()` so real-data-mode
+  external inputs (no embedding to retune) are excluded from theta
+  retuning.
+- `plot_3d_network()` (new, both files): x-y plane is a layout of the
+  real-observable (delay=0) backbone; z axis is one vertical stick per
+  delay!=0 driver, rising to `|delay|` at the driven node's (x, y);
+  external inputs drawn as a distinct marker shape (triangle vs. circle),
+  independent of target coloring. Called from `main()` for
+  `MODE='MDE-GMN'` runs, alongside the existing `draw_colored_network()`.
+- `build_search_fingerprint()`: added `external_input_mode` (changes
+  Generate()/theta-search behavior for a zero-driver node, not topology,
+  so it belongs here rather than in `build_network_fingerprint()`).
+
+### Test
+
+`tests/test_r14_external_inputs.py` — unit-level (`partition_network()`
+classification, the target-zero-drivers raise, the corrected embedding-
+spec shape) plus integration-level: a real, tiny, synthetic
+`gmn.GMN.Generate()` run built the same way the pipeline builds one for
+real (`build_gmn_config()` + a pickled `{'Graph': ..., 'Map': ...}` network
+file + a real CSV), for both `EXTERNAL_INPUT_MODE` settings. Confirms:
+`'real_data'` mode's external input's `Generate()` output matches the real
+recorded series exactly; `'self_simulate'` mode still self-predicts
+without crashing; the interior node's own output is finite in both modes;
+`report_partition()` writes the expected CSV; `plot_3d_network()` produces
+a non-empty figure (visually inspected: interior node drawn as a red
+circle, external input as an orange triangle, connected by the real-
+observable edge — see `tests/_scratch_r14/*/network_3d_toy.png`). All
+passed on both pipelines after the Round 2/3 fixes above; both rounds were
+caught *by* this test, not before it.
+
+### A3 sibling parity
+
+Ported identically to `simple-mde-gmn.py` in the same commit — same
+`partition_network`/`report_partition`/`_simulated_nodes`/
+`plot_3d_network` functions, same `EXTERNAL_INPUT_MODE` knob, same
+short-circuit logic and `columns[1:-1]` fix.
+
+### A5 cache invalidation
+
+`EXTERNAL_INPUT_MODE` added to `build_search_fingerprint()` (changes
+Generate()/theta-search outcomes for a zero-driver node) in both files.
+Not added to `build_network_fingerprint()` — it doesn't affect which
+nodes/edges get discovered, only what happens to an already-classified
+zero-driver node during simulation. The `columns[1:-1]`→`columns[1:]` fix
+and the embedding-spec simplification are both real logic changes,
+automatically covered by the whole-file AST-hash `code_fingerprint`
+(confirmed mechanism, not re-derived — see R12's own section above).
+
+### A4 verification
+
+`python3 -m py_compile` passed on both pipeline files. `bash -n` passed on
+both sbatch scripts.
+
+### R12's background smoke run: status update
+
+The Run-A-config smoke run launched during R12 (see that section above)
+progressed through Stage 1 (3 real-observable backbone nodes for
+`head_position_x`, `head_position_y`) and into Stage 2/theta retuning
+before this session's process tracking lost it (no further log output,
+process no longer found by PID or by name) — inconclusive, not a pipeline
+error: no exception was logged, and the log simply stops mid-retune. Given
+this predates R13/R14's own code (launched right after R12 landed), it is
+not informative about the code as it now stands. Not re-launched given the
+time this session has already spent — recommend a fresh local smoke run at
+Run A's configuration, through `scripts/batch/submit.sh` per this
+project's own job-submission convention, before any cluster submission
+(per A4).
+
