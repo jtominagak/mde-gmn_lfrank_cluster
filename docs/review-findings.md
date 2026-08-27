@@ -715,3 +715,62 @@ shared pool rather than something that shrinks as the network grows
 (scope 4). No change made — this is a written finding only, feeding a
 decision not yet made, per the task's own acceptance criterion.
 
+---
+
+## R4 — Report the static `E` used by `proper_mde`'s CCM gate
+
+**Status:** Done. Finding only — no code change, per the task's own
+acceptance criterion.
+
+### Finding
+
+**`E` is identical at every single-target call site — depth-0 seed,
+Stage 1, Stage 2 — because all three route through the same
+`run_mde_for_target()`, which has exactly one `proper_mde()` call site
+(`tsls-mde-gmn.py:1535`).** That call hardcodes `E=0, maxE=max_e`:
+
+- `E=0` is not itself "the E used" — it's the sentinel that tells
+  `proper_mde` to auto-select. **Confirmed a per-candidate
+  `EmbedDimension`-equivalent auto-select path exists and is always
+  taken** on the single-target path: `cleaned_helper_functions.py:1414-1440`
+  — `if E > 0: ... else: EDimDF = proper_embed_dimension(...)`. Since
+  `E=0` is hardcoded at the one call site every single-target call goes
+  through, this `else` branch always runs: a fresh, independent
+  univariate rho-vs-E sweep (`proper_embed_dimension`, metric-aware —
+  scored with whichever `metric`/`target_metric` that call already uses,
+  not hardcoded Pearson rho) *per candidate*, at *every* forward-selection
+  dimension, bounded by the ceiling `maxE`.
+- `maxE=max_e` is also identical at every site: main()'s depth-0 seed
+  passes `max_e=cfg['MDE_D']`
+  (`tsls-mde-gmn.py:4058`); both of `build_nested_mde_network()`'s Stage 1
+  and Stage 2 passes pass `max_e=nested_n`
+  (`tsls-mde-gmn.py:2097,2188`), and `nested_n` is `cfg['MDE_D']` at the
+  `build_network()` call site — the same raw config value, unscaled.
+
+**So there is no "static E" on the single-target path at all** — every
+call auto-selects E fresh, per candidate, per dimension, up to the same
+`MDE_D` ceiling everywhere. Confirmed this was a deliberate, recent
+change, not a coincidence: the docstring
+(`tsls-mde-gmn.py:1402-1416`) records that this call site previously
+hardcoded `E=3` as a *workaround* for `proper_mde`'s old `E<=0` path being
+blocked for non-`'correlation'` metrics, fixed once `proper_embed_dimension`
+(a metric-aware `EmbedDimension` replacement) existed and could be wired
+in for `E<=0` too.
+
+**Contrast with the multi-target path (`multi_proper_mde`,
+`GMN_MODE='combined'` only):** this one genuinely *does* require a static,
+explicit `E` — `MULTI_MDE_E` (default `3`), no auto-select path at all.
+This is the concrete premise R22 needs before merging the two call paths:
+routing `GMN_MODE='separate'` through `multi_proper_mde` as it stands
+would silently replace every existing single-target run's per-candidate
+auto-selected E with the static default `3` — a real numerical
+regression, exactly as R22 already suspected.
+
+**Sibling parity (simple-mde-gmn.py):** `dx.MDE(...)`'s own call site
+(`simple-mde-gmn.py:1629`) passes no `E=` at all, relying on
+`dimx.MDE`'s own class default — confirmed `E=0`
+(`dimx/MDE.py:60`, `# Static E for all CCM`, default `0`) — so both
+pipelines reach the identical auto-select behavior on the single-target
+path, just via an explicit override (tsls) vs. an unoverridden default
+(simple).
+
