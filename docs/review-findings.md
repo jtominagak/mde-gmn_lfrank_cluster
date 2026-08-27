@@ -1810,3 +1810,176 @@ own "background smoke run: status update" sections) of not blocking a
 commit on a long background job while still launching and reporting on
 it honestly.
 
+---
+
+## R20 — TSLS-compatible replacement for `pyEDM.PredictNonlinear`
+
+**Status:** Done.
+
+### A1 verification, and R10 precondition (step 1)
+
+R20's own step 1 ("complete R10 first") was already done earlier this
+session (see R10's own section above): no native S-map exists in
+`cleaned_helper_functions.py`. Re-confirmed still true before touching any
+code (no intervening task changed that file's public API).
+
+Read `retune_theta_for_all_nodes()` (the one call site) in full.
+**Premise confirmed true:** it calls `pyEDM.PredictNonlinear(...)` and
+picks `best_theta_by_node[node] = float(pn.loc[pn['rho'].idxmax(), 'theta'])`
+— `'rho'` is `PredictNonlinear`'s own internal column, never `metric`/
+`target_metric`/`_metric_for()`. This is genuinely the one scoring call
+site in the pipeline that doesn't route through `_metric_for()` — every
+other scoring call site checked this session (`evaluate_smap_candidate`,
+`gmn_fidelity_rho`, `run_forecast_diagnostic`, `run_mde_evaluate`, the
+various MDE diagnostics) does.
+
+### The finding that narrowed R20's scope (before proposing anything)
+
+Per R20 step 3's own instruction ("do not start writing [an S-map]...
+propose an implementation approach... wait for approval"), read
+`pyEDM.PredictNonlinear`'s actual source
+(`pyEDM/API.py:554`) and its worker
+(`pyEDM/PoolFunc.py:97`, `PredictNLSMapFunc`) before proposing anything.
+**`PredictNonlinear` itself is already nothing more than a thin sweep:**
+per candidate `theta`, it calls `pyEDM.SMap(...)` once, then scores via
+`ComputeError(obs, pred)['rho']` and discards the predictions
+(confirmed: `PredictNLSMapFunc` returns only `err['rho']`, line 118 — the
+predictions are never surfaced to the caller). There is no separate
+"S-map engine" hidden inside `PredictNonlinear` to reimplement — it's the
+same compiled `pyEDM.SMap` gmn's own `Forecast()`/`Generate()` already
+calls directly at runtime for every node
+(`_generalized_node_forecast()`'s `FunctionType.SMap` branch,
+`self.Function(...)`, confirmed to be `pyEDM.SMap` itself) — unaffected
+by this task either way, since `theta` is just a number once chosen,
+regardless of which sweep chose it.
+
+Also confirmed: `ComputeError`'s own `rho = round(corrcoef(obs, pred)[0,1], 6)`
+(`pyEDM/AuxFunc.py:50`) is the identical Pearson-correlation formula
+`cleaned_helper_functions._score(kind='correlation')` uses
+(`np.corrcoef(o, p)[0, 1]`) — so re-scoring `pyEDM.SMap`'s own predictions
+via `_score()` at `metric='correlation'` should reproduce
+`PredictNonlinear`'s own selection, a genuine, checkable equivalence
+(R20's own acceptance criterion), not an approximation.
+
+### Proposal presented and approved
+
+Presented this finding and a proposal (thin `pyEDM.SMap`-based scoring
+wrapper, not a new S-map engine) to the user before writing any code, per
+R20's own explicit instruction, covering: the design, validation plan
+(equivalence against `PredictNonlinear` at `metric='correlation'`), cost/
+parallelism (flagging `sitecustomize.py`'s own documented fix — see
+`sitecustomize.py`'s own pyEDM per-call Pool-spawn fix — for why a fresh `multiprocessing.Pool` per call
+must not be reintroduced), and the narrower alternative considered (asking
+`PredictNonlinear` itself to expose predictions — confirmed not possible,
+it discards them). **User approved implementing as proposed**, in the
+pipeline file itself (not `cleaned_helper_functions.py`, which R10
+established is deliberately pyEDM-free).
+
+### What changed (`scripts/src/tsls-mde-gmn.py` only — no sibling-parity
+port needed, see below)
+
+- **New import:** `SMap` added to the existing `from pyEDM import Embed,
+  PredictNonlinear, SMap` line. `PredictNonlinear` itself stays imported,
+  now unused by the pipeline proper but kept importable for
+  `tests/test_r20_predict_nonlinear.py`'s own equivalence check against
+  it.
+- **`proper_predict_nonlinear(dataFrame, columns, target, theta, lib, pred,
+  E=1, Tp=1, knn=0, tau=-1, exclusionRadius=0, embedded=False,
+  metric='correlation', gamma_delta=2)`** (new): per candidate `theta`,
+  calls `SMap(...)` directly (the same args `PredictNonlinear` itself
+  passes) and scores the returned `(Observations, Predictions)` via
+  `tsls._score(metric, gammaDelta=gamma_delta)` instead of `ComputeError`.
+  Deliberately sequential (one `SMap` call per theta, in-process, no
+  `Pool`) — see `sitecustomize.py`'s own module docstring for why. Returns a
+  `DataFrame` with columns `'theta'`/`'score'`, mirroring
+  `PredictNonlinear`'s own `df.loc[df['rho'].idxmax(), 'theta']` idiom
+  exactly, just against a metric-agnostic column name.
+- **`retune_theta_for_all_nodes()`:** signature gained `targets, metric,
+  target_metric, gamma_delta` (previously took neither); now resolves
+  `node_metric = _metric_for(node, targets, metric, target_metric)` per
+  node and calls `proper_predict_nonlinear(..., metric=node_metric, ...)`
+  instead of `PredictNonlinear(...)`. `cores` is kept as a parameter (for
+  `run_theta_search()`'s own call-site shape, since it's still needed
+  right after for `evaluate_smap_candidate()`'s `Generate()` call) but is
+  no longer used inside this function itself. Fallback behavior (theta=3
+  on too little data, or on any exception) unchanged.
+- **`run_theta_search()`:** signature gained `metric` (before
+  `target_metric`); passes `net_result['targets'], metric, target_metric,
+  gamma_delta` through to `retune_theta_for_all_nodes()`.
+- **`main()`:** its one call to `run_theta_search()` now passes
+  `cfg['METRIC']` alongside the existing `cfg['TARGET_METRIC']`.
+- **Module-level import comment:** updated (previously said "no TSLS-aware
+  equivalent exists for `retune_theta_for_all_nodes()`'s own theta
+  search" — no longer true, rewritten to describe the actual design and
+  why `SMap` is now imported directly).
+
+### Test
+
+`tests/test_r20_predict_nonlinear.py`:
+- **`test_equivalence_against_pyedm_predictnonlinear`:** builds a real
+  `(E=3)` delay embedding of a short logistic-map trajectory (genuine
+  chaotic curvature, so the theta sweep produces an actually-peaked
+  curve, not flat noise), runs both `pyEDM.PredictNonlinear` and
+  `proper_predict_nonlinear(metric='correlation')` on the identical
+  embedding/lib/pred split and theta grid. Asserts the selected best
+  theta matches exactly, and every theta's own score matches
+  `PredictNonlinear`'s own rho to `< 1e-6` across the whole grid (not just
+  at the argmax) — this is R20's own acceptance criterion, and passed on
+  first run: best theta `8.0` for both, max `|rho - score|` across the
+  grid `4.69e-07` (consistent with `ComputeError`'s own `round(..., 6)`
+  vs. `_score()`'s unrounded value).
+- **`test_retune_theta_for_all_nodes_resolves_metric_per_node`:** direct,
+  deterministic check that `_metric_for()` resolves a non-target node to
+  `'f1'` and a target node to `'correlation'` (checked at the
+  `_metric_for()` call itself, not by asserting on `'f1'`'s own
+  TSLS-specific numeric behavior against this test's plain synthetic
+  series, which was never built to exercise `'f1'`'s real event-detection
+  logic meaningfully), plus an end-to-end
+  `retune_theta_for_all_nodes()` smoke call confirming both nodes get a
+  finite theta.
+
+Both passed on first run. Ran the full existing test suite
+(`tests/test_r*.py`) after this change — all pass, no regressions.
+
+### A2 interactions checked
+
+None of R20's own changes touch `_embedding_spec_for()`/`_generalized_embed()`
+(R14's own domain) or any nested-MDE/cache-fingerprint machinery (R12/R13's
+own domain) — this task is scoped entirely to the theta-retuning sweep,
+which those tasks don't touch.
+
+### A3 sibling parity
+
+**Not applicable — `simple-mde-gmn.py` has no equivalent call site.**
+Confirmed by reading its own `retune_theta_for_all_nodes()` (this
+function name and the surrounding theta-search structure are shared/
+ported machinery between the two pipelines): it calls
+`pyEDM.PredictNonlinear` exactly the same way `tsls-mde-gmn.py` did
+before this change, scored the same way (`'rho'` only) — but
+`simple-mde-gmn.py` has **no** `_metric_for()`/`_score()`/`metric`/
+`target_metric` concept at all (confirmed earlier this session, R16's own
+section: it scores everywhere with plain Pearson correlation on raw
+binned counts, by design — there is no second metric for it to fail to
+route through). R20's own premise ("the one stage that does not route
+through `_metric_for`") is specific to `tsls-mde-gmn.py`'s own
+architecture and doesn't describe a gap in the sibling at all — nothing
+to port, no divergence to record.
+
+### A4 verification
+
+`python3 -m py_compile` passed for both pipeline files. `bash -n` passed
+for both sbatch scripts. Full existing test suite (`tests/test_r*.py`)
+passed, no regressions.
+
+### A5 cache invalidation
+
+**No new knob added** — `metric`/`target_metric`/`gamma_delta` were
+already present in `build_search_fingerprint()` (`cfg['METRIC']`,
+`cfg['TARGET_METRIC']`, `cfg['GAMMA_DELTA']`, confirmed by reading that
+function, unchanged by this task) — this task re-routes the theta
+search's *scoring* through values the fingerprint already captures, it
+doesn't introduce a new dimension of variation. A run whose cache
+predates this change is invalidated regardless by `code_fingerprint`'s
+whole-file AST hash (`retune_theta_for_all_nodes()`'s own logic changed),
+same mechanism confirmed in R12/R13/R14's own sections.
+

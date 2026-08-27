@@ -179,17 +179,23 @@ import gmn
 from gmn.Common import FunctionType
 from apps.CreateNetwork import CreateNetwork
 # NOTE: dimx (dx.MDE/dx.Evaluate), apps.InteractionMatrix, and pyEDM's
-# Simplex/SMap/CCM/ComputeError/EmbedDimension/PredictInterval are not
-# imported directly -- this pipeline uses cleaned_helper_functions.py's
+# Simplex/CCM/ComputeError/EmbedDimension/PredictInterval are not imported
+# directly -- this pipeline uses cleaned_helper_functions.py's
 # proper_mde/proper_ccm/proper_simplex/proper_embed_dimension/
 # proper_predict_interval throughout instead (see this module's docstring
-# and load_config()'s METRIC docstring for why). Embed and PredictNonlinear
-# remain: no TSLS-aware equivalent exists for retune_theta_for_all_nodes()'s
-# own theta search (a plain pyEDM.SMap-specific concept with no analog in
-# cleaned_helper_functions.py's own KDTree engine) -- ported unchanged from
-# simple-mde-gmn.py, reading PredictNonlinear's own built-in 'rho' column
-# directly (no separate ComputeError call, there or here).
-from pyEDM import Embed, PredictNonlinear
+# and load_config()'s METRIC docstring for why). Embed remains for the
+# same reason it always did (no TSLS-aware equivalent needed -- gmn's own
+# node embedding never routes through _score()). SMap is imported directly
+# (R20, docs/review-actions-v1.md): R10 found no native S-map in
+# cleaned_helper_functions.py, but confirmed the compiled pyEDM.SMap gmn's
+# own Forecast()/Generate() already calls at runtime (unaffected by this)
+# is directly reusable for retune_theta_for_all_nodes()'s own theta
+# *selection* sweep too -- see proper_predict_nonlinear()'s own docstring.
+# PredictNonlinear stays imported only as the still-unused stdlib default
+# this module never calls anymore (retune_theta_for_all_nodes() now calls
+# proper_predict_nonlinear() instead) -- kept importable for
+# tests/test_r20_predict_nonlinear.py's own equivalence check against it.
+from pyEDM import Embed, PredictNonlinear, SMap
 
 # R19 (docs/review-actions-v1.md): run_mde_evaluate()'s PCA/diffusion-map
 # baselines. Not a dimx dependency -- these are the same underlying
@@ -3347,16 +3353,74 @@ def save_best_params(results_dir, run_cache_dir, network_id, fingerprint, best_n
 # simple-mde-gmn.py's own equivalent change.
 # =============================================================================
 
-def retune_theta_for_all_nodes(data_lib, graph, nodes, theta_range, cores, min_pred_rows=20):
-    '''Finds each node's own best theta via PredictNonlinear on a 70/30
-    lib/pred split of that node's own generalized embedding -- ported
-    UNCHANGED from simple-mde-gmn.py. No TSLS-aware equivalent exists for
-    this step (a plain pyEDM.SMap-specific concept with no analog in
-    cleaned_helper_functions.py's own KDTree engine -- see this module's
-    own docstring), so it's scored the same way here as there: plain
-    PredictNonlinear rho, not metric/target_metric. Falls back to theta=3
-    whenever there's too little data for the split or PredictNonlinear
-    itself fails.'''
+def proper_predict_nonlinear(dataFrame, columns, target, theta, lib, pred,
+                              E=1, Tp=1, knn=0, tau=-1, exclusionRadius=0,
+                              embedded=False, metric='correlation', gamma_delta=2):
+    '''R20 (docs/review-actions-v1.md): TSLS-aware replacement for
+    pyEDM.PredictNonlinear's own theta-selection sweep -- NOT a new S-map
+    engine. R10 found no native S-map in cleaned_helper_functions.py, but
+    reading pyEDM's own source (pyEDM/API.py's PredictNonlinear;
+    pyEDM/PoolFunc.py's PredictNLSMapFunc worker) shows PredictNonlinear
+    already does nothing more than call pyEDM.SMap(...) once per
+    candidate theta and score it via `ComputeError(obs, pred)['rho']` --
+    the SAME compiled S-map gmn's own Forecast()/Generate() already calls
+    directly at runtime for every node (unaffected by this function
+    either way -- theta is just a number once chosen, regardless of which
+    sweep chose it). `ComputeError`'s own `rho = corrcoef(obs, pred)[0,1]`
+    is the identical formula `cleaned_helper_functions._score(kind=
+    'correlation')` uses, so this function reproduces PredictNonlinear's
+    own selection exactly at metric='correlation' (see
+    tests/test_r20_predict_nonlinear.py's own equivalence check) while
+    also supporting 'f1'/'gamma'/'mae' for non-target (neuron) nodes,
+    which PredictNonlinear itself can never score.
+
+    Deliberately sequential -- one pyEDM.SMap call per theta, in-process,
+    no multiprocessing.Pool. See sitecustomize.py's own module docstring
+    (this venv) for why: pyEDM's own default PredictNonlinear/
+    EmbedDimension/PredictInterval each spawn a *fresh* Pool per call,
+    which is what turned this pipeline's jobs into a ~2-day-regardless-
+    of-config bug before that file patched all three to a sequential
+    drop-in. This function must not reintroduce that mistake -- theta
+    grids here are ~10-20 values, cheap enough sequentially that adding
+    pooling machinery back in isn't warranted.
+
+    Returns a DataFrame with columns 'theta'/'score' (one row per
+    candidate) -- callers pick `df.loc[df['score'].idxmax(), 'theta']`,
+    mirroring PredictNonlinear's own `df.loc[df['rho'].idxmax(), 'theta']`
+    idiom exactly, just against a metric-agnostic column name instead of
+    a hardcoded 'rho'.'''
+    rows = []
+    for th in theta:
+        S = SMap(
+            dataFrame=dataFrame, columns=columns, target=target,
+            lib=lib, pred=pred, E=E, Tp=Tp, knn=knn, tau=tau,
+            theta=th, exclusionRadius=exclusionRadius,
+            embedded=embedded, showPlot=False,
+        )
+        predictions = S['predictions']
+        obs = predictions['Observations'].to_numpy()
+        prd = predictions['Predictions'].to_numpy()
+        rows.append({'theta': th, 'score': tsls._score(obs, prd, metric, gammaDelta=gamma_delta)})
+    return pd.DataFrame(rows)
+
+
+def retune_theta_for_all_nodes(data_lib, graph, nodes, targets, theta_range, cores,
+                                metric, target_metric, gamma_delta, min_pred_rows=20):
+    '''Finds each node's own best theta via proper_predict_nonlinear() (R20,
+    docs/review-actions-v1.md) on a 70/30 lib/pred split of that node's own
+    generalized embedding. Previously scored via pyEDM.PredictNonlinear's
+    own internal Pearson rho regardless of METRIC -- the one stage in this
+    pipeline that didn't route through _metric_for() (confirmed against
+    source before this change, per A1). Now scores each node via
+    _metric_for(node, targets, metric, target_metric) -- 'f1' for neuron
+    nodes, 'correlation' (target_metric) for TARGETS, matching every
+    other scoring call site in this file. `cores` is no longer used here
+    (proper_predict_nonlinear() is deliberately sequential -- see its own
+    docstring) but is kept as a parameter for call-site compatibility with
+    run_theta_search(), which still needs it for evaluate_smap_candidate()'s
+    own Generate() call right after this one. Falls back to theta=3
+    whenever there's too little data for the split or the sweep itself
+    fails (unchanged from before).'''
     best_theta_by_node = {}
 
     for node in nodes:
@@ -3374,14 +3438,15 @@ def retune_theta_for_all_nodes(data_lib, graph, nodes, theta_range, cores, min_p
 
         lib_range = f'1 {split}'
         pred_range = f'{split + 1} {n_emb}'
+        node_metric = _metric_for(node, targets, metric, target_metric)
 
         try:
-            pn = PredictNonlinear(
-                dataFrame=embedded, columns=list(embedded.columns[1:-1]), target=node,
+            pn = proper_predict_nonlinear(
+                embedded, columns=list(embedded.columns[1:-1]), target=node,
                 theta=list(theta_range), lib=lib_range, pred=pred_range,
-                Tp=1, embedded=True, showPlot=False, numProcess=cores,
+                Tp=1, embedded=True, metric=node_metric, gamma_delta=gamma_delta,
             )
-            best_theta_by_node[node] = float(pn.loc[pn['rho'].idxmax(), 'theta'])
+            best_theta_by_node[node] = float(pn.loc[pn['score'].idxmax(), 'theta'])
         except Exception:
             best_theta_by_node[node] = 3
 
@@ -3433,7 +3498,7 @@ def evaluate_smap_candidate(net_result, prediction_start, prediction_length,
 
 
 def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range, results_dir,
-                      cores, target_metric, gamma_delta,
+                      cores, metric, target_metric, gamma_delta,
                       generate_length=None, reuse_best_params=False, prev_runs_dir=None,
                       run_cache_dir=None, fingerprints=None, exclusion_radius=0,
                       generate_validation_start=None):
@@ -3470,7 +3535,8 @@ def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range,
 
         print(f'{network_id}: retuning theta for {len(all_nodes)} node(s)', flush=True)
         best_node_theta = retune_theta_for_all_nodes(
-            data_after_mde_lib, graph, all_nodes, theta_range, cores,
+            data_after_mde_lib, graph, all_nodes, net_result['targets'], theta_range, cores,
+            metric, target_metric, gamma_delta,
         )
 
         try:
@@ -4454,7 +4520,7 @@ def main():
 
     theta_search_results = run_theta_search(
         gmn_runs, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'], cfg['THETA_RANGE'],
-        cfg['RESULTS_DIR'], cfg['CORES'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
+        cfg['RESULTS_DIR'], cfg['CORES'], cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
         generate_length=cfg['GENERATE_LENGTH'],
         reuse_best_params=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
         run_cache_dir=cfg['RUN_CACHE_DIR'],
