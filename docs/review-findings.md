@@ -509,3 +509,34 @@ Run A's configuration, through `scripts/batch/submit.sh` per this
 project's own job-submission convention, before any cluster submission
 (per A4).
 
+---
+
+## R6 — Regression test: Stage-2 real-observable picks recurse
+
+**Status:** Done — already satisfied by tests written under R12/R13, no
+new code.
+
+### A1 verification
+
+Re-read R6's acceptance criterion against what R12/R13 already produced:
+"prove by test... that with `STAGE2_ALLOW_REAL_OBSERVABLES=true`, a
+delay-0 column selected by Stage 2 is enqueued for its own further Stage 2
+round, subject to the R13 depth budget."
+
+`tests/test_r12_stage_serialization.py` already proves the first half:
+`stage2_allow_real_observables=True`, T's Stage 2 call selects real
+observable B, and B gets its own further `('stage2', 'B')` call —
+asserted directly, and confirmed to fail against the pre-R12 code (see
+R12's own section above). `tests/test_r13_shared_depth_budget.py` already
+proves the second half: the exact same recursion, but on a branch where
+the shared depth budget is exhausted, correctly does *not* recurse further
+(`D` gets an edge but no MDE call of its own) — i.e., the recursion is
+real and is bounded by the R13 budget, not unconditional.
+
+Between the two, R6's acceptance criterion is met in full. Writing a third,
+separate test here would just be restating the same assertions under a
+different file name — the kind of premature duplication the project's own
+conventions argue against. No code or test changes for this task; this
+section exists so R6 is marked closed against `docs/review-actions-v1.md`
+rather than silently skipped.
+
