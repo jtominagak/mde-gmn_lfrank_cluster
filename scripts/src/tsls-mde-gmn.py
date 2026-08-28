@@ -1131,11 +1131,10 @@ def load_config():
     # neuron columns themselves.
     cfg['TARGET_METRIC'] = os.environ.get('TSLS_MDE_GMN_TARGET_METRIC', 'correlation')
     cfg['GAMMA_DELTA'] = int(os.environ.get('TSLS_MDE_GMN_GAMMA_DELTA', 2))
-    # Every CCM convergence gate in this pipeline (proper_mde's own CCM
-    # step, and build_interaction_matrix() below) sweeps library sizes as
-    # PERCENTAGES of however many rows it's handed. CCM_WINDOW_ROWS bounds
-    # that row count -- CRITICAL for calibration, not just a speed knob: too
-    # large a window makes every tested library size land in the
+    # MODE='GMN' only (build_interaction_matrix() below) -- sweeps library
+    # sizes as PERCENTAGES of however many rows it's handed. CCM_WINDOW_ROWS
+    # bounds that row count -- CRITICAL for calibration, not just a speed
+    # knob: too large a window makes every tested library size land in the
     # already-converged tail of the real curve, with the gate then
     # (correctly) reporting "no rise" even though the underlying
     # relationship is real. Fixed two past production failures this way
@@ -1143,6 +1142,15 @@ def load_config():
     # rejecting every candidate for both targets) -- recalibrated against
     # real small-libSize data from this dataset. Keep CCM_WINDOW_ROWS's
     # smallest resulting libSize >= (max E in E_RANGE)+2.
+    #
+    # MODE='MDE-GMN' (run_mde_for_target()/run_multi_mde_for_targets(),
+    # the pipeline's own default) no longer uses this knob at all -- see
+    # TARGET_RANKING_WINDOW_ROWS/MIN_PRED_EVENTS/MAX_WINDOW_ROWS/
+    # CCM_LIB_SIZES_ROWS below, and docs/review-findings.md's own
+    # window-sizing section for why: a single fixed window/percentage-based
+    # library grid made f1-scored ranking degenerate for real neuron
+    # targets whose own reset events are too sparse within any window small
+    # enough to keep the CCM gate's own convergence curve meaningful.
     cfg['CCM_WINDOW_ROWS'] = int(os.environ.get('TSLS_MDE_GMN_CCM_WINDOW_ROWS', 800))
     # R17 (docs/review-actions-v1.md), gated on R9's own calibration: R9's
     # window sweep measured, at this pipeline's CCM_WINDOW_ROWS=800 default
@@ -1162,6 +1170,75 @@ def load_config():
     )
     cfg['CCM_SAMPLE'] = int(os.environ.get('TSLS_MDE_GMN_CCM_SAMPLE', 20))
     cfg['CCM_SLOPE'] = float(os.environ.get('TSLS_MDE_GMN_CCM_SLOPE', 0.01))
+
+    # Window-sizing fix (docs/review-findings.md) -- MODE='MDE-GMN' only.
+    # Replaces CCM_WINDOW_ROWS/CCM_LIB_SIZE_PCTS for run_mde_for_target()/
+    # run_multi_mde_for_targets()'s own ranking-stage/E-select window and
+    # the CCM gate's own library sweep, decoupled from each other (see
+    # _resolve_target_ranking_window()'s and proper_mde()'s own `libSizes`
+    # docstrings for the full reasoning -- a single fixed window/percentage
+    # grid made f1-scored ranking degenerate for real sparse-firing
+    # neurons).
+    #
+    # TARGET_RANKING_WINDOW_ROWS: the depth-0 seed's own fixed
+    # ranking/E-select window (behavioral targets have no reset-event
+    # concept, so there's nothing to extend against) -- arbitrary, set to
+    # 1000 for now; larger than the old CCM_WINDOW_ROWS=800 default, no
+    # other rationale yet.
+    cfg['TARGET_RANKING_WINDOW_ROWS'] = int(
+        os.environ.get('TSLS_MDE_GMN_TARGET_RANKING_WINDOW_ROWS', 1000))
+    # MIN_PRED_EVENTS: for every Stage 1/Stage 2 (neuron) node, its own
+    # ranking window is extended -- never past the leakage boundary B --
+    # until its own PRED portion (the last (1 - lib_ratio) fraction of ROWS
+    # of the window, the part `f1`-scoring actually touches) contains at
+    # least this many of that neuron's real reset events, counted strictly
+    # within [0, B). A plain fixed integer, not a fraction of anything
+    # neuron-specific (see docs/review-findings.md for why an earlier
+    # "half of this neuron's own total events" design was abandoned: it
+    # made a busy neuron face a stricter test than a quiet one for no
+    # stated reason, and -- checked against the whole window rather than
+    # its pred portion -- was found on real data to pass while the pred
+    # portion itself still had too few events to score anything on).
+    #
+    # Calibrated (not guessed) via r9_ccm_window_e_calibration.py's own
+    # MIN_PRED_EVENTS section: f1 between a real TSLS slice and a lightly
+    # perturbed copy of itself, >=200 draws per point, stratified by
+    # firing-rate tercile. Result: a smooth ~1/sqrt(N) std decay with NO
+    # natural elbow (5->0.146, 10->0.104, 20->0.070, 40->0.050, 80->0.036,
+    # 160->0.025, pooled) -- so 20 is a threshold choice justified by the
+    # cost/reachability tradeoff below, not a discovered stabilisation
+    # point. At 20, std~0.07 is still ~3x smaller than CROSS_MAP_RHO_MIN's
+    # own 0.2 default, and real data (REGION_CHANNEL_CAP=15, this session)
+    # showed only 3/45 channels unreachable within the leakage-safe range
+    # (median 3,593 rows needed) -- 40 and 80 buy modestly less noise at a
+    # steep cost in both unreachable channels (8/45, 20/45) and window
+    # length (median ~10,400 rows either way).
+    cfg['MIN_PRED_EVENTS'] = int(os.environ.get('TSLS_MDE_GMN_MIN_PRED_EVENTS', 20))
+    # MAX_WINDOW_ROWS: a plain compute ceiling on the search above -- NOT
+    # calibrated (unlike MIN_PRED_EVENTS): if a node can't reach
+    # MIN_PRED_EVENTS within min(MAX_WINDOW_ROWS, B), it's skipped (logged,
+    # with the shortfall) rather than scored on too few events.
+    # MIN_PRED_EVENTS is the statistical floor; this is the compute
+    # ceiling -- the two express one thing each. 30000 is comfortably
+    # above the largest real row count MIN_PRED_EVENTS=20 was observed to
+    # need (26,748) and safely below this dataset's own leakage boundary
+    # (~38,067) -- a backstop, not a tuned value.
+    cfg['MAX_WINDOW_ROWS'] = int(os.environ.get('TSLS_MDE_GMN_MAX_WINDOW_ROWS', 30000))
+    # CCM_LIB_SIZES_ROWS: explicit, absolute row counts (never a percentage
+    # of the -- now node-specific, potentially much larger -- ranking
+    # window above) for the CCM gate's own convergence-curve library sweep.
+    # Starts from R9/R17's own empirically-calibrated percentage grid
+    # (2,3,5,8,20,50% of the old 800-row CCM_WINDOW_ROWS = 16,24,40,64,160,
+    # 400 rows), plus one additional point (800) for better plateau
+    # visibility now that the surrounding frame can be much larger --
+    # re-validated at both an 800-row and an 8000-row frame on real data
+    # (docs/review-findings.md): the same absolute values showed the same
+    # qualitative "rising, then plateauing" shape at both scales, since
+    # that shape is a property of the absolute library size, not its ratio
+    # to the frame.
+    cfg['CCM_LIB_SIZES_ROWS'] = tuple(
+        _env_int_list('TSLS_MDE_GMN_CCM_LIB_SIZES_ROWS', (16, 24, 40, 64, 160, 400, 800))
+    )
 
     # ---- Search reuse ---------------------------------------------------
     # See simple-mde-gmn.py's own module docstring's SEARCH REUSE section
@@ -1256,6 +1333,106 @@ def _ccm_window(df, lib_ratio, max_rows):
     windowed = df.iloc[:n].reset_index(drop=True)
     lib_end = max(1, int(round(n * lib_ratio)))
     return windowed, lib_end
+
+
+def _resolve_target_ranking_window(target, full_df, usable_df, lib_ratio,
+                                    is_behavioral_target, target_ranking_window_rows,
+                                    min_pred_events, max_window_rows):
+    '''Window-sizing fix (found while verifying R22, docs/review-actions-v1.md
+    -- see docs/review-findings.md's own window-sizing section for the full
+    real-data investigation, including the two abandoned designs this
+    replaces): resolves the ranking-stage/E-auto-select window for one
+    node's own run_mde_for_target() call, decoupled from CCM_WINDOW_ROWS
+    (which stays governing the CCM gate's own convergence-curve library
+    sizing, now via absolute row counts -- see `ccm_lib_sizes_rows` in
+    run_mde_for_target()'s own docstring -- not this function's own frame
+    size at all).
+
+    BEHAVIORAL TARGETS (`is_behavioral_target=True`, always true at the
+    depth-0 seed): no TSLS reset-event concept applies (the target is a
+    genuine continuous trace, correlation-scored) -- window is simply
+    `min(target_ranking_window_rows, len(usable_df))`, a fixed constant
+    (default 1000), unrelated to firing rate. `min_pred_events` is not
+    used, `max_window_rows` is not used, and the returned event count is
+    always `None`.
+
+    NEURON TARGETS (`is_behavioral_target=False`, virtually every Stage 1/
+    Stage 2 node): grow the window W (in rows); within W, the PRED portion
+    is its own last `1 - lib_ratio` fraction of ROWS (the same split
+    `_ccm_window()` will later carve out of this exact W for the CCM
+    gate -- see that function). Count `target`'s real reset events that
+    fall in that row range -- never by events, only ever by rows -- and
+    stop at the smallest W where that count is >= `min_pred_events`.
+    `min_pred_events` is a plain, fixed integer (not a fraction of
+    anything neuron-specific): it answers "how many matched events does
+    f1 need before it is signal rather than noise", which is a property
+    of the metric, not of the neuron (see docs/review-findings.md for the
+    full reasoning behind abandoning the earlier
+    fraction-of-a-neuron's-own-total-events design, which made a busy
+    neuron face a stricter test than a quiet one for no stated reason, and
+    which -- checked against the WHOLE window rather than its pred
+    portion -- was later found on real data to pass while the pred
+    portion itself still had too few events to score anything on).
+
+    The search never grows W past `min(max_window_rows, len(usable_df))`
+    -- `max_window_rows` is a plain compute ceiling (not calibrated; see
+    load_config()'s own docstring), `len(usable_df)` is the leakage-safe
+    boundary this function's own caller has already trimmed to (see
+    run_mde_for_target()'s own LEAKAGE docstring). ALL event counting here
+    happens strictly within `usable_df` (i.e. `[0, B)`) -- never using
+    `full_df` rows at or past B, since sizing a search parameter from
+    held-out data is the same class of leakage the B boundary exists to
+    prevent (`full_df` is accepted only for signature symmetry with the
+    behavioral branch and is not read in this branch).
+
+    Returns (window_rows, pred_event_count). On success, `pred_event_count`
+    is the achieved count in the resolved window's own pred portion
+    (>= min_pred_events). On failure (`min_pred_events` unreachable
+    anywhere within the cap), returns (None, pred_event_count) where
+    pred_event_count is the best (largest) count achieved at ANY window
+    size tried, not necessarily at the cap itself -- the pred portion's
+    own event count is not guaranteed monotonic in W (both its edges only
+    ever move forward as W grows, but an event row can age out of the
+    portion's left edge in the same step before any new event row enters
+    at the right, so the count can dip locally) -- the caller can and
+    should report the shortfall as `min_pred_events - pred_event_count`
+    rather than silently scoring the node on too few events.'''
+    n_usable = len(usable_df)
+    if is_behavioral_target:
+        return min(target_ranking_window_rows, n_usable), None
+
+    cap = min(max_window_rows, n_usable)
+    if cap < 1:
+        return None, 0
+
+    usable_vals = usable_df[target].to_numpy()[:cap]
+    near_zero_threshold = tsls.infer_near_zero_threshold_from_true_tsls(
+        full_df[target].to_numpy())
+    # detect_reset_events_from_tsls classifies each row from only that row
+    # and the one before it (np.diff(..., prepend=x[0])), so truncating the
+    # input to `cap` rows first cannot change any detection within [0, cap).
+    event_indices = tsls.detect_reset_events_from_tsls(
+        usable_vals, near_zero_threshold=near_zero_threshold, drop_threshold=0.0)
+
+    # event_indices is sorted, so searchsorted gives the exact cumulative
+    # count up to any row bound with no explicit loop. pred_start[i] is the
+    # first row of the pred portion for window size w_candidates[i] -- the
+    # same `round(w * lib_ratio)` formula _ccm_window() uses for its own
+    # lib_end, so the final resolved window's pred portion here is exactly
+    # what the CCM gate will later carve out of it too.
+    w_candidates = np.arange(1, cap + 1)
+    pred_start = np.round(w_candidates * lib_ratio).astype(int)
+    lo = np.searchsorted(event_indices, pred_start, side='left')
+    hi = np.searchsorted(event_indices, w_candidates, side='left')
+    pred_events_up_to_w = hi - lo
+
+    passing = pred_events_up_to_w >= min_pred_events
+    if not passing.any():
+        # Best count seen at ANY window size tried, not just at the cap --
+        # see this function's own docstring for why the two can differ.
+        return None, int(pred_events_up_to_w.max())
+    first = int(np.argmax(passing))
+    return int(w_candidates[first]), int(pred_events_up_to_w[first])
 
 
 def _metric_for(column, targets, metric, target_metric):
@@ -1408,8 +1585,10 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
                         mde_d, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
                         results_dir, delay_set, tp=1,
                         metric='f1', target_metric='correlation', gamma_delta=2,
-                        ccm_window_rows=800, ccm_lib_size_pcts=(2, 3, 5, 8, 12, 20, 30, 50),
                         ccm_sample=20, ccm_slope=0.01,
+                        is_behavioral_target=True, target_ranking_window_rows=1000,
+                        min_pred_events=20, max_window_rows=30000,
+                        ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
                         reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                         data_file=None, data_file_sha256=None, code_fingerprint=None,
                         cache_stage='stage1', max_e=None, inner_workers=1, raw_columns=None):
@@ -1444,27 +1623,51 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     same numeric value as before, just not redundantly re-pinned here.
 
     metric vs. ccmMetric passed to proper_mde: `target_metric` scores the
-    RANKING stage (predictions of `target`, a continuous TARGETS column --
-    never `metric`) AND the E-auto-select sweep above (same reasoning: it
-    also predicts `target`); `metric` scores the CCM causality gate
-    (predictions of each CANDIDATE column, a TSLS-converted neuron series)
-    -- see load_config()'s TARGET_METRIC docstring and this file's
-    _metric_for(); proper_mde's own docstring anticipates exactly this
-    split.
+    RANKING stage (predictions of `target` -- a continuous TARGETS column
+    at the depth-0 seed, a neuron at every Stage 1/Stage 2 node -- never
+    `metric`) AND the E-auto-select sweep above (same reasoning: it also
+    predicts `target`); `metric` scores the CCM causality gate (predictions
+    of each CANDIDATE column, always a TSLS-converted neuron series) -- see
+    load_config()'s TARGET_METRIC docstring and this file's _metric_for().
+    Callers are responsible for resolving `target_metric` correctly for
+    whatever `target` actually is here (`_metric_for(target, targets,
+    metric, target_metric)` at the depth>=1 call sites -- see the
+    metric-routing fix in docs/review-findings.md for why this call site
+    previously got it wrong for every neuron node).
+
+    WINDOW SIZING (docs/review-findings.md's own window-sizing section --
+    found and fixed alongside the metric-routing bug above, since fixing
+    that bug alone made `f1`-scored ranking degenerate under the previous
+    fixed CCM_WINDOW_ROWS=800 window): the ranking-stage/E-auto-select
+    window is no longer CCM_WINDOW_ROWS -- it is resolved per node by
+    `_resolve_target_ranking_window()` (see that function's own docstring),
+    decoupled entirely from the CCM gate's own convergence-curve library
+    sizing (`ccm_lib_sizes_rows`, absolute row counts, never a percentage
+    of this window -- see that parameter's own docstring below for why).
+    `is_behavioral_target=True` (the depth-0 seed's own case): a fixed
+    `target_ranking_window_rows` (default 1000), no event-count concept.
+    `is_behavioral_target=False` (virtually every Stage 1/Stage 2 node):
+    extended until `target`'s own PRED portion of the window (the part
+    `f1`-scoring actually touches, not the window as a whole) contains at
+    least `min_pred_events` (default 20, empirically calibrated -- see
+    load_config()'s own docstring) real reset events, capped at
+    `max_window_rows` (default 30000, a plain compute ceiling, not
+    calibrated) -- see `_resolve_target_ranking_window()`'s own docstring
+    for the full reasoning and the two earlier designs this replaces.
 
     LEAKAGE (see load_config()'s three-way A/B/end window docstring,
     identical rationale to simple-mde-gmn.py's own run_mde_for_target()):
     `prediction_start`/`prediction_length` here are always A and B-A. The
-    row range handed to proper_mde is trimmed twice before being windowed
-    to CCM_WINDOW_ROWS (see _ccm_window() and load_config()'s own
-    CCM_WINDOW_ROWS docstring for why that windowing is necessary at this
-    pipeline's row counts): `warmup` rows are skipped at the front (delay-
+    row range handed to proper_mde is trimmed twice before being resolved
+    to this node's own ranking window (see _resolve_target_ranking_window()
+    and _ccm_window()): `warmup` rows are skipped at the front (delay-
     expansion NaN warm-up, same as simple-mde-gmn.py) and `tp` rows are
     trimmed from the back (B - tp, not B, so the last validated row's own
     t+tp target label can never land at or past B) -- both applied BEFORE
-    windowing, so the CCM window itself can never reach into the Generate/
-    Forecast validation segment [B, end) regardless of CCM_WINDOW_ROWS's
-    value.
+    the window is resolved, so neither the fixed depth-0 window nor the
+    extended per-node neuron window can ever reach into the Generate/
+    Forecast validation segment [B, end), regardless of how large either
+    grows.
 
     CACHE (reuse_cache, gated by TSLS_MDE_GMN_REUSE_BEST_PARAMS): ported
     unchanged from simple-mde-gmn.py -- a cache hit reconstructs the same
@@ -1505,7 +1708,23 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     proper_mde's own no-op default. `build_nested_mde_network()`'s Stage 1
     and Stage 2 calls both pass `raw_columns=raw_columns` (their
     `observable_columns`/`candidate_pool` can genuinely contain
-    delay-suffixed synthetic names, confirmed on real data this session).'''
+    delay-suffixed synthetic names, confirmed on real data this session).
+
+    `ccm_lib_sizes_rows` (window-sizing fix, docs/review-findings.md):
+    explicit, absolute row counts for the CCM gate's own convergence-curve
+    library sweep, passed to `proper_mde` as `libSizes` (bypassing its own
+    `pLibSizes`-as-percentage-of-window computation entirely). Deliberately
+    NOT a percentage of this node's own (now node-specific, potentially
+    much larger) ranking window: R9's own empirical calibration
+    (docs/review-findings.md) found the "rising, then plateauing"
+    convergence shape is a property of the *absolute* library size, not
+    its ratio to the surrounding frame -- confirmed by re-running that same
+    calibration at both an 800-row frame (R9's own original scale) and an
+    8000-row frame (a realistic neuron-target scale under this fix): the
+    same absolute values showed the same qualitative shape at both scales.
+    See load_config()'s own CCM_LIB_SIZES_ROWS docstring for the exact
+    calibrated default and the reasoning behind extending R9/R17's own
+    6-value grid with one more point.'''
     # Fallback only -- every real call site (main()'s depth-0 seed, and
     # both of build_nested_mde_network()'s per-wave passes) passes this
     # explicitly as the raw TSLS_MDE_GMN_MDE_D value. Falls back to mde_d
@@ -1522,13 +1741,40 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     warmup = max((abs(d) for d in delay_set), default=0)
     usable_end = prediction_start + prediction_length - tp
 
+    usable_df = mde_df.iloc[warmup:usable_end].reset_index(drop=True)
+    lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
+
+    # Window-sizing fix (docs/review-findings.md) -- resolved BEFORE the
+    # cache fingerprint below, since both the resolved window size and (for
+    # a neuron target) pred_event_count are real, data-dependent inputs to
+    # this call's own outcome and must be part of it (A5).
+    window_rows, pred_event_count = _resolve_target_ranking_window(
+        target, df, usable_df, lib_ratio,
+        is_behavioral_target, target_ranking_window_rows, min_pred_events, max_window_rows,
+    )
+    if window_rows is None:
+        shortfall = min_pred_events - pred_event_count
+        cap = min(max_window_rows, len(usable_df))
+        print(f'{target}: cannot reach MIN_PRED_EVENTS={min_pred_events} in the pred portion '
+              f'of any window up to min(MAX_WINDOW_ROWS, leakage-safe range)={cap} rows -- '
+              f'best achievable was {pred_event_count} events (short by {shortfall}). '
+              f'Treating as a dead-end (zero drivers selected, no further nesting from this '
+              f'node) rather than scoring it on too few events.', flush=True)
+        return _failed_mde_result(target)
+    if not is_behavioral_target:
+        print(f'{target}: resolved ranking window={window_rows} rows, '
+              f'pred_event_count={pred_event_count} (MIN_PRED_EVENTS={min_pred_events})',
+              flush=True)
+
     fingerprint = None
     cache_filename = f'mde_selection_{cache_stage}_{target}.pkl'
     if reuse_cache:
         fingerprint = build_mde_selection_fingerprint(
             target, observable_columns, mde_d, tp, embed_dim_rho_min, cross_map_rho_min,
             exclusion_radius, delay_set, prediction_start, prediction_length,
-            metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
+            metric, target_metric, gamma_delta,
+            is_behavioral_target, target_ranking_window_rows, min_pred_events, max_window_rows,
+            window_rows, pred_event_count, ccm_lib_sizes_rows,
             ccm_sample, ccm_slope,
             data_file, data_file_sha256, code_fingerprint, cache_stage, max_e,
         )
@@ -1555,9 +1801,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
         print(f'{target}: TSLS_MDE_GMN_REUSE_BEST_PARAMS set but no matching cached MDE selection '
               f'found under {prev_runs_dir} -- running forward-selection.', flush=True)
 
-    usable_df = mde_df.iloc[warmup:usable_end].reset_index(drop=True)
-    lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
-    ccm_df, ccm_lib_end = _ccm_window(usable_df, lib_ratio, ccm_window_rows)
+    ccm_df, ccm_lib_end = _ccm_window(usable_df, lib_ratio, window_rows)
 
     # One inner pool for this node's WHOLE proper_mde() call -- opened
     # once here, reused across every dimension's ranking loop and every
@@ -1589,7 +1833,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
             ccm_df, target=target, columns=observable_columns, D=mde_d,
             lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)],
             Tp=tp, E=0, maxE=max_e, exclusionRadius=exclusion_radius,
-            pLibSizes=ccm_lib_size_pcts, sample=ccm_sample, ccmSlope=ccm_slope,
+            libSizes=ccm_lib_sizes_rows, sample=ccm_sample, ccmSlope=ccm_slope,
             crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
             metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
             verbose=True, pool=inner_pool, column_delay=column_delay,
@@ -1633,8 +1877,9 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
                                mde_d, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
                                results_dir, delay_set, tp=1,
                                metric='f1', target_metric='correlation', gamma_delta=2,
-                               ccm_window_rows=800, ccm_lib_size_pcts=(2, 3, 5, 8, 12, 20, 30, 50),
                                ccm_sample=20, ccm_slope=0.01,
+                               target_ranking_window_rows=1000,
+                               ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
                                reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                                data_file=None, data_file_sha256=None, code_fingerprint=None,
                                cache_stage='stage1', E=3, target_aggregate='mean'):
@@ -1666,6 +1911,15 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
     # instead of one.
     warmup = max((abs(d) for d in delay_set), default=0)
     usable_end = prediction_start + prediction_length - tp
+    usable_df = mde_df.iloc[warmup:usable_end].reset_index(drop=True)
+    lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
+
+    # Window-sizing fix (docs/review-findings.md): every target here is
+    # always behavioral (GMN_MODE='combined''s depth-0 seed only, per this
+    # function's own docstring) -- no per-node event-count extension, just
+    # the same fixed constant _resolve_target_ranking_window() uses for a
+    # single behavioral target, applied once for the whole joint call.
+    window_rows = min(target_ranking_window_rows, len(usable_df))
 
     targets_tag = '_'.join(targets)
     fingerprint = None
@@ -1674,7 +1928,8 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
         fingerprint = build_multi_mde_selection_fingerprint(
             targets, observable_columns, mde_d, tp, embed_dim_rho_min, cross_map_rho_min,
             exclusion_radius, delay_set, prediction_start, prediction_length,
-            metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
+            metric, target_metric, gamma_delta,
+            target_ranking_window_rows, window_rows, ccm_lib_sizes_rows,
             ccm_sample, ccm_slope,
             data_file, data_file_sha256, code_fingerprint, cache_stage, E, target_aggregate,
         )
@@ -1701,15 +1956,13 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
         print(f'{targets_tag}: TSLS_MDE_GMN_REUSE_BEST_PARAMS set but no matching cached joint '
               f'MDE selection found under {prev_runs_dir} -- running forward-selection.', flush=True)
 
-    usable_df = mde_df.iloc[warmup:usable_end].reset_index(drop=True)
-    lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
-    ccm_df, ccm_lib_end = _ccm_window(usable_df, lib_ratio, ccm_window_rows)
+    ccm_df, ccm_lib_end = _ccm_window(usable_df, lib_ratio, window_rows)
 
     result = tsls.multi_proper_mde(
         ccm_df, targets=list(targets), columns=observable_columns, D=mde_d,
         lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)],
         Tp=tp, E=E, exclusionRadius=exclusion_radius,
-        pLibSizes=ccm_lib_size_pcts, sample=ccm_sample, ccmSlope=ccm_slope,
+        libSizes=ccm_lib_sizes_rows, sample=ccm_sample, ccmSlope=ccm_slope,
         crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
         metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
         target_aggregate=target_aggregate,
@@ -2007,8 +2260,9 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                               prediction_start, prediction_length, nested_n, nested_m,
                               embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
                               results_dir, mde_results, delay_set, tp,
-                              metric, target_metric, gamma_delta, ccm_window_rows,
-                              ccm_lib_size_pcts, ccm_sample, ccm_slope, cores,
+                              metric, target_metric, gamma_delta,
+                              target_ranking_window_rows, min_pred_events, max_window_rows,
+                              ccm_lib_sizes_rows, ccm_sample, ccm_slope, cores,
                               lag_set, stage2_allow_real_observables,
                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                               data_file=None, data_file_sha256=None, code_fingerprint=None):
@@ -2155,16 +2409,27 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                     # gate's own `metric` argument is untouched, already
                     # correct (it always scores a candidate, never `node`
                     # itself, and no candidate here is ever a target).
+                    # All arguments from `tp` onward passed by keyword --
+                    # this call site inserts new parameters (window-sizing
+                    # fix) ahead of several trailing ones (reuse_cache
+                    # onward); relying on positional order here would be a
+                    # silent-miswiring trap the moment either signature
+                    # changes again.
                     fut = executor.submit(
                         run_mde_for_target, node, expanded_df, candidate_pool,
                         prediction_start, prediction_length, effective_d,
                         embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
-                        results_dir, delay_set, tp,
-                        metric, _metric_for(node, targets, metric, target_metric),
-                        gamma_delta, ccm_window_rows,
-                        ccm_lib_size_pcts, ccm_sample, ccm_slope,
-                        reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
-                        code_fingerprint,
+                        results_dir, delay_set,
+                        tp=tp, metric=metric,
+                        target_metric=_metric_for(node, targets, metric, target_metric),
+                        gamma_delta=gamma_delta, ccm_sample=ccm_sample, ccm_slope=ccm_slope,
+                        is_behavioral_target=(node in targets),
+                        target_ranking_window_rows=target_ranking_window_rows,
+                        min_pred_events=min_pred_events, max_window_rows=max_window_rows,
+                        ccm_lib_sizes_rows=ccm_lib_sizes_rows,
+                        reuse_cache=reuse_cache, prev_runs_dir=prev_runs_dir,
+                        run_cache_dir=run_cache_dir, data_file=data_file,
+                        data_file_sha256=data_file_sha256, code_fingerprint=code_fingerprint,
                         max_e=nested_n, inner_workers=inner_workers, raw_columns=raw_columns,
                     )
                     futures[fut] = node
@@ -2252,17 +2517,25 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                 # Metric-routing fix -- see Stage 1's own identical comment
                 # above. `node` here is a Stage 1 backbone node (real
                 # observable) or a Stage-2-recursed real observable, never
-                # one of `targets` at this depth.
+                # one of `targets` at this depth. All arguments from `tp`
+                # onward passed by keyword -- see Stage 1's own identical
+                # comment for why.
                 fut = executor.submit(
                     run_mde_for_target, node, stage2_df, candidate_pool,
                     prediction_start, prediction_length, effective_d,
                     embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
-                    results_dir, lag_set, tp,
-                    metric, _metric_for(node, targets, metric, target_metric),
-                    gamma_delta, ccm_window_rows,
-                    ccm_lib_size_pcts, ccm_sample, ccm_slope,
-                    reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
-                    code_fingerprint, 'stage2',
+                    results_dir, lag_set,
+                    tp=tp, metric=metric,
+                    target_metric=_metric_for(node, targets, metric, target_metric),
+                    gamma_delta=gamma_delta, ccm_sample=ccm_sample, ccm_slope=ccm_slope,
+                    is_behavioral_target=(node in targets),
+                    target_ranking_window_rows=target_ranking_window_rows,
+                    min_pred_events=min_pred_events, max_window_rows=max_window_rows,
+                    ccm_lib_sizes_rows=ccm_lib_sizes_rows,
+                    reuse_cache=reuse_cache, prev_runs_dir=prev_runs_dir,
+                    run_cache_dir=run_cache_dir, data_file=data_file,
+                    data_file_sha256=data_file_sha256, code_fingerprint=code_fingerprint,
+                    cache_stage='stage2',
                     max_e=nested_n, inner_workers=inner_workers2, raw_columns=raw_columns,
                 )
                 futures[fut] = node
@@ -2539,6 +2812,8 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                    mode, e_range, tau_range, results_dir, cores,
                    metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
                    ccm_sample, ccm_slope,
+                   target_ranking_window_rows=1000, min_pred_events=20, max_window_rows=30000,
+                   ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
                    observable_columns=None, nested_n=None, nested_m=None,
                    embed_dim_rho_min=None, cross_map_rho_min=None, exclusion_radius=None,
                    lag_set=None, stage2_allow_real_observables=False, tp=1,
@@ -2587,6 +2862,9 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
             stage2_allow_real_observables=stage2_allow_real_observables,
             gmn_mode=gmn_mode, multi_mde_e=multi_mde_e,
             multi_mde_target_aggregate=multi_mde_target_aggregate,
+            target_ranking_window_rows=target_ranking_window_rows,
+            min_pred_events=min_pred_events, max_window_rows=max_window_rows,
+            ccm_lib_sizes_rows=ccm_lib_sizes_rows,
         )
         hit = find_cached(prev_runs_dir, cache_filename, fingerprint, load_one=_load_pickle_cache_entry)
         if hit is not None:
@@ -2618,8 +2896,9 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                 prediction_start, prediction_length,
                 nested_n, nested_m, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
                 results_dir, mde_results, [], tp,
-                metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
-                ccm_sample, ccm_slope, cores,
+                metric, target_metric, gamma_delta,
+                target_ranking_window_rows, min_pred_events, max_window_rows,
+                ccm_lib_sizes_rows, ccm_sample, ccm_slope, cores,
                 lag_set, stage2_allow_real_observables,
                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
                 code_fingerprint,
@@ -3178,7 +3457,10 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
                                ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
                                data_file, data_file_sha256, code_fingerprint,
                                stage2_allow_real_observables=False,
-                               gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None):
+                               gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
+                               target_ranking_window_rows=1000, min_pred_events=20,
+                               max_window_rows=30000,
+                               ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800)):
     '''Everything that determines one group's network-construction outcome
     -- ported from simple-mde-gmn.py, TSLS scoring/CCM-calibration knobs
     folded in. Computable *before* that construction runs, since the whole
@@ -3199,7 +3481,16 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
     this fingerprint too -- otherwise switching GMN_MODE (or its
     multi_proper_mde knobs) between two REUSE_BEST_PARAMS runs wouldn't
     invalidate a stale cached network built from the other mode's
-    mde_results.'''
+    mde_results.
+
+    `target_ranking_window_rows`/`min_pred_events`/`max_window_rows`/
+    `ccm_lib_sizes_rows` (window-sizing fix, docs/review-findings.md):
+    MODE='MDE-GMN' only -- `build_nested_mde_network()`'s own per-node
+    calls now resolve their own ranking window from these, decoupled from
+    `ccm_window_rows`/`ccm_lib_size_pcts` (which stay exactly what they
+    always were, MODE='GMN'-only, via `build_interaction_matrix()`). Real
+    topology inputs for MDE-GMN networks now, same reasoning as every
+    other knob here.'''
     return {
         'mode': mode,
         'gmn_mode': gmn_mode,
@@ -3222,6 +3513,10 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
         'gamma_delta': gamma_delta,
         'ccm_window_rows': ccm_window_rows,
         'ccm_lib_size_pcts': list(ccm_lib_size_pcts),
+        'target_ranking_window_rows': target_ranking_window_rows,
+        'min_pred_events': min_pred_events,
+        'max_window_rows': max_window_rows,
+        'ccm_lib_sizes_rows': list(ccm_lib_sizes_rows),
         'ccm_sample': ccm_sample,
         'ccm_slope': ccm_slope,
         'prediction_start': prediction_start,
@@ -3237,7 +3532,9 @@ def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_r
                                      cross_map_rho_min, exclusion_radius, delay_set,
                                      prediction_start, prediction_length,
                                      metric, target_metric, gamma_delta,
-                                     ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
+                                     is_behavioral_target, target_ranking_window_rows,
+                                     min_pred_events, max_window_rows, window_rows, pred_event_count,
+                                     ccm_lib_sizes_rows, ccm_sample, ccm_slope,
                                      data_file, data_file_sha256, code_fingerprint,
                                      cache_stage='stage1', max_e=None):
     '''Everything that determines one run_mde_for_target() call's outcome,
@@ -3251,7 +3548,17 @@ def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_r
     own docstring) is a real input to the outcome now that E is
     auto-selected rather than a hardcoded constant, so it must be part of
     the fingerprint too: a run with a different max_e can select a
-    different E, hence different candidates, for the same everything else.'''
+    different E, hence different candidates, for the same everything else.
+
+    Window-sizing fix (docs/review-findings.md): `window_rows`/
+    `pred_event_count` are the RESOLVED, data-dependent outputs of
+    _resolve_target_ranking_window() for this specific node -- not just the
+    config-level knobs (`target_ranking_window_rows`/`min_pred_events`/
+    `max_window_rows`) that produced them. All must be in the
+    fingerprint (A5): the resolved window is itself a real input to this
+    call's outcome, and a cache built before this fix (a different window,
+    a different -- previously wrong -- target_metric for every neuron
+    node) must not be silently reused.'''
     return {
         'node': node,
         'candidate_pool': list(candidate_pool),
@@ -3265,8 +3572,13 @@ def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_r
         'metric': metric,
         'target_metric': target_metric,
         'gamma_delta': gamma_delta,
-        'ccm_window_rows': ccm_window_rows,
-        'ccm_lib_size_pcts': list(ccm_lib_size_pcts),
+        'is_behavioral_target': is_behavioral_target,
+        'target_ranking_window_rows': target_ranking_window_rows,
+        'min_pred_events': min_pred_events,
+        'max_window_rows': max_window_rows,
+        'window_rows': window_rows,
+        'pred_event_count': pred_event_count,
+        'ccm_lib_sizes_rows': list(ccm_lib_sizes_rows),
         'ccm_sample': ccm_sample,
         'ccm_slope': ccm_slope,
         'prediction_start': prediction_start,
@@ -3282,7 +3594,8 @@ def build_multi_mde_selection_fingerprint(targets, candidate_pool, mde_d, tp, em
                                            cross_map_rho_min, exclusion_radius, delay_set,
                                            prediction_start, prediction_length,
                                            metric, target_metric, gamma_delta,
-                                           ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
+                                           target_ranking_window_rows, window_rows,
+                                           ccm_lib_sizes_rows, ccm_sample, ccm_slope,
                                            data_file, data_file_sha256, code_fingerprint,
                                            cache_stage='stage1', E=3, target_aggregate='mean'):
     '''Multi-target counterpart of build_mde_selection_fingerprint() -- same
@@ -3290,7 +3603,11 @@ def build_multi_mde_selection_fingerprint(targets, candidate_pool, mde_d, tp, em
     function's own candidate_pool-ordering rationale, identical here) in
     place of a single `node`, plus `E`/`target_aggregate`
     (multi_proper_mde's own extra required/optional arguments, with no
-    proper_mde equivalent -- see run_multi_mde_for_targets()'s docstring).'''
+    proper_mde equivalent -- see run_multi_mde_for_targets()'s docstring).
+    `window_rows` (window-sizing fix, docs/review-findings.md): the
+    resolved window itself, not just the `target_ranking_window_rows`
+    constant that produced it -- kept as its own field for the same A5
+    reason build_mde_selection_fingerprint() records both.'''
     return {
         'targets': list(targets),
         'candidate_pool': list(candidate_pool),
@@ -3305,8 +3622,9 @@ def build_multi_mde_selection_fingerprint(targets, candidate_pool, mde_d, tp, em
         'metric': metric,
         'target_metric': target_metric,
         'gamma_delta': gamma_delta,
-        'ccm_window_rows': ccm_window_rows,
-        'ccm_lib_size_pcts': list(ccm_lib_size_pcts),
+        'target_ranking_window_rows': target_ranking_window_rows,
+        'window_rows': window_rows,
+        'ccm_lib_sizes_rows': list(ccm_lib_sizes_rows),
         'ccm_sample': ccm_sample,
         'ccm_slope': ccm_slope,
         'prediction_start': prediction_start,
@@ -4450,7 +4768,8 @@ def main():
                     tp=cfg['TP'],
                     metric=cfg['METRIC'], target_metric=cfg['TARGET_METRIC'],
                     gamma_delta=cfg['GAMMA_DELTA'],
-                    ccm_window_rows=cfg['CCM_WINDOW_ROWS'], ccm_lib_size_pcts=cfg['CCM_LIB_SIZE_PCTS'],
+                    target_ranking_window_rows=cfg['TARGET_RANKING_WINDOW_ROWS'],
+                    ccm_lib_sizes_rows=cfg['CCM_LIB_SIZES_ROWS'],
                     ccm_sample=cfg['CCM_SAMPLE'], ccm_slope=cfg['CCM_SLOPE'],
                     reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
                     run_cache_dir=cfg['RUN_CACHE_DIR'],
@@ -4481,7 +4800,11 @@ def main():
                         tp=cfg['TP'],
                         metric=cfg['METRIC'], target_metric=cfg['TARGET_METRIC'],
                         gamma_delta=cfg['GAMMA_DELTA'],
-                        ccm_window_rows=cfg['CCM_WINDOW_ROWS'], ccm_lib_size_pcts=cfg['CCM_LIB_SIZE_PCTS'],
+                        is_behavioral_target=True,
+                        target_ranking_window_rows=cfg['TARGET_RANKING_WINDOW_ROWS'],
+                        min_pred_events=cfg['MIN_PRED_EVENTS'],
+                        max_window_rows=cfg['MAX_WINDOW_ROWS'],
+                        ccm_lib_sizes_rows=cfg['CCM_LIB_SIZES_ROWS'],
                         ccm_sample=cfg['CCM_SAMPLE'], ccm_slope=cfg['CCM_SLOPE'],
                         reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
                         run_cache_dir=cfg['RUN_CACHE_DIR'],
@@ -4530,6 +4853,10 @@ def main():
             cfg['MODE'], cfg['E_RANGE'], cfg['TAU_RANGE'], cfg['RESULTS_DIR'], cfg['CORES'],
             cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'], cfg['CCM_WINDOW_ROWS'],
             cfg['CCM_LIB_SIZE_PCTS'], cfg['CCM_SAMPLE'], cfg['CCM_SLOPE'],
+            target_ranking_window_rows=cfg['TARGET_RANKING_WINDOW_ROWS'],
+            min_pred_events=cfg['MIN_PRED_EVENTS'],
+            max_window_rows=cfg['MAX_WINDOW_ROWS'],
+            ccm_lib_sizes_rows=cfg['CCM_LIB_SIZES_ROWS'],
             observable_columns=filtered_pools.get(tuple(group), obs_cols),
             nested_n=cfg['MDE_D'], nested_m=cfg['NESTED_M'],
             embed_dim_rho_min=cfg['EMBED_DIM_RHO_MIN'], cross_map_rho_min=cfg['CROSS_MAP_RHO_MIN'],

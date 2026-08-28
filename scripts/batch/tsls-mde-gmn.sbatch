@@ -409,10 +409,32 @@ GAMMA_DELTA=2                  # coincidence window (bins), only used when METRI
 # widen this back toward "percentage of the full ~30-45k-row dataset"
 # without re-validating against real small-libSize data first, and keep
 # the smallest resulting libSize >= (max E in E_RANGE)+2.
+# MODE='GMN' only now (build_interaction_matrix()) -- MODE='MDE-GMN' (this
+# pipeline's own default) no longer uses either of these two; see the
+# window-sizing block below.
 CCM_WINDOW_ROWS=800
 CCM_LIB_SIZE_PCTS="2,3,5,8,12,20,30,50"  # -> ~16,24,40,64,96,160,240,400 rows at CCM_WINDOW_ROWS=800
 CCM_SAMPLE=20                    # random-library resamples averaged per libSize -- higher = less noisy, slower
 CCM_SLOPE=0.01                   # convergence-slope threshold, used by both proper_mde's own CCM gate and build_interaction_matrix()
+
+# ---- Window sizing (MODE='MDE-GMN' only, docs/review-findings.md) -----------
+# Replaces CCM_WINDOW_ROWS/CCM_LIB_SIZE_PCTS above for run_mde_for_target()'s/
+# run_multi_mde_for_targets()'s own ranking-stage/E-select window and the CCM
+# gate's own library sweep -- decoupled from each other, per-node rather than
+# one fixed global window. See load_config()'s own docstrings for the full
+# reasoning and calibration evidence behind each default below.
+TARGET_RANKING_WINDOW_ROWS=1000  # depth-0 (behavioral target) seed's own fixed window, arbitrary
+# MIN_PRED_EVENTS: how many real reset events the target must have in a
+# candidate window's own PRED portion before f1 is treated as signal, not
+# noise. Empirically calibrated (r9_ccm_window_e_calibration.py's own
+# MIN_PRED_EVENTS section, docs/review-findings.md): a smooth ~1/sqrt(N)
+# noise-floor decay with no natural elbow, so 20 is a threshold choice
+# (std~0.07, ~3x below CROSS_MAP_RHO_MIN's 0.2) justified by the
+# cost/reachability tradeoff (only 3/45 real channels unreachable at this
+# value, vs 8/45 and 20/45 at 40/80) -- not a discovered stabilisation point.
+MIN_PRED_EVENTS=20
+MAX_WINDOW_ROWS=30000             # compute ceiling on the search above -- not calibrated, just a backstop
+CCM_LIB_SIZES_ROWS="16,24,40,64,160,400,800"  # absolute row counts for the CCM gate's own library sweep, never a percentage now
 
 # ---- MDE-only diagnostics (skipped when MODE=GMN) ---------------------------
 MAX_TP=20                        # max forecast horizon (steps) for the Tp-vs-rho sweep
@@ -675,6 +697,10 @@ export TSLS_MDE_GMN_CCM_WINDOW_ROWS="${CCM_WINDOW_ROWS}"
 export TSLS_MDE_GMN_CCM_LIB_SIZE_PCTS="${CCM_LIB_SIZE_PCTS}"
 export TSLS_MDE_GMN_CCM_SAMPLE="${CCM_SAMPLE}"
 export TSLS_MDE_GMN_CCM_SLOPE="${CCM_SLOPE}"
+export TSLS_MDE_GMN_TARGET_RANKING_WINDOW_ROWS="${TARGET_RANKING_WINDOW_ROWS}"
+export TSLS_MDE_GMN_MIN_PRED_EVENTS="${MIN_PRED_EVENTS}"
+export TSLS_MDE_GMN_MAX_WINDOW_ROWS="${MAX_WINDOW_ROWS}"
+export TSLS_MDE_GMN_CCM_LIB_SIZES_ROWS="${CCM_LIB_SIZES_ROWS}"
 export TSLS_MDE_GMN_REUSE_BEST_PARAMS="${REUSE_BEST_PARAMS}"
 # Separate from TSLS_MDE_GMN_RESULTS_DIR (also persistent now, but per-job
 # and on /flash) -- these point at the durable *cross-job* bucket cache

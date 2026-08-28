@@ -2423,6 +2423,14 @@ moves the baseline R22's bit-identical test compares against... land this
 fix first, re-establish the Run A baseline, then resume R22") — since the
 fix isn't landed yet, R22 has not resumed.
 
+**Update:** the window-sizing question above was resolved via a full
+redesign (`MIN_PRED_EVENTS`/`MAX_WINDOW_ROWS`, replacing an intermediate
+"half of a neuron's own total events" placeholder that itself went
+through two further abandoned iterations) — see "Window sizing
+(`MIN_PRED_EVENTS`/`MAX_WINDOW_ROWS`) and CCM-gate absolute library
+sizes" below for the full story. R22 remains on hold until that work
+lands and the Run A baseline is re-established.
+
 ---
 
 ## Open question: is `correlation` the right depth-0 metric? — documentation-pass note only, no code change
@@ -2503,4 +2511,334 @@ score identically per-axis). Related to R19's own combined-mode panel-1
 question (the spatial `(x, y)` trajectory plot, added specifically
 because a per-axis time series doesn't show this). Recorded here for the
 documentation pass; no action taken.
+
+---
+
+## Window sizing (`MIN_PRED_EVENTS`/`MAX_WINDOW_ROWS`) and CCM-gate absolute library sizes — resolves the metric-routing fix's own recalibration blocker
+
+**Status:** implemented and tested, on the same `metric-routing-depth-ge1-fix`
+branch as the metric-routing fix above (rebased onto `main` to pick up
+this file's own earlier commit, `7946311`, which the branch had missed
+since it forked before that commit landed). Not yet merged. Both changes
+below ended up in the same set of edits rather than the two separate
+commits originally intended — see "Git-workflow note" at the end.
+
+### Design evolution: why not stop at "half of a neuron's own total events"
+
+The recalibration finding above left an open design question, answered
+first with a provisional placeholder, then revised twice more as real
+data exposed problems with each iteration in turn:
+
+1. **v0 (first instruction, explicitly provisional):** for each neuron
+   node, `min_spike_events = round(0.5 * total_events)` where
+   `total_events` is that neuron's own reset-event count over the
+   *entire* recording; grow the ranking window until its own **prediction
+   portion** (the part `f1`-scoring actually touches) contains at least
+   that many events. **Found mathematically unreachable**: the pred
+   portion can never exceed `1 - lib_ratio` (~0.3 here) of any window,
+   but `0.5 > 0.3`, so no window, however large, could ever satisfy it
+   for a roughly uniformly-firing neuron. Caught by this project's own
+   test (`tests/test_window_sizing.py`'s first version), not by
+   inspection.
+2. **v1:** same threshold, checked against the window **as a whole**
+   instead — matches the original instruction's literal wording ("the
+   window... contains at least MIN_SPIKE_EVENTS"). Passed the test, but
+   real end-to-end verification (`run_mde_for_target()` against
+   `CA1_1_tsls`) resolved a 17,874-row window satisfying "half of total
+   events" (36) over the *whole* window while its own **pred** portion —
+   the only part `f1`-scoring reads — had just 5 real events. Every
+   real-observable candidate's ranking-stage `f1` score came back exactly
+   `0.0000`. Found via real-data testing, not by inspection.
+3. **Diagnosis, not a third patch:** a *fraction of a neuron's own total
+   events* is the wrong kind of quantity here regardless of which part of
+   the window it's checked against. It makes a busy neuron face a
+   stricter test than a quiet one for no stated reason, gives the
+   sparsest neurons — whose scores are least reliable — the *weakest*
+   requirement, and hides a compute constraint (bounding window length
+   for slow firers) inside what looks like a statistical one. The
+   question the parameter actually needs to answer — "how many matched
+   events does `f1` need before it's signal rather than noise" — is a
+   property of the metric, not of the neuron.
+
+### Final design
+
+- **`MIN_PRED_EVENTS`**: a plain fixed integer (not a fraction of
+  anything neuron-specific), applies to every depth >= 1 (neuron) node.
+  Depth-0 (behavioral target) keeps the separate fixed
+  `TARGET_RANKING_WINDOW_ROWS=1000` window, no event-count concept.
+- **Window resolution** (`_resolve_target_ranking_window()`,
+  `scripts/src/tsls-mde-gmn.py`): grow `W` (rows); the **pred portion**
+  is `W`'s own last `1 - lib_ratio` fraction of ROWS — the identical split
+  `_ccm_window()` will later carve out of this same `W` for the CCM gate,
+  so the two agree by construction. Count the target's real reset events
+  in that row range — **by rows, never by events** — and stop at the
+  smallest `W` where the count is >= `MIN_PRED_EVENTS`. All event
+  counting happens strictly within `usable_df` (i.e. `[0, B)`) — never
+  `full_df` rows at or past `B` — since sizing a search parameter from
+  held-out data is the same class of leakage the `B` boundary exists to
+  prevent.
+- **`MAX_WINDOW_ROWS`**: a separate integer compute ceiling, not
+  calibrated. If a node can't reach `MIN_PRED_EVENTS` within
+  `min(MAX_WINDOW_ROWS, len(usable_df))`, it is skipped — logged with the
+  reason and the shortfall — rather than scored on too few events.
+  `MIN_PRED_EVENTS` is the statistical floor; `MAX_WINDOW_ROWS` is the
+  compute ceiling; the two express one thing each.
+- **Non-monotonicity, found while writing the test, not by inspection:**
+  the pred portion's own event count is *not* guaranteed monotonic in
+  `W`. Both of the portion's edges only ever move forward as `W` grows
+  (so its *width* never shrinks), but in a single step an event row can
+  age out of the advancing left edge before any new event row enters at
+  the right, so the count can dip locally. Consequence: on failure, the
+  best achievable count must be the maximum seen at *any* window size
+  tried, not just at the cap itself — the implementation was written the
+  naive way first (count at the cap) and corrected before shipping; a
+  dedicated test (`test_neuron_target_unreachable_compute_cap`)
+  independently re-derives the best count over every window size up to
+  the cap and checks it matches what the function reports.
+
+### `MIN_PRED_EVENTS` calibration — real data, `r9_ccm_window_e_calibration.py` extended (not a parallel script)
+
+`f1` between a real TSLS slice and a lightly perturbed copy of itself
+(Gaussian noise, 5% of the slice's own std, 200 independent draws per
+point), at target pred-event counts `{5, 10, 20, 40, 80, 160}`, 15
+channels sampled stratified by firing-rate tercile (>= 5 per tercile,
+pooled across all three regions):
+
+| target pred events | pooled f1 std | low tercile | mid tercile | high tercile |
+|---|---|---|---|---|
+| 5 | 0.146 | 0.103 | 0.157 | 0.177 |
+| 10 | 0.104 | 0.065 | 0.117 | 0.130 |
+| 20 | 0.070 | 0.048 | 0.076 | 0.087 |
+| 40 | 0.050 | 0.032 | 0.056 | 0.063 |
+| 80 | 0.036 | 0.025 | 0.040 | 0.044 |
+| 160 | 0.025 | 0.016 | 0.027 | 0.031 |
+
+Smooth ~1/√N decay, **no natural elbow** — doubling the target roughly
+halves the std at every step from 10 up to 160. The high-firing tercile
+is consistently *somewhat noisier* than the low tercile at the same event
+count (its event-count-matched slices are shorter in rows), a real but
+modest spread, not a divergence that would demand separate thresholds per
+tercile.
+
+**Adopted default: `MIN_PRED_EVENTS = 20`.** A threshold choice justified
+by the cost/reachability tradeoff below, **not a discovered stabilisation
+point** — the curve above has no elbow to discover. At 20, std ≈ 0.07 is
+still ~3x smaller than `CROSS_MAP_RHO_MIN`'s own 0.2 default. Real-data
+reachability (all 45 `REGION_CHANNEL_CAP=15` channels, checked against
+the actual `_resolve_target_ranking_window()` implementation, not an
+approximation):
+
+| `MIN_PRED_EVENTS` | unreachable | reachable window_rows (min/median/max) |
+|---|---|---|
+| 20 (adopted) | 3/45 (`CA1_0`: 16/20 events short by 4, `CA1_1`: 9/20 short by 11, `CA1_5`: 10/20 short by 10) | 407 / 3,593 / 26,748 |
+| 40 | 8/45 | 872 / 10,437 / 30,664 |
+| 80 | 20/45 (nearly half) | 2,127 / 10,485 / 27,451 |
+
+40 and 80 buy modestly less noise at a steep cost in both unreachable
+channels and window length — diminishing returns, not a clear win. Note
+`CA1_1_tsls` — the same channel the metric-routing recalibration section
+above used as its own worked example of ranking-stage degeneracy — is
+one of the three channels this design correctly determines are
+unreachable (its own real events, 59 within `[0, B)`, are too spread out
+for even the largest possible pred portion, up to `B`, to ever collect 20
+of them) and is skipped with a logged reason, not silently scored.
+
+**Adopted `MAX_WINDOW_ROWS = 30000`** — not calibrated (only
+`MIN_PRED_EVENTS` was asked to be), a compute ceiling comfortably above
+the largest real reachable requirement observed (26,748) and safely below
+this dataset's own leakage boundary (`B` ≈ 38,067 in this configuration)
+— a backstop, not a tuned value.
+
+### CCM-gate candidate-side event sufficiency — measured, then a diagnostic (not a skip)
+
+The CCM gate's own `t2c` direction scores the **candidate's** own events
+(`obs_rev`, the candidate's real values), over `proper_ccm`'s own full
+frame — that function has no lib/pred split at all, just random library
+subsamples drawn from the whole frame. `MIN_PRED_EVENTS` as designed
+above only guarantees the *target's* own events in the ranking window's
+pred slice; it says nothing about whether a given candidate has enough
+of its own events in that same frame.
+
+**Mechanism verified, not assumed.** With 0 real candidate events, recall
+is `0/0` (undefined) regardless of what the predictions look like, so
+`f1` is *identically* 0 for every `(sample, libSize)` cell — the fitted
+slope of an exactly-constant line is exactly 0, never `> ccmSlope=0.01`.
+Deterministic (confirmed by reading `adaptive_event_metrics_from_tsls`
+directly). For 1-19 events (starved but not literally zero, where `f1`
+is *not* deterministic), simulated under a genuine null — independently
+generated target/candidate, no causal link, 60 draws per candidate-event
+count `K ∈ {0, 1, 3, 5, 10, 19}`, run through the gate's own exact
+procedure (`CCM_LIB_SIZES_ROWS`, `CCM_SAMPLE=20`, same slope fit):
+
+| K | false-pass rate | draws with mean t2c exactly flat |
+|---|---|---|
+| 0 | 0/60 | 60/60 |
+| 1 | 0/60 | 60/60 |
+| 3 | 0/60 | 52/60 |
+| 5 | 0/60 | 35/60 |
+| 10 | 0/60 | 4/60 |
+| 19 | 0/60 | 1/60 |
+
+**0/360 false passes** (max observed slope: 0.00000). As `K` grows, `f1`
+stops being literally flat, but the mean slope drifts slightly *negative*
+— never toward a spurious pass.
+
+**Is starvation actually negligible? Measured, not assumed — no.** At the
+median resolved window (3,593 rows), **6/45 real channels (13%)** would
+themselves be starved if they appeared as a candidate in that frame
+(`mPFC_6`: 5, `CA1_6`: 9, `CA1_0`: 10, `mPFC_2`: 12, `CA1_1`: 14, `CA1_7`:
+18 events). At the larger windows required by slower targets (~10,400+
+rows), 0/45 are starved. So the two options ("do nothing" vs. "measure
+first, then decide") do **not** collapse to the same answer — starvation
+is real and concentrated at the low end (fast-firing, small-window
+targets are exactly where their slower candidate-partners go starved).
+
+**Decision: option 1 (rely on the existing `ccmSlope` gate, no new
+control flow) plus one diagnostic.** Added a log line in both
+`proper_mde`'s and `multi_proper_mde`'s own CCM-gate per-candidate loops
+(`scripts/src/cleaned_helper_functions.py`): the candidate's own event
+count in the frame, printed alongside the fitted slope, only when
+`ccmMetric == 'f1'`. No filtering, no new control flow. The real cost of
+doing nothing was never wrong selections (0/360 false passes above proves
+that) — it's that an event-starved candidate and a genuinely non-causal
+one were previously indistinguishable in the output, both recorded as
+"failed the gate." The log line makes them separable after the fact at no
+cost. **Option 2 (an explicit candidate-side skip) remains available** if
+a future pass finds the diagnostic's own log lines show this matters more
+than the 13%/0% split above suggests.
+
+### CCM-gate absolute library sizes (`CCM_LIB_SIZES_ROWS`)
+
+`CCM_WINDOW_ROWS`/`CCM_LIB_SIZE_PCTS` previously bounded two different
+things through one shared, fixed-size `ccm_df`: the ranking-stage/
+E-auto-select window (now per-node and node-specific, not fixed) and the
+CCM gate's own `libSizes` sweep (a percentage of that same, now-variable,
+window). Decoupled: `proper_mde`/`multi_proper_mde`
+(`cleaned_helper_functions.py`) gained a `libSizes=None` parameter that,
+when given an explicit list, bypasses the `pLibSizes`-as-percentage-of-`N`
+computation entirely — `run_mde_for_target()`/`run_multi_mde_for_targets()`
+now pass `CCM_LIB_SIZES_ROWS` (absolute row counts) there instead of
+`pLibSizes`.
+
+**Default chosen:** R9/R17's own already-calibrated percentage grid,
+evaluated at the *old* 800-row `CCM_WINDOW_ROWS` frame
+(2/3/5/8/20/50% → 16/24/40/64/160/400 rows), reinterpreted as fixed
+absolute values, plus one additional point (800) for better plateau
+visibility now that the surrounding frame can be much larger:
+`(16, 24, 40, 64, 160, 400, 800)`.
+
+**Re-validated (real data, this session)** that the same absolute values
+still show a real convergence shape at a much larger frame, not just the
+800-row scale they were originally picked at — four real (target,
+candidate) pairs, at both an 800-row and an 8000-row frame:
+
+```
+target=head_position_x (correlation) <- mPFC_1_tsls
+  frame=  800: 16:0.256 24:0.224 40:0.347 64:0.393 160:0.458 400:0.482
+  frame= 8000: 16:0.093 24:0.208 40:0.236 64:0.262 160:0.308 400:0.363 800:0.384 1600:0.409
+target=head_position_x (correlation) <- CA1_9_tsls
+  frame=  800: 16:0.412 24:0.482 40:0.576 64:0.595 160:0.616 400:0.619
+  frame= 8000: 16:0.343 24:0.335 40:0.308 64:0.337 160:0.372 400:0.389 800:0.391 1600:0.392
+target=CA1_1_tsls (f1) <- mPFC_1_tsls
+  frame=  800: 16:0.007 24:0.014 40:0.014 64:0.031 160:0.093 400:0.094
+  frame= 8000: 16:0.006 24:0.006 40:0.009 64:0.014 160:0.043 400:0.069 800:0.080 1600:0.086
+target=CA1_1_tsls (f1) <- OFC_14_tsls
+  frame=  800: 16:0.008 24:0.000 40:0.000 64:0.028 160:0.013 400:0.061
+  frame= 8000: 16:0.002 24:0.001 40:0.008 64:0.009 160:0.007 400:0.030 800:0.029 1600:0.041
+```
+
+Absolute magnitudes differ between frame sizes (expected — a bigger
+surrounding frame changes what a fixed library size represents
+proportionally), but the qualitative rising-then-plateauing shape holds
+at both scales for every pair tested — supporting the claim that this
+shape is a property of the absolute library size, not its ratio to the
+frame.
+
+`CCM_WINDOW_ROWS`/`CCM_LIB_SIZE_PCTS` remain exactly what they were,
+**`MODE='GMN'`-only now** (`build_interaction_matrix()`, a separate,
+untouched mechanism) — `MODE='MDE-GMN'` (this pipeline's own default) no
+longer uses either.
+
+**Incidental finding, noted, not fixed (out of scope for this batch):**
+`scripts/batch/tsls-mde-gmn.sbatch`'s own `CCM_LIB_SIZE_PCTS` default was
+still `"2,3,5,8,12,20,30,50"` — R17's own pre-existing 8→6 value
+coarsening (`"2,3,5,8,20,50"`) had never actually been reflected in the
+sbatch script's own default, meaning real batch runs were not using R17's
+calibrated grid at all for this (now `MODE='GMN'`-only) knob. Harmless to
+this batch's own work (which doesn't touch that code path) but a
+pre-existing drift worth fixing separately.
+
+### Two incidental findings, recorded per explicit instruction — not optimised
+
+- `target_measurement` is passed into `proper_ccm` inside `proper_mde`'s
+  own CCM gate call, but its result (`c2t`) is discarded by the caller —
+  a dead parameter from that specific call site's perspective (still used
+  correctly elsewhere `proper_ccm` is called with both directions
+  genuinely needed).
+- `_run_one_cell` (inside `proper_ccm`) computes **both** CCM directions
+  (`c2t` and `t2c`) unconditionally every cell, even though the CCM gate
+  only ever uses `t2c`. Since both directions do equivalent KDTree
+  build+query work, this is roughly a 2x cost on every CCM-gate candidate
+  evaluation for work that is thrown away. Cross-references
+  `docs/tsls-mde-gmn-pipeline.tex`'s own still-open "Stage 1's real cost
+  at calibration scale" section (the unexplained
+  `REGION_CHANNEL_CAP=3→15` cost jump) — this alone would not fully
+  explain that jump (candidate pool size itself also scales with
+  `REGION_CHANNEL_CAP`), but it is a real, currently-unexploited
+  optimization opportunity worth profiling before the next scale-up.
+
+### A5 — fingerprint
+
+`MIN_PRED_EVENTS`, `MAX_WINDOW_ROWS`, the resolved per-node
+`window_rows`/`pred_event_count`, and `CCM_LIB_SIZES_ROWS` all now enter
+`build_mde_selection_fingerprint()`, `build_multi_mde_selection_fingerprint()`,
+and `build_network_fingerprint()` (in place of the old
+`ccm_window_rows`/`ccm_lib_size_pcts` fields at those same call sites) —
+a cache built under either the metric-routing bug, the earlier "half of
+total events" design, or the old percentage-based library sizing must not
+be silently reused now that all three have changed.
+
+### Test
+
+`tests/test_window_sizing.py` — fully rewritten for the final design (the
+file's own two earlier designs are visible in its own history/docstring
+for context): `test_behavioral_target_is_fixed_window`,
+`test_neuron_target_extends_to_min_pred_events` (synthetic periodic TSLS
+series, ground truth cross-checked via an independent, non-vectorized
+per-window count — not the same vectorized/searchsorted code path the
+implementation itself uses — for both the achieved `pred_event_count` and
+minimality), `test_neuron_target_unreachable_data` (real firing activity
+entirely outside the leakage-safe range), `test_neuron_target_unreachable_compute_cap`
+(new: firing activity that *would* reach `MIN_PRED_EVENTS` given enough
+rows, but `MAX_WINDOW_ROWS` caps the search first — confirms the reported
+best-achieved count matches an independent brute-force search over every
+window size up to the cap, not just the count at the cap itself). All
+four pass; the full existing test suite (every `tests/test_*.py`) was
+re-run afterward and still passes.
+
+**Real end-to-end verification**, `run_mde_for_target()` against real
+data (`REGION_CHANNEL_CAP=15`): `CA1_2_tsls` (confirmed reachable via the
+sweep above) resolves `window_rows=3971`, `pred_event_count=20` — hitting
+the threshold at minimality, as designed — and `proper_mde` runs to
+completion. Zero drivers were selected for this specific target (every
+candidate failed `crossMapRhoMin`) — a legitimate MDE outcome given that
+threshold, not the same all-`f1`-scores-exactly-zero degeneracy the
+metric-routing recalibration section documented; the failure mode this
+redesign targets (a scoring window too event-sparse to produce a
+meaningful `f1` at all) no longer occurs for a reachable target.
+
+### Git-workflow note
+
+The original intent (confirmed explicitly) was a separate commit for the
+window-sizing redesign versus the CCM-gate absolute-library-size fix.
+Both ended up touching the same function signatures
+(`run_mde_for_target()`, the fingerprint builders) in the same edits,
+since both needed changes there at once, discovered only while writing
+the code. Nothing was committed before this was noticed, so a clean split
+was technically still possible, but reconstructing two independently-
+correct intermediate states from an already-intertwined working-tree diff
+by hand carried more risk of a subtle bug than the review benefit
+justified. Flagged to the user rather than deciding silently; landing as
+one commit whose message clearly separates the two concerns, unless
+directed to attempt the split anyway.
 

@@ -1148,6 +1148,7 @@ def proper_mde(
     Tp=1, tau=-1, exclusionRadius=0,
     sample=20,
     pLibSizes=(10, 15, 85, 90),
+    libSizes=None,
     noCCM=False,
     ccmSlope=0.01,
     ccmSeed=None,
@@ -1223,7 +1224,12 @@ def proper_mde(
         ``[N/2+1, N]``.
     Tp, tau, exclusionRadius, sample : passed to ``proper_ccm``.
     pLibSizes : iterable[float]
-        Percentiles of ``N`` for the CCM library sweep.
+        Percentiles of ``N`` for the CCM library sweep. Ignored when
+        ``libSizes`` is given.
+    libSizes : iterable[int] or None
+        Explicit, absolute row counts for the CCM library sweep --
+        bypasses ``pLibSizes``'s percentage-of-``N`` computation entirely
+        when given. ``None`` (default): use ``pLibSizes`` as before.
     noCCM : bool
         Skip the CCM convergence gate.
     ccmSlope : float
@@ -1356,11 +1362,18 @@ def proper_mde(
     # branch on which metric is active.
     sign_better = lambda x, t: (direction * x) >= (direction * t)
 
-    # CCM library-size sweep, expressed as percentiles of N so it scales
-    # with however much data was passed in; libSizesVec is the same sweep
-    # normalized to [0,1] (last value = 1) purely for fitting a
-    # convergence slope on a consistent x-scale regardless of N.
-    libSizes = [int(N * p / 100.0) for p in pLibSizes]
+    # CCM library-size sweep: `libSizes` (explicit absolute row counts),
+    # when given, bypasses the `pLibSizes`-as-percentage-of-N computation
+    # entirely -- decouples the CCM gate's own convergence-curve library
+    # sizing from `dataFrame`'s own row count (which the ranking stage/
+    # E-auto-select's own lib/pred window may need to be much larger than,
+    # for reasons that have nothing to do with library-size calibration --
+    # see docs/review-findings.md's window-sizing section). `None`
+    # (default): exactly the old behavior, percentiles of N.
+    # libSizesVec is the same sweep normalized to [0,1] (last value = 1)
+    # purely for fitting a convergence slope on a consistent x-scale
+    # regardless of N.
+    libSizes = list(libSizes) if libSizes is not None else [int(N * p / 100.0) for p in pLibSizes]
     libSizesVec = np.array(libSizes, dtype=float).reshape(-1, 1)
     libSizesVec = libSizesVec / libSizesVec[-1]
 
@@ -1558,7 +1571,23 @@ def proper_mde(
             slope = round(slope, 5)
 
             if verbose:
-                print(f'    {target}:{newColumn} slope {slope}')
+                diag = ''
+                if ccmMetric == 'f1':
+                    # Diagnostic only (no filtering, no new control flow) --
+                    # a candidate starved of its own TSLS reset events
+                    # within this frame and a genuinely non-causal candidate
+                    # both fail this gate identically (see
+                    # docs/review-findings.md's CCM-gate candidate-side
+                    # event-sufficiency section); this makes the two
+                    # separable after the fact from the log alone.
+                    cand_vals = np.asarray(dataFrame[newColumn], dtype=np.float64)
+                    cand_events = len(detect_reset_events_from_tsls(
+                        cand_vals,
+                        near_zero_threshold=infer_near_zero_threshold_from_true_tsls(cand_vals),
+                        drop_threshold=0.0,
+                    ))
+                    diag = f' candidate_events_in_frame={cand_events}'
+                print(f'    {target}:{newColumn} slope {slope}{diag}')
 
             if (direction_ccm * slope) > ccmSlope:
                 maxCol_i = col_i
@@ -1941,6 +1970,7 @@ def multi_proper_mde(
     Tp=1, tau=-1, exclusionRadius=0,
     sample=20,
     pLibSizes=(10, 15, 85, 90),
+    libSizes=None,
     noCCM=False,
     ccmSlope=0.01,
     ccmSeed=None,
@@ -2034,7 +2064,9 @@ def multi_proper_mde(
     direction_ccm = _metric_direction(ccmMetric)
     sign_better = lambda x, t: (direction * x) >= (direction * t)
 
-    libSizes = [int(N * p / 100.0) for p in pLibSizes]
+    # See proper_mde()'s own identical `libSizes` docstring/comment for why
+    # this bypasses the `pLibSizes`-as-percentage-of-N computation when given.
+    libSizes = list(libSizes) if libSizes is not None else [int(N * p / 100.0) for p in pLibSizes]
     libSizesVec = np.array(libSizes, dtype=float).reshape(-1, 1)
     libSizesVec = libSizesVec / libSizesVec[-1]
 
@@ -2135,7 +2167,19 @@ def multi_proper_mde(
             slope = round(slope, 5)
 
             if verbose:
-                print(f'    {",".join(targets)}:{newColumn} slope {slope}')
+                diag = ''
+                if ccmMetric == 'f1':
+                    # Same candidate-side event-count diagnostic as
+                    # proper_mde's own CCM gate -- see that call site's
+                    # comment for why (docs/review-findings.md).
+                    cand_vals = np.asarray(dataFrame[newColumn], dtype=np.float64)
+                    cand_events = len(detect_reset_events_from_tsls(
+                        cand_vals,
+                        near_zero_threshold=infer_near_zero_threshold_from_true_tsls(cand_vals),
+                        drop_threshold=0.0,
+                    ))
+                    diag = f' candidate_events_in_frame={cand_events}'
+                print(f'    {",".join(targets)}:{newColumn} slope {slope}{diag}')
 
             if (direction_ccm * slope) > ccmSlope:
                 maxCol_i = col_i

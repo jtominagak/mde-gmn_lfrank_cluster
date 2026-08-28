@@ -116,7 +116,8 @@ def test_tsls():
     graph, edges_df, _, call_log = _run(
         module, make_fake_run_mde_for_target_tsls,
         {'metric': 'correlation', 'target_metric': 'correlation', 'gamma_delta': 2,
-         'ccm_window_rows': 200, 'ccm_lib_size_pcts': (10, 50), 'ccm_sample': 2,
+         'target_ranking_window_rows': 200, 'min_pred_events': 5, 'max_window_rows': 30000,
+         'ccm_lib_sizes_rows': (10, 50), 'ccm_sample': 2,
          'ccm_slope': 0.01, 'cores': 2},
     )
     _check('tsls-mde-gmn.py', graph, edges_df, call_log)

@@ -66,8 +66,10 @@ def _make_fake_run_mde_for_target(plan, calls):
              mde_d, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
              results_dir, delay_set, tp=1,
              metric='f1', target_metric='correlation', gamma_delta=2,
-             ccm_window_rows=800, ccm_lib_size_pcts=(2, 3, 5, 8, 12, 20, 30, 50),
              ccm_sample=20, ccm_slope=0.01,
+             is_behavioral_target=True, target_ranking_window_rows=1000,
+             min_pred_events=20, max_window_rows=30000,
+             ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
              reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
              data_file=None, data_file_sha256=None, code_fingerprint=None,
              cache_stage='stage1', max_e=None, inner_workers=1, raw_columns=None):
@@ -109,7 +111,8 @@ def test_target_metric_resolved_per_node():
         mde_results={'T': {'SELECTED_COLUMNS': ['A'], 'm': SimpleNamespace(MDErho=np.array([0.5]))}},
         delay_set=[], tp=1,
         metric=CFG_METRIC, target_metric=CFG_TARGET_METRIC, gamma_delta=2,
-        ccm_window_rows=800, ccm_lib_size_pcts=(2, 3, 5, 8, 20, 50),
+        target_ranking_window_rows=1000, min_pred_events=20, max_window_rows=30000,
+        ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
         ccm_sample=10, ccm_slope=0.01, cores=2,
         lag_set=[-1], stage2_allow_real_observables=True,
     )

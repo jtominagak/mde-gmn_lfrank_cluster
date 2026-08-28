@@ -14,6 +14,22 @@ each region, then:
      the pipeline's current CCM_WINDOW_ROWS default -- reports, per E, the
      resulting kept-candidate set and its stability against the pipeline's
      current default (E=7).
+  3. MIN_PRED_EVENTS calibration (extension, found while verifying R22 --
+     see docs/review-findings.md's own window-sizing section): estimates
+     the noise floor of `f1` (this pipeline's own TSLS event-timing
+     metric) as a function of how many real reset events fall in the
+     scored window, by comparing a real TSLS slice against a lightly
+     perturbed copy of itself (a stand-in for a near-perfect predictor)
+     across many independent draws, at each of several target event
+     counts, stratified by firing-rate tercile. Reports the variance
+     curve and proposes a MIN_PRED_EVENTS default from where it
+     stabilizes -- this is what run_mde_for_target()'s own per-node
+     ranking window (`_resolve_target_ranking_window()`) is now grown
+     until it contains, replacing an earlier, since-abandoned
+     "fraction of a neuron's own total event count" placeholder (found,
+     during real-data testing, to not actually guarantee the *scored*
+     portion of the window has enough events -- see the findings for the
+     full story).
 
 Changes no pipeline default -- this is a standalone, read-only
 measurement script; run against real data (data/J1620210605_epoch_8_freq_
@@ -21,10 +37,12 @@ measurement script; run against real data (data/J1620210605_epoch_8_freq_
 
     python3 scripts/calibration/r9_ccm_window_e_calibration.py
 
-Writes r9_summary.csv (one row per window/E setting) and
-r9_raw_curves.csv (one row per pair per window per library size) into
-this same scripts/calibration/ directory. See docs/review-findings.md's
-R9 section for the narrative results.
+Writes r9_summary.csv (one row per window/E setting), r9_raw_curves.csv
+(one row per pair per window per library size), and
+r9_min_pred_events_curve.csv (one row per channel per event-count target,
+mean/std of f1 across independent noise draws) into this same
+scripts/calibration/ directory. See docs/review-findings.md's R9 section
+(window-sizing subsection) for the narrative results.
 '''
 import importlib.util
 import sys
@@ -64,6 +82,16 @@ CURRENT_CCM_PREFILTER_E = 7        # pipeline's current default, used for the wi
 CURRENT_CCM_WINDOW_ROWS = 800      # pipeline's current default, used for the E sweep
 CCM_PREFILTER_RHO_MIN = 0.2        # pipeline's current default
 METRIC = 'correlation'
+
+# ---- MIN_PRED_EVENTS calibration settings (item 3, see module docstring) --
+MIN_PRED_EVENTS_TERCILE_N = 5       # >= 5 channels per (pooled, not per-region)
+                                     # firing-rate tercile, or all if fewer
+PRED_EVENT_COUNTS = (5, 10, 20, 40, 80, 160)
+N_NOISE_DRAWS = 200                  # independent random draws per (channel, event-count)
+NOISE_STD_FRACTION = 0.05            # "lightly perturbed": Gaussian noise at 5% of the
+                                      # real slice's own std -- a stand-in for a
+                                      # near-perfect predictor with small timing error
+GAMMA_DELTA_FOR_F1 = 2                # matches the pipeline's own GAMMA_DELTA default
 
 
 def stratified_sample(df_raw, rng):
@@ -113,6 +141,106 @@ def compute_curve(windowed, observable, target, e, sample):
     return dict(zip(lib_sizes, rho_curve)), lib_sizes
 
 
+def min_pred_events_calibration(df, obs_cols, rng):
+    '''Item 3 (see module docstring): estimates f1's own noise floor as a
+    function of how many real reset events fall in the scored window.
+
+    For each of several target event counts, takes the smallest leading
+    slice of a channel's own real TSLS series containing that many events,
+    perturbs a copy of it with light Gaussian noise (a stand-in for a
+    near-perfect predictor -- NOT a random guess; the point is to isolate
+    f1's own sampling noise from genuine prediction failure), and scores
+    `_score(real, noisy, 'f1')` -- the exact same call
+    run_mde_for_target()'s own ranking stage makes -- across
+    N_NOISE_DRAWS independent draws. Reports the resulting f1 mean/std per
+    channel per event count, pooled and per firing-rate tercile (channels
+    pooled across ALL three regions into one overall tercile split here,
+    not the per-region terciles `stratified_sample()` above uses -- this
+    question is about a channel's own absolute firing rate, not region
+    identity).
+
+    `obs_cols` is the already-TSLS-converted channel pool `main()` itself
+    built (via convert_to_tsls/burn_in_trim) for the window/E sweeps above
+    -- reused here rather than converting a separate channel set, since it
+    already spans a wide firing-rate range (27 channels, 3 per
+    region-tercile bucket).'''
+    total_events = {}
+    for col in obs_cols:
+        vals = df[col].to_numpy(dtype=float)
+        thr = tsls.infer_near_zero_threshold_from_true_tsls(vals)
+        events = tsls.detect_reset_events_from_tsls(vals, near_zero_threshold=thr, drop_threshold=0.0)
+        total_events[col] = len(events)
+
+    counts_series = pd.Series(total_events).sort_values()
+    n = len(counts_series)
+    low_cut, high_cut = counts_series.iloc[n // 3], counts_series.iloc[(2 * n) // 3]
+    tercile_of = {
+        col: ('low' if cnt <= low_cut else 'high' if cnt >= high_cut else 'mid')
+        for col, cnt in total_events.items()
+    }
+    tercile_channels = {'low': [], 'mid': [], 'high': []}
+    for col in obs_cols:
+        tercile_channels[tercile_of[col]].append(col)
+    for tercile, pool in list(tercile_channels.items()):
+        pick_n = min(MIN_PRED_EVENTS_TERCILE_N, len(pool))
+        tercile_channels[tercile] = (
+            sorted(rng.choice(pool, size=pick_n, replace=False)) if pool else []
+        )
+    print(f'\nMIN_PRED_EVENTS calibration: tercile channels = {tercile_channels}', flush=True)
+
+    rows = []
+    for tercile, channels in tercile_channels.items():
+        for col in channels:
+            vals = df[col].to_numpy(dtype=float)
+            thr = tsls.infer_near_zero_threshold_from_true_tsls(vals)
+            event_idx = tsls.detect_reset_events_from_tsls(
+                vals, near_zero_threshold=thr, drop_threshold=0.0)
+            for target_events in PRED_EVENT_COUNTS:
+                if len(event_idx) < target_events:
+                    continue  # this channel never reaches this many events at all
+                end = int(event_idx[target_events - 1]) + 1
+                real_slice = vals[:end]
+                std = real_slice.std()
+                noise_scale = NOISE_STD_FRACTION * (std if std > 0 else 1.0)
+                f1_draws = []
+                for _ in range(N_NOISE_DRAWS):
+                    noisy = np.clip(real_slice + rng.normal(scale=noise_scale, size=real_slice.shape), 0, None)
+                    f1 = tsls._score(real_slice, noisy, 'f1', gammaDelta=GAMMA_DELTA_FOR_F1)
+                    if not (isinstance(f1, float) and np.isnan(f1)):
+                        f1_draws.append(f1)
+                if not f1_draws:
+                    continue
+                rows.append({
+                    'tercile': tercile, 'channel': col, 'target_events': target_events,
+                    'slice_rows': end, 'n_draws': len(f1_draws),
+                    'f1_mean': float(np.mean(f1_draws)), 'f1_std': float(np.std(f1_draws)),
+                })
+                print(f'  {tercile}/{col}: target_events={target_events} slice_rows={end} '
+                      f'f1 mean={np.mean(f1_draws):.3f} std={np.std(f1_draws):.3f} (n={len(f1_draws)})',
+                      flush=True)
+
+    curve_df = pd.DataFrame(rows)
+    curve_df.to_csv(OUT_DIR / 'r9_min_pred_events_curve.csv', index=False)
+
+    print('\nMIN_PRED_EVENTS: pooled f1_std by target event count (lower = f1 more reliable):',
+          flush=True)
+    for target_events in PRED_EVENT_COUNTS:
+        subset = curve_df[curve_df['target_events'] == target_events]
+        if len(subset):
+            print(f'  target_events={target_events:4d}: pooled f1_std mean={subset["f1_std"].mean():.4f} '
+                  f'(over {len(subset)} channels)', flush=True)
+
+    print('\nMIN_PRED_EVENTS: per-tercile f1_std by target event count:', flush=True)
+    for tercile in ('low', 'mid', 'high'):
+        for target_events in PRED_EVENT_COUNTS:
+            subset = curve_df[(curve_df['tercile'] == tercile) & (curve_df['target_events'] == target_events)]
+            if len(subset):
+                print(f'  {tercile}/target_events={target_events:4d}: '
+                      f'f1_std mean={subset["f1_std"].mean():.4f} (over {len(subset)} channels)', flush=True)
+
+    return curve_df
+
+
 def main():
     print(f'Loading {DATA_FILE.name}...', flush=True)
     df_raw = pd.read_csv(DATA_FILE)
@@ -132,6 +260,9 @@ def main():
     assert len(pairs) >= 40, f'Only {len(pairs)} pairs sampled -- increase N_PER_REGION_TERCILE.'
 
     usable_df = df.reset_index(drop=True)
+
+    # ---- Item 3: MIN_PRED_EVENTS calibration (window-sizing fix) ----------
+    min_pred_events_calibration(usable_df, obs_cols, rng)
 
     raw_rows = []
     summary_rows = []

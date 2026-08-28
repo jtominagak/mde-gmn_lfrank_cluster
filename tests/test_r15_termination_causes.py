@@ -97,7 +97,8 @@ def test_tsls():
         load_pipeline_module('tsls-mde-gmn.py', '_test_tsls_mde_gmn_r15'),
         make_fake_run_mde_for_target_tsls,
         {'metric': 'correlation', 'target_metric': 'correlation', 'gamma_delta': 2,
-         'ccm_window_rows': 200, 'ccm_lib_size_pcts': (10, 50), 'ccm_sample': 2,
+         'target_ranking_window_rows': 200, 'min_pred_events': 5, 'max_window_rows': 30000,
+         'ccm_lib_sizes_rows': (10, 50), 'ccm_sample': 2,
          'ccm_slope': 0.01, 'cores': 2},
     )
     _check('tsls-mde-gmn.py', log_text)
