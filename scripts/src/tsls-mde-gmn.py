@@ -2142,12 +2142,26 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                     candidate_pool = [c for c in expanded_columns
                                        if observable_and_delay(c, raw_columns)[0] != node]
                     effective_d = effective_mde_dimension(nested_n, candidate_pool, stage1_num_delays)
+                    # Metric-routing fix (found while verifying R22's own
+                    # E-engine-swap effect): `node` here is virtually never
+                    # one of `targets` (Stage 1 discovers real-observable
+                    # DRIVERS) -- passing the closed-over `target_metric`
+                    # unconditionally would score this node's own ranking
+                    # stage/E-auto-select via TARGET_METRIC ('correlation')
+                    # instead of _metric_for()'s own rule ('f1' for any
+                    # non-TARGETS column). See run_mde_for_target()'s own
+                    # docstring for why target_metric drives that stage
+                    # (predictions of `target` == `node` here) -- the CCM
+                    # gate's own `metric` argument is untouched, already
+                    # correct (it always scores a candidate, never `node`
+                    # itself, and no candidate here is ever a target).
                     fut = executor.submit(
                         run_mde_for_target, node, expanded_df, candidate_pool,
                         prediction_start, prediction_length, effective_d,
                         embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
                         results_dir, delay_set, tp,
-                        metric, target_metric, gamma_delta, ccm_window_rows,
+                        metric, _metric_for(node, targets, metric, target_metric),
+                        gamma_delta, ccm_window_rows,
                         ccm_lib_size_pcts, ccm_sample, ccm_slope,
                         reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
                         code_fingerprint,
@@ -2235,12 +2249,17 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                 candidate_pool = [c for c in stage2_candidate_universe
                                    if observable_and_delay(c, raw_columns)[0] != node]
                 effective_d = effective_mde_dimension(nested_n, candidate_pool, stage2_num_delays)
+                # Metric-routing fix -- see Stage 1's own identical comment
+                # above. `node` here is a Stage 1 backbone node (real
+                # observable) or a Stage-2-recursed real observable, never
+                # one of `targets` at this depth.
                 fut = executor.submit(
                     run_mde_for_target, node, stage2_df, candidate_pool,
                     prediction_start, prediction_length, effective_d,
                     embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
                     results_dir, lag_set, tp,
-                    metric, target_metric, gamma_delta, ccm_window_rows,
+                    metric, _metric_for(node, targets, metric, target_metric),
+                    gamma_delta, ccm_window_rows,
                     ccm_lib_size_pcts, ccm_sample, ccm_slope,
                     reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
                     code_fingerprint, 'stage2',
