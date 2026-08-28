@@ -5,6 +5,2832 @@ submissions (see scripts/batch/submit.sh), newest entry first.
 
 <!-- new entries inserted below this line -->
 
+## Job 40143067
+
+Generated: 2026-08-28T22:20:26+09:00
+
+Git commit at submission: `e8c7543` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40143041**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_40143041/tsls-mde-gmn.py
++++ job_40143067/tsls-mde-gmn.py
+@@ -159,10 +159,12 @@
+ import os
+ import pickle
+ import sys
++import time
+ import types
+-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
++from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
+ from configparser import ConfigParser
+ from contextlib import nullcontext
++from datetime import datetime
+ from pathlib import Path
+ 
+ import matplotlib
+@@ -1435,6 +1437,37 @@
+     return int(w_candidates[first]), int(pred_events_up_to_w[first])
+ 
+ 
++def _preview_window_rows(node, full_df, delay_set, prediction_start, prediction_length, tp,
++                          is_behavioral_target, target_ranking_window_rows,
++                          min_pred_events, max_window_rows):
++    '''Speculative, read-only resolve of one node's own expected ranking-
++    window size, called from the progress-monitoring log's own ETA
++    estimate (see _format_eta()'s per-window-row mode) BEFORE that node's
++    real run_mde_for_target() call -- independent of, and without any
++    effect on, the real resolve that call performs later. Node cost scales
++    roughly with resolved window size (see _resolve_target_ranking_window()
++    itself), so this gives the monitoring log a real cost signal per
++    pending node instead of treating every node as equally expensive.
++
++    Mirrors run_mde_for_target()'s own usable_df/lib_ratio derivation
++    exactly (see that function's own LEAKAGE docstring), narrowed to just
++    `node`'s own column -- cheap relative to the real MDE call it is
++    estimating (a single-column slice plus one vectorized event-count
++    search, not the full candidate-pool ranking sweep). Returns 0 (not a
++    real window size) if the node turns out unreachable -- an unreachable
++    node fails fast in the real call regardless, so weighting it as
++    negligible cost for the ETA is reasonable, not misleading.'''
++    warmup = max((abs(d) for d in delay_set), default=0)
++    usable_end = prediction_start + prediction_length - tp
++    usable_df = full_df[[node]].iloc[warmup:usable_end].reset_index(drop=True)
++    lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
++    window_rows, _ = _resolve_target_ranking_window(
++        node, full_df, usable_df, lib_ratio,
++        is_behavioral_target, target_ranking_window_rows, min_pred_events, max_window_rows,
++    )
++    return window_rows or 0
++
++
+ def _metric_for(column, targets, metric, target_metric):
+     '''TARGETS (continuous behavioral traces) always score via
+     target_metric ('correlation'); everything else (TSLS-converted neuron
+@@ -2174,6 +2207,78 @@
+     return iMatrix
+ 
+ 
++# Progress-monitoring log (found necessary this session: this pipeline has
++# a real history of runs that never finish -- job 38976891 timed out after
++# 4+ hours on a single depth-1 Stage 1 wave of 3 nodes, still doing real
++# work throughout but producing no new output -- with no timing
++# instrumentation anywhere to say which node was slow or how close to done
++# it was). HEARTBEAT_SECONDS: how often the Stage 1/Stage 2 wave loops
++# below re-check and log "still working" while a wave's own nodes are
++# still running, even if none of them have finished yet -- frequent enough
++# to show real liveness on a run that used to go silent for hours, not so
++# frequent it adds meaningful I/O overhead or log noise.
++HEARTBEAT_SECONDS = 300
++
++
++def _log_progress(log_path, message):
++    '''Appends one timestamped line to the progress-monitoring log (see
++    load_config()'s own PROGRESS_LOG_PATH -- flash, not bucket, so it's
++    readable while a job is still running, and survives independently of
++    the bucket-archival step). Every write is flushed and fsynced
++    immediately -- this is a diagnostic log for a pipeline with a real
++    history of runs that never finish (see JOB_LOG.md), so a line must
++    survive a crash/OOM/timeout the instant after it's written, not just
++    on a clean close. `log_path=None` is a silent no-op (callers that
++    don't have one, e.g. tests, never need to guard every call site with
++    an `if`).
++
++    Only ever called from the main process -- Stage 1/Stage 2 worker
++    processes (run inside ProcessPoolExecutor) are never given this path,
++    so there is no concurrent-writer question to solve here (see this
++    module's own docstring section on the monitoring log for why timing
++    is measured from the orchestrating process's own submit/as_completed
++    calls instead of from inside proper_mde itself).'''
++    if log_path is None:
++        return
++    with open(log_path, 'a') as f:
++        f.write(f'{datetime.now().isoformat()} {message}\n')
++        f.flush()
++        os.fsync(f.fileno())
++
++
++def _format_eta(durations, n_remaining, per_unit=None, unit_remaining=None):
++    '''Rough remaining-time estimate for a monitoring-log heartbeat/summary
++    line, from durations already observed *in this same run* (never across
++    jobs -- see load_config()'s own PROGRESS_LOG_PATH docstring for why).
++
++    Two modes:
++    - Flat per-task average: pass `durations` (list of completed task
++      durations, seconds) and `n_remaining` (how many more of that same
++      task type are left) -- estimate is `mean(durations) * n_remaining`.
++    - Per-window-row rate (used for Stage 1/Stage 2 nodes, whose own cost
++      scales roughly with resolved window size -- see
++      _resolve_target_ranking_window()): pass `per_unit` (list of
++      observed seconds-per-window-row, one entry per completed node) and
++      `unit_remaining` (total window rows still queued across pending
++      nodes) instead of/alongside durations -- estimate is
++      `mean(per_unit) * unit_remaining`. Falls back to the flat estimate
++      if `per_unit` has no observations yet (e.g. the very first node in
++      a wave).
++
++    Returns '' (not an estimate) when there is nothing completed yet to
++    base one on -- an ETA fabricated from zero observations would be
++    actively misleading, not just uninformative.'''
++    if per_unit and unit_remaining is not None and unit_remaining > 0:
++        rate = sum(per_unit) / len(per_unit)
++        return (f' (~{rate * unit_remaining:.0f}s remaining, based on {len(per_unit)} '
++                f'completed node(s) averaging {rate * 1000:.2f}ms/window-row)')
++    if durations and n_remaining and n_remaining > 0:
++        mean_s = sum(durations) / len(durations)
++        return (f' (~{mean_s * n_remaining:.0f}s remaining, based on {len(durations)} '
++                f'completed averaging {mean_s:.1f}s each)')
++    return ''
++
++
+ def _failed_mde_result(target):
+     '''Fallback run_mde_for_target()-shaped result for a node/target whose
+     MDE call raised, instead of returning normally -- ported unchanged from
+@@ -2265,7 +2370,8 @@
+                               ccm_lib_sizes_rows, ccm_sample, ccm_slope, cores,
+                               lag_set, stage2_allow_real_observables,
+                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+-                              data_file=None, data_file_sha256=None, code_fingerprint=None):
++                              data_file=None, data_file_sha256=None, code_fingerprint=None,
++                              progress_log_path=None):
+     '''Two-stage nested-MDE network construction, MODE='MDE-GMN' only --
+     FULLY SERIAL between stages (R12, 2026-08-27: reverted from the
+     2026-08-25 unified-per-wave-BFS design -- see JOB_LOG.md for that
+@@ -2359,6 +2465,10 @@
+     # =====================================================================
+     visited1 = set()
+     current_wave = [(t, 0) for t in targets]
++    stage1_start = time.perf_counter()
++    stage1_durations = []   # seconds per completed node, this run only
++    stage1_rates = []       # seconds per resolved window-row, this run only -- see _format_eta()
++    _log_progress(progress_log_path, 'STAGE 1 START (real-observable BFS)')
+ 
+     while current_wave:
+         wave_nodes, seen = [], set()
+@@ -2388,14 +2498,27 @@
+                   f'{to_compute[0][1]} -- {outer_workers} parallel worker(s) '
+                   f'x {inner_workers} inner thread(s) each '
+                   f'(product={outer_workers * inner_workers}, cores={cores})', flush=True)
++            wave_start = time.perf_counter()
++            _log_progress(progress_log_path,
++                          f'stage1 wave START -- {len(to_compute)} node(s) at depth '
++                          f'{to_compute[0][1]}: {[n for n, _ in to_compute]}')
+ 
+             with ProcessPoolExecutor(max_workers=outer_workers,
+                                       mp_context=mp.get_context('fork')) as executor:
+                 futures = {}
++                node_window_estimate = {}
+                 for node, depth in to_compute:
+                     candidate_pool = [c for c in expanded_columns
+                                        if observable_and_delay(c, raw_columns)[0] != node]
+                     effective_d = effective_mde_dimension(nested_n, candidate_pool, stage1_num_delays)
++                    is_behav = (node in targets)
++                    # Monitoring-log ETA input only -- see _preview_window_rows()'s
++                    # own docstring for why this speculative resolve is safe and
++                    # independent of the real one run_mde_for_target() performs.
++                    node_window_estimate[node] = _preview_window_rows(
++                        node, expanded_df, delay_set, prediction_start, prediction_length, tp,
++                        is_behav, target_ranking_window_rows, min_pred_events, max_window_rows,
++                    )
+                     # Metric-routing fix (found while verifying R22's own
+                     # E-engine-swap effect): `node` here is virtually never
+                     # one of `targets` (Stage 1 discovers real-observable
+@@ -2423,7 +2546,7 @@
+                         tp=tp, metric=metric,
+                         target_metric=_metric_for(node, targets, metric, target_metric),
+                         gamma_delta=gamma_delta, ccm_sample=ccm_sample, ccm_slope=ccm_slope,
+-                        is_behavioral_target=(node in targets),
++                        is_behavioral_target=is_behav,
+                         target_ranking_window_rows=target_ranking_window_rows,
+                         min_pred_events=min_pred_events, max_window_rows=max_window_rows,
+                         ccm_lib_sizes_rows=ccm_lib_sizes_rows,
+@@ -2433,19 +2556,59 @@
+                         max_e=nested_n, inner_workers=inner_workers, raw_columns=raw_columns,
+                     )
+                     futures[fut] = node
+-                for fut in as_completed(futures):
+-                    node = futures[fut]
+-                    try:
+-                        stage1_results[node] = fut.result()
+-                    except Exception as exc:
+-                        # See _failed_mde_result()'s own docstring -- a
+-                        # single node's MDE call failing must not crash the
+-                        # rest of this wave or every already-completed node
+-                        # in prior waves.
+-                        print(f'nested MDE (Stage 1): {node} MDE call FAILED: {exc!r} -- treating '
+-                              f'as a dead-end (zero drivers selected, no further nesting from this '
+-                              f'node)', flush=True)
+-                        stage1_results[node] = _failed_mde_result(node)
++
++                # Heartbeat-polling replacement for a plain `for fut in
++                # as_completed(futures):` -- see this module's own
++                # HEARTBEAT_SECONDS docstring for why: a wave with no
++                # heartbeat can go silent for hours (job 38976891) with no
++                # way to tell "still working" from "stuck". Each timeout
++                # with nothing newly done logs one heartbeat line; each
++                # newly completed future is logged (and timed) immediately.
++                pending = set(futures)
++                while pending:
++                    done, pending = wait(pending, timeout=HEARTBEAT_SECONDS,
++                                          return_when=FIRST_COMPLETED)
++                    if not done:
++                        elapsed = time.perf_counter() - wave_start
++                        still_waiting = sorted(futures[f] for f in pending)
++                        remaining_rows = sum(node_window_estimate.get(futures[f], 0)
++                                              for f in pending)
++                        eta = _format_eta(stage1_durations, len(pending),
++                                          per_unit=stage1_rates, unit_remaining=remaining_rows)
++                        _log_progress(
++                            progress_log_path,
++                            f'stage1 wave HEARTBEAT -- {len(futures) - len(pending)}/{len(futures)} '
++                            f'done, elapsed={elapsed:.0f}s, still waiting on: {still_waiting}{eta}')
++                        continue
++                    for fut in done:
++                        node = futures[fut]
++                        node_duration = time.perf_counter() - wave_start
++                        try:
++                            stage1_results[node] = fut.result()
++                            _log_progress(
++                                progress_log_path,
++                                f'stage1 node END -- {node} duration={node_duration:.1f}s '
++                                f'selected={stage1_results[node]["SELECTED_COLUMNS"]}')
++                        except Exception as exc:
++                            # See _failed_mde_result()'s own docstring -- a
++                            # single node's MDE call failing must not crash the
++                            # rest of this wave or every already-completed node
++                            # in prior waves.
++                            print(f'nested MDE (Stage 1): {node} MDE call FAILED: {exc!r} -- treating '
++                                  f'as a dead-end (zero drivers selected, no further nesting from this '
++                                  f'node)', flush=True)
++                            _log_progress(
++                                progress_log_path,
++                                f'stage1 node END -- {node} duration={node_duration:.1f}s FAILED: {exc!r}')
++                            stage1_results[node] = _failed_mde_result(node)
++                        stage1_durations.append(node_duration)
++                        window_est = node_window_estimate.get(node, 0)
++                        if window_est > 0:
++                            stage1_rates.append(node_duration / window_est)
++
++            _log_progress(progress_log_path,
++                          f'stage1 wave END -- {len(to_compute)} node(s), '
++                          f'{time.perf_counter() - wave_start:.1f}s total')
+ 
+         next_wave = {}
+         for node, depth in wave_nodes:
+@@ -2461,6 +2624,9 @@
+ 
+         current_wave = list(next_wave.items())
+ 
++    _log_progress(progress_log_path,
++                  f'STAGE 1 END -- {len(visited1)} node(s), '
++                  f'{time.perf_counter() - stage1_start:.1f}s total')
+     print(f'nested MDE (Stage 1): completed -- {len(visited1)} node(s) in the real-observable '
+           f'backbone, Stage 2 starts now', flush=True)
+ 
+@@ -2483,6 +2649,10 @@
+     # own final summary print for where these get reported.
+     stage2_budget_bound = 0
+     stage2_driver_exhausted = 0
++    stage2_start = time.perf_counter()
++    stage2_durations = []
++    stage2_rates = []
++    _log_progress(progress_log_path, 'STAGE 2 START (lagged/real BFS)')
+ 
+     while current_wave:
+         wave_nodes, seen = [], set()
+@@ -2505,15 +2675,29 @@
+               f'(product={outer_workers2 * inner_workers2}, cores={cores}), candidate pool size '
+               f'{len(stage2_candidate_universe)} (lag_set={lag_set}, '
+               f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
++        wave_start = time.perf_counter()
++        _log_progress(progress_log_path,
++                      f'stage2 wave START -- {len(wave_nodes)} node(s) at depth(s) '
++                      f'{wave_depths}: {[n for n, _ in wave_nodes]}')
+ 
+         stage2_results = {}
+         with ProcessPoolExecutor(max_workers=outer_workers2,
+                                   mp_context=mp.get_context('fork')) as executor:
+             futures = {}
++            node_window_estimate = {}
+             for node, depth in wave_nodes:
+                 candidate_pool = [c for c in stage2_candidate_universe
+                                    if observable_and_delay(c, raw_columns)[0] != node]
+                 effective_d = effective_mde_dimension(nested_n, candidate_pool, stage2_num_delays)
++                is_behav = (node in targets)
++                # Monitoring-log ETA input only -- see Stage 1's own
++                # identical comment above / _preview_window_rows()'s
++                # docstring. Uses stage2_df/lag_set (Stage 2's own frame
++                # and delay set), matching the real call just below.
++                node_window_estimate[node] = _preview_window_rows(
++                    node, stage2_df, lag_set, prediction_start, prediction_length, tp,
++                    is_behav, target_ranking_window_rows, min_pred_events, max_window_rows,
++                )
+                 # Metric-routing fix -- see Stage 1's own identical comment
+                 # above. `node` here is a Stage 1 backbone node (real
+                 # observable) or a Stage-2-recursed real observable, never
+@@ -2528,7 +2712,7 @@
+                     tp=tp, metric=metric,
+                     target_metric=_metric_for(node, targets, metric, target_metric),
+                     gamma_delta=gamma_delta, ccm_sample=ccm_sample, ccm_slope=ccm_slope,
+-                    is_behavioral_target=(node in targets),
++                    is_behavioral_target=is_behav,
+                     target_ranking_window_rows=target_ranking_window_rows,
+                     min_pred_events=min_pred_events, max_window_rows=max_window_rows,
+                     ccm_lib_sizes_rows=ccm_lib_sizes_rows,
+@@ -2539,14 +2723,47 @@
+                     max_e=nested_n, inner_workers=inner_workers2, raw_columns=raw_columns,
+                 )
+                 futures[fut] = node
+-            for fut in as_completed(futures):
+-                node = futures[fut]
+-                try:
+-                    stage2_results[node] = fut.result()
+-                except Exception as exc:
+-                    print(f'nested MDE (Stage 2): {node} MDE call FAILED: {exc!r} -- treating as '
+-                          f'a dead-end (zero lagged drivers attached for this node)', flush=True)
+-                    stage2_results[node] = _failed_mde_result(node)
++
++            # Heartbeat-polling -- see Stage 1's own identical comment above.
++            pending = set(futures)
++            while pending:
++                done, pending = wait(pending, timeout=HEARTBEAT_SECONDS,
++                                      return_when=FIRST_COMPLETED)
++                if not done:
++                    elapsed = time.perf_counter() - wave_start
++                    still_waiting = sorted(futures[f] for f in pending)
++                    remaining_rows = sum(node_window_estimate.get(futures[f], 0) for f in pending)
++                    eta = _format_eta(stage2_durations, len(pending),
++                                      per_unit=stage2_rates, unit_remaining=remaining_rows)
++                    _log_progress(
++                        progress_log_path,
++                        f'stage2 wave HEARTBEAT -- {len(futures) - len(pending)}/{len(futures)} '
++                        f'done, elapsed={elapsed:.0f}s, still waiting on: {still_waiting}{eta}')
++                    continue
++                for fut in done:
++                    node = futures[fut]
++                    node_duration = time.perf_counter() - wave_start
++                    try:
++                        stage2_results[node] = fut.result()
++                        _log_progress(
++                            progress_log_path,
++                            f'stage2 node END -- {node} duration={node_duration:.1f}s '
++                            f'selected={stage2_results[node]["SELECTED_COLUMNS"]}')
++                    except Exception as exc:
++                        print(f'nested MDE (Stage 2): {node} MDE call FAILED: {exc!r} -- treating as '
++                              f'a dead-end (zero lagged drivers attached for this node)', flush=True)
++                        _log_progress(
++                            progress_log_path,
++                            f'stage2 node END -- {node} duration={node_duration:.1f}s FAILED: {exc!r}')
++                        stage2_results[node] = _failed_mde_result(node)
++                    stage2_durations.append(node_duration)
++                    window_est = node_window_estimate.get(node, 0)
++                    if window_est > 0:
++                        stage2_rates.append(node_duration / window_est)
++
++        _log_progress(progress_log_path,
++                      f'stage2 wave END -- {len(wave_nodes)} node(s), '
++                      f'{time.perf_counter() - wave_start:.1f}s total')
+ 
+         next_wave = {}
+         for node, depth in wave_nodes:
+@@ -2575,6 +2792,10 @@
+ 
+         current_wave = list(next_wave.items())
+ 
++    _log_progress(progress_log_path,
++                  f'STAGE 2 END -- {len(visited2)} node(s), '
++                  f'{time.perf_counter() - stage2_start:.1f}s total')
++
+     if stage2_allow_real_observables:
+         print(f'nested MDE (Stage 2): real-observable recursion terminations -- '
+               f'{stage2_budget_bound} budget-bound, {stage2_driver_exhausted} driver-exhausted',
+@@ -2593,6 +2814,8 @@
+     print(f'nested MDE: {len(graph.nodes)} nodes, {len(edges_df)} edges '
+           f'(N={nested_n}, M={nested_m_display}, realized max depth={realized_max_depth})',
+           flush=True)
++    _log_progress(progress_log_path,
++                  f'NESTED MDE NETWORK COMPLETE -- {len(graph.nodes)} nodes, {len(edges_df)} edges')
+ 
+     return graph, edges_df, nested_mde_results
+ 
+@@ -2821,7 +3044,7 @@
+                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                    data_file=None, data_file_sha256=None, code_fingerprint=None,
+                    gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
+-                   external_input_mode='real_data'):
++                   external_input_mode='real_data', progress_log_path=None):
+     '''Build one network spanning `targets` and their driver candidates, via
+     one of two unrelated constructions depending on `mode` -- same
+     mode-branch restructuring as simple-mde-gmn.py's own build_network():
+@@ -2902,6 +3125,7 @@
+                 lag_set, stage2_allow_real_observables,
+                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+                 code_fingerprint,
++                progress_log_path=progress_log_path,
+             )
+         graph.graph['self_delay_set'] = sorted(set(lag_set) | {0}, reverse=True)
+         partition_network(graph, targets, external_input_mode)
+```
+
+---
+
+
+## Job 40143041
+
+Generated: 2026-08-28T22:05:11+09:00
+
+Git commit at submission: `e8c7543` (clean vs. HEAD)
+
+Compared against: **job_40142937**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40142937
+
+Generated: 2026-08-28T22:00:19+09:00
+
+Git commit at submission: `e8c7543` (clean vs. HEAD)
+
+Compared against: **job_40142907**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40142907
+
+Generated: 2026-08-28T21:53:28+09:00
+
+Git commit at submission: `e8c7543` (clean vs. HEAD)
+
+Compared against: **job_40142455**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40142455
+
+Generated: 2026-08-28T21:50:57+09:00
+
+Git commit at submission: `e8c7543` (clean vs. HEAD)
+
+Compared against: **job_39674609**
+
+### Plain-language summary
+
+**Purpose: a smoke test, not a validation run.** This is the first
+end-to-end cluster execution since three changes landed this session,
+none of which has run at cluster scale before: (1) a fix for a real
+depth>=1 metric-routing bug (every Stage 1/Stage 2 neuron node was being
+ranked with `correlation` instead of `f1`), (2) a full redesign of the
+ranking-stage window (`MIN_PRED_EVENTS`/`MAX_WINDOW_ROWS`, replacing the
+old fixed `CCM_WINDOW_ROWS=800` window for this purpose), and (3) the CCM
+gate's own library-size sweep moved to absolute row counts
+(`CCM_LIB_SIZES_ROWS`) instead of a percentage of that same window. See
+`docs/review-findings.md`'s "Depth>=1 metric-routing bug" and "Window
+sizing (MIN_PRED_EVENTS/MAX_WINDOW_ROWS) and CCM-gate absolute library
+sizes" sections for the full narrative, real-data calibration, and test
+evidence behind each.
+
+**Compared against job_39674609 (2026-08-25) specifically because it's
+the last job of this same pipeline** — the code diff below therefore
+spans everything that changed since then (R12 through R22's own work,
+plus the three items above), not something specific to this job alone;
+most of those changes already have their own dedicated write-up in the
+findings doc.
+
+**Scale deliberately shrunk** for this smoke test, not a bigger run:
+`REGION_CHANNEL_CAP` 30->3, `MDE_D` 10->2, `NESTED_M` 5->2. Resources cut
+correspondingly (`--time` 4 days->2 hours, `--mem` 200G->16G,
+`--cpus-per-task` 64->8) — see this job's own sbatch script comment block
+for the specific reasoning (a real single-node timing measurement from
+this session plus this pipeline's own history of underestimated Stage 1
+cost at even modest scale). Submitted to a compute node deliberately, not
+run locally: per-node ranking windows can now reach `MAX_WINDOW_ROWS`
+(30000 rows), so this is compute-bound work regardless of how small
+`REGION_CHANNEL_CAP`/`MDE_D` are — `docs/review-actions-v1.md`'s A4 was
+amended this session to say so explicitly.
+`TARGET_RANKING_WINDOW_ROWS`/`MIN_PRED_EVENTS`/`MAX_WINDOW_ROWS`/
+`CCM_LIB_SIZES_ROWS` show as "unset" in job_39674609's own column below
+only because that job predates these knobs existing at all, not because
+anything was intentionally left at a different value.
+
+**What to look for in this job's output**, per the report requested
+alongside this smoke test: per-node resolved window lengths and target
+pred-event counts, any nodes skipped for `MIN_PRED_EVENTS`
+unreachability, the CCM gate's own new candidate-event-count diagnostic
+alongside each fitted slope, selections per node distinguishing
+budget-bound/event-starved/driverless zero-driver outcomes, and
+wall-clock by stage (the still-open `REGION_CHANNEL_CAP=3->15` cost jump
+this pipeline's own documentation flags is on the same surface this
+smoke test exercises).
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_39674609 | job_40142455 |
+|---|---|---|
+| CCM_LIB_SIZES_ROWS | _(unset)_ | 16,24,40,64,160,400,800 |
+| MAX_WINDOW_ROWS | _(unset)_ | 30000 |
+| MDE_D | 10 | 2 |
+| MIN_PRED_EVENTS | _(unset)_ | 20 |
+| NESTED_M | 5 | 2 |
+| REGION_CHANNEL_CAP | 30 | 3 |
+| TARGET_RANKING_WINDOW_ROWS | _(unset)_ | 1000 |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_39674609/tsls-mde-gmn.sbatch
++++ job_40142455/tsls-mde-gmn.sbatch
+@@ -1,9 +1,9 @@
+ #!/bin/bash
+ #SBATCH --job-name=run_tsls_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=4-00:00:00
+-#SBATCH --mem=200G
+-#SBATCH --cpus-per-task=64
++#SBATCH --time=2:00:00
++#SBATCH --mem=16G
++#SBATCH --cpus-per-task=8
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell) runs,
+ # so no shell variable expansion happens here. Pointed directly at
+@@ -261,6 +261,10 @@
+ export TSLS_MDE_GMN_CCM_LIB_SIZE_PCTS="${CCM_LIB_SIZE_PCTS}"
+ export TSLS_MDE_GMN_CCM_SAMPLE="${CCM_SAMPLE}"
+ export TSLS_MDE_GMN_CCM_SLOPE="${CCM_SLOPE}"
++export TSLS_MDE_GMN_TARGET_RANKING_WINDOW_ROWS="${TARGET_RANKING_WINDOW_ROWS}"
++export TSLS_MDE_GMN_MIN_PRED_EVENTS="${MIN_PRED_EVENTS}"
++export TSLS_MDE_GMN_MAX_WINDOW_ROWS="${MAX_WINDOW_ROWS}"
++export TSLS_MDE_GMN_CCM_LIB_SIZES_ROWS="${CCM_LIB_SIZES_ROWS}"
+ export TSLS_MDE_GMN_REUSE_BEST_PARAMS="${REUSE_BEST_PARAMS}"
+ # Separate from TSLS_MDE_GMN_RESULTS_DIR (also persistent now, but per-job
+ # and on /flash) -- these point at the durable *cross-job* bucket cache
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_39674609/tsls-mde-gmn.py
++++ job_40142455/tsls-mde-gmn.py
+@@ -31,12 +31,13 @@
+      in place of dimx.MDE -- see run_mde_for_target()'s docstring.
+   2. Network construction -- two unrelated methods depending on MODE,
+      identical branching to simple-mde-gmn.py's own build_network():
+-       - MODE='MDE-GMN': build_nested_mde_network(), a single unified BFS
+-         that runs both stages per wave (Stage 1, real-observable-only;
+-         Stage 2, per-node lagged-embedding attachment from the CCM-pre-
+-         filtered observable universe) so a Stage 2 real-observable
+-         selection recurses into its own further nested-MDE round exactly
+-         like a Stage 1 one, instead of terminating as a leaf -- both
++       - MODE='MDE-GMN': build_nested_mde_network(), two serial phases --
++         Stage 1 (real-observable-only BFS, run to full completion) then
++         Stage 2 (per-node lagged-embedding attachment from the CCM-pre-
++         filtered observable universe, seeded with every Stage 1 node) --
++         so a Stage 2 real-observable selection recurses into its own
++         further Stage 2 round exactly like a Stage 1 one recurses into
++         further Stage 1 rounds, instead of terminating as a leaf -- both
+          stages call the TSLS-flavored run_mde_for_target() below instead
+          of dimx.MDE. No CCM interaction matrix, no apps.InteractionMatrix,
+          no apps.CreateNetwork -- the resulting MultiDiGraph IS the network
+@@ -178,17 +179,32 @@
+ from gmn.Common import FunctionType
+ from apps.CreateNetwork import CreateNetwork
+ # NOTE: dimx (dx.MDE/dx.Evaluate), apps.InteractionMatrix, and pyEDM's
+-# Simplex/SMap/CCM/ComputeError/EmbedDimension/PredictInterval are not
+-# imported directly -- this pipeline uses cleaned_helper_functions.py's
++# Simplex/CCM/ComputeError/EmbedDimension/PredictInterval are not imported
++# directly -- this pipeline uses cleaned_helper_functions.py's
+ # proper_mde/proper_ccm/proper_simplex/proper_embed_dimension/
+ # proper_predict_interval throughout instead (see this module's docstring
+-# and load_config()'s METRIC docstring for why). Embed and PredictNonlinear
+-# remain: no TSLS-aware equivalent exists for retune_theta_for_all_nodes()'s
+-# own theta search (a plain pyEDM.SMap-specific concept with no analog in
+-# cleaned_helper_functions.py's own KDTree engine) -- ported unchanged from
+-# simple-mde-gmn.py, reading PredictNonlinear's own built-in 'rho' column
+-# directly (no separate ComputeError call, there or here).
+-from pyEDM import Embed, PredictNonlinear
++# and load_config()'s METRIC docstring for why). Embed remains for the
++# same reason it always did (no TSLS-aware equivalent needed -- gmn's own
++# node embedding never routes through _score()). SMap is imported directly
++# (R20, docs/review-actions-v1.md): R10 found no native S-map in
++# cleaned_helper_functions.py, but confirmed the compiled pyEDM.SMap gmn's
++# own Forecast()/Generate() already calls at runtime (unaffected by this)
++# is directly reusable for retune_theta_for_all_nodes()'s own theta
++# *selection* sweep too -- see proper_predict_nonlinear()'s own docstring.
++# PredictNonlinear stays imported only as the still-unused stdlib default
++# this module never calls anymore (retune_theta_for_all_nodes() now calls
++# proper_predict_nonlinear() instead) -- kept importable for
++# tests/test_r20_predict_nonlinear.py's own equivalence check against it.
++from pyEDM import Embed, PredictNonlinear, SMap
++
++# R19 (docs/review-actions-v1.md): run_mde_evaluate()'s PCA/diffusion-map
++# baselines. Not a dimx dependency -- these are the same underlying
++# libraries dimx.Evaluate itself wraps (confirmed by reading
++# dimx/Evaluate.py in full), imported directly here since this pipeline
++# has no dimx dependency at all to route through.
++from sklearn.decomposition import PCA
++from sklearn.linear_model import LinearRegression
++from pydiffmap import diffusion_map as dmap
+ 
+ # cleaned_helper_functions.py isn't installed as a package -- the sbatch
+ # script copies it into this script's own directory (same convention as
+@@ -218,28 +234,78 @@
+     gmn.GMN object exists).
+ 
+     MultiDiGraph (MODE='MDE-GMN', built by build_nested_mde_network()):
+-    self always gets the full self_delay_set (graph.graph['self_delay_set'],
+-    set once in build_network()) regardless of how many external drivers
+-    nested-MDE found for this node -- the same unconditional fallback a
+-    driverless leaf node already needed, just now built from the same delay
+-    machinery as everything else rather than a special case. Each real
+-    in-edge contributes one coordinate at that edge's own discovered delay
+-    (see build_nested_mde_network()'s docstring for why the same driver can
+-    appear more than once, at different delays).
++    R14 (docs/review-actions-v1.md), corrected after this pipeline's own
++    R14 test found the original "built only from discovered drivers"
++    framing doesn't survive contact with pyEDM: self no longer
++    unconditionally gets the FULL self_delay_set (the deep lags -- t-1,
++    t-3, t-5, ... -- that used to ride along regardless of what nested-MDE
++    actually found) -- those are removed. But self ALWAYS keeps its own
++    delay=0 "anchor" coordinate unconditionally, on every node, for two
++    reasons that are both load-bearing, not cosmetic: (1) gmn's own SMap
++    call sets `target = node_name + '(t-0)'`, which pyEDM requires to
++    exist as an actual column in the embedded dataframe regardless of
++    what the predictor `columns` are -- with no self-anchor and no
++    in-edge ever able to supply it (self-loops are excluded, see
++    _accept_mde_result_edges()'s docstring), every interior node would
++    have no target column at all and pyEDM would raise outright, not just
++    on a small-driver-count edge case; (2) this is also standard
++    generalized-embedding practice, not merely a workaround -- a node's
++    own present value is conventionally one of its own state-space
++    coordinates alongside whichever other coordinates come from selected
++    drivers (the classic Takens embedding is literally E lags of a
++    variable's own history; substituting some of those coordinates for
++    other variables' lags, per Deyle & Sugihara's generalized embedding,
++    doesn't mean dropping the variable's own present-value coordinate
++    too). So: self(t-0) unconditional (double duty as both the SMap
++    target and a real predictor coordinate -- not excluded from
++    `columns`), plus one coordinate per discovered driver in-edge at that
++    edge's own delay; deeper self-lags are admissible only when
++    nested-MDE genuinely selects them as an actual driver (i.e., appear
++    only via an in-edge, never via an unconditional default). See
++    partition_network()'s docstring for the interior (>=1 driver) vs.
++    external-input (0 drivers) split this enables, and
++    EXTERNAL_INPUT_MODE's own load_config() docstring for what happens to
++    a zero-driver node: under 'self_simulate' it reaches this function
++    normally and, having no in-edges by definition, ends up with the
++    anchor-only spec [(node_name, 0)] -- no special-casing needed here,
++    the same formula below already produces that; under the 'real_data'
++    default, such a node never reaches this function at all --
++    _generalized_node_generate()/_generalized_node_forecast() short-circuit
++    it before any embedding is built, and _generalized_node_init() skips
++    the libEnd_i correction below that would otherwise need a spec to
++    exist at all.
++
++    On the historical "leaf duplicate" degeneracy this decision's
++    rationale originally cited (a real observable B and "a lagged copy of
++    B" ending up as two separate zero-driver nodes with identical
++    embeddings): confirmed against _accept_mde_result_edges() and
++    observable_and_delay() that this does not describe this graph.
++    observable_and_delay() always resolves a candidate column back to its
++    RAW observable name (delay lives separately), and
++    _accept_mde_result_edges() calls graph.add_node(driver) using only
++    that raw name -- so there is exactly one graph node per raw
++    observable regardless of how many different delays reference it; "a
++    lagged copy of B" is never a second node, only a (B, some-negative-
++    delay) edge into whatever node selected it. The surviving
++    justification for partitioning out zero-driver nodes is simpler and
++    still correct on its own: a zero-driver node isn't something
++    nested-MDE discovered as a network member at all, so counting it as
++    an interior (simulated) node overstates what was actually found.
+ 
+     Plain DiGraph (MODE='GMN', from apps.CreateNetwork -- no per-edge delay
+     data exists in that mode at all): falls back to the original uniform
+     E-lagged-copies-of-every-column scheme, using
+     graph.graph['fallback_E']/['fallback_tau'] (set in build_network() from
+     that mode's own CCM E/tau grid search) in place of a per-node nested-MDE
+-    result it doesn't have.
++    result it doesn't have. R14 doesn't touch this branch -- MODE='GMN'
++    never runs build_nested_mde_network() at all, so it has no nested-MDE
++    "discovered driver" concept to partition on in the first place.
+ 
+     Either way, this is what replaced gmn's own Embed(E, tau, columns) call
+     -- see _generalized_embed()'s docstring -- since a single uniform
+     (E, tau) can't express a per-driver, per-delay embedding.'''
+     if isinstance(graph, nx.MultiDiGraph):
+-        self_delays = graph.graph.get('self_delay_set', [0])
+-        spec = [(node_name, d) for d in self_delays]
++        spec = [(node_name, 0)]
+         spec += [(u, data['delay']) for u, v, data in graph.in_edges(node_name, data=True)]
+     else:
+         E = graph.graph.get('fallback_E', 3)
+@@ -255,7 +321,12 @@
+     shared (E, tau)), this is used by build_gmn_config()'s Forecast mode to
+     size a single, network-wide lib/pred window that stays valid for every
+     node (see that function's docstring for the row-alignment tradeoff this
+-    implies for lower-offset nodes).'''
++    implies for lower-offset nodes). Still safe post-R14: self_max stays an
++    upper bound on any node's real offset even though interior nodes no
++    longer unconditionally carry self_delay_set themselves (their own
++    in-edge delays are, structurally, never deeper than the delays
++    self_delay_set/LAG_SET already span) -- this can only over-count, never
++    under-count, so the window stays valid.'''
+     if isinstance(graph, nx.MultiDiGraph):
+         self_delays = graph.graph.get('self_delay_set', [0])
+         self_max = max(abs(d) for d in self_delays)
+@@ -306,9 +377,21 @@
+     has its own, generally different, per-node offset. Recomputed exactly
+     once here, right after __init__ sets the node's pristine self.data,
+     since libEnd_i is meant to reflect that original library size before
+-    any values get appended during a Generate() run.'''
++    any values get appended during a Generate() run.
++
++    R14: skipped entirely for a real-data-mode external input (see
++    partition_network()'s docstring) -- such a node has no generalized
++    embedding at all (_embedding_spec_for() is never reached for it; its
++    Generate()/Forecast() short-circuit to a real-data passthrough), so
++    there is no spec to size libEnd_i from. `_real_node_init`'s own
++    (otherwise-uncorrected) formula is left in place; it's inert dead data
++    for a node that never runs an SMap/Embed call.'''
+     _real_node_init(self, args, Network, nodeName)
+     if self.FunctionType == FunctionType.SMap:
++        graph = Network.Graph
++        is_external = nodeName in graph.graph.get('external_inputs', set())
++        if is_external and graph.graph.get('external_input_mode', 'real_data') == 'real_data':
++            return
+         spec = _node_embedding_spec(self)
+         offset = max(abs(delay) for _, delay in spec)
+         self.libEnd_i = self.data.shape[0] - offset
+@@ -339,11 +422,46 @@
+     insert, since _generalized_embed() already resets its own index to
+     0-based. Every other branch is copied verbatim from gmn/Forecast.py
+     (unused here, since every node is SMap, but kept intact so this patch
+-    can't silently change behavior for a future non-SMap node).'''
++    can't silently change behavior for a future non-SMap node).
++
++    R14: a real-data-mode external input (see partition_network()'s
++    docstring) short-circuits here too, before any SMap/embedding logic.
++    Forecast()'s own one-step-ahead skill metric is meaningless for a
++    variable this network doesn't predict at all (self.data is already
++    fully real throughout Forecast mode -- no iterative lastDataOut
++    feeding, unlike Generate() -- so there is nothing to "forecast" here
++    beyond the real series itself). Returns (time, real values) as a
++    trivial passthrough, matching Forecast()'s own (time, predictions)
++    return shape, so gmn's per-node Forecast loop (which iterates every
++    graph node structurally, with no partition awareness of its own)
++    doesn't crash on an empty embedding spec.
++
++    (3) `columns=df.columns[1:-1]` used to drop BOTH `time` (first) AND
++    the spec's own last entry -- since spec is self-lags-then-in-edges,
++    that last entry is always the node's last discovered driver whenever
++    it has any in-edges (confirmed empirically: spec=[T(t-0), T(t-1),
++    A(t-3), B(t-0)] -> the old slice silently excluded B(t-0) from
++    `columns`, though it stayed in `df` itself). Pre-R14 this was
++    harmless -- self_delay_set padded every node with several self-lags,
++    so losing one entry barely mattered. Post-R14 a node's spec IS its
++    discovered drivers: a 1-driver interior node had zero columns left at
++    all (`columns[1:-1]` on a 2-column df is empty -- pyEDM's "columns
++    required" RuntimeError, found via this pipeline's own R14 test), and
++    a 2+-driver node silently lost its last one. Fixed here to
++    `df.columns[1:]` (drop only `time`) -- found and fixed together with
++    R14 since R14 is what turns this from a latent, mostly-harmless
++    slicing quirk into a real crash/data-loss risk, but the fix itself
++    is general (keeps every discovered driver in the embedding
++    regardless of EXTERNAL_INPUT_MODE), not R14-specific.'''
+     if self.args.DEBUG :
+         print( '-----> Node:Forecast() : ',self.FunctionType.name, self.name)
+         print( self.data.tail( 2 ), flush = True );
+ 
++    graph = self.Network.Graph
++    is_external = self.name in graph.graph.get('external_inputs', set())
++    if is_external and graph.graph.get('external_input_mode', 'real_data') == 'real_data':
++        return (self.data[self.data.columns[0]], self.data[self.name])
++
+     Parameters = self.Parameters
+     data       = self.data
+ 
+@@ -403,7 +521,7 @@
+                            tau             = 1,
+                            theta           = Parameters.theta,
+                            exclusionRadius = Parameters.exclusionRadius,
+-                           columns         = df.columns[1:-1],
++                           columns         = df.columns[1:],
+                            target          = Parameters.target + '(t-0)',
+                            solver          = None,
+                            embedded        = Parameters.embedded,
+@@ -450,7 +568,25 @@
+     Generate() code never tried to reuse real time values for its inserted
+     time column (just a fresh synthetic 0-based arange()), so there's no
+     index-alignment subtlety to correct here. Every other branch is copied
+-    verbatim (unused here, since every node is SMap).'''
++    verbatim (unused here, since every node is SMap).
++
++    R14: a real-data-mode external input (see partition_network()'s
++    docstring) short-circuits here, before any SMap/embedding logic --
++    genuinely not simulated, its "generated" value each step is just the
++    real recorded value at that row, read straight from
++    self.Network.data (loaded once, in full, from DATA_AFTER_MDE -- see
++    build_gmn_config()'s own docstring). self.data has already had
++    lastDataOut appended above by the time this check runs, so its length
++    IS the absolute row index of the next real row to hand back (both
++    start in lockstep at generate_start real rows, then grow by exactly
++    one row per step, for every node, via the same shared lastDataOut).
++
++    Also fixes the same `columns=df.columns[1:-1]` -> `df.columns[1:]`
++    driver-drop bug as _generalized_node_forecast()'s own docstring
++    describes (found via this pipeline's own R14 test) -- the old slice
++    silently excluded a node's LAST discovered driver from its SMap
++    embedding, harmless pre-R14 (self_delay_set padding masked it) but a
++    hard crash post-R14 for a 1-driver interior node.'''
+     if self.args.DEBUG :
+         print( '-----> Node:Generate() : ', self.FunctionType.name, self.name )
+         print( self.data.tail( 2 ) );
+@@ -459,6 +595,19 @@
+     if not ( lastDataOut is None ):
+         self.data = pd.concat( [ self.data, lastDataOut ] )
+ 
++    graph = self.Network.Graph
++    is_external = self.name in graph.graph.get('external_inputs', set())
++    if is_external and graph.graph.get('external_input_mode', 'real_data') == 'real_data':
++        row_i = len(self.data)
++        real_data = self.Network.data
++        if row_i >= len(real_data):
++            raise RuntimeError(
++                f"Generate: external input '{self.name}' ran out of real data at row {row_i} "
++                f"(only {len(real_data)} rows available) -- shrink GENERATE_LENGTH or switch "
++                f"EXTERNAL_INPUT_MODE to 'self_simulate'."
++            )
++        return float(real_data[self.name].iloc[row_i])
++
+     Parameters = self.Parameters
+     data       = self.data
+ 
+@@ -519,7 +668,7 @@
+                            tau             = 1,
+                            theta           = Parameters.theta,
+                            exclusionRadius = Parameters.exclusionRadius,
+-                           columns         = df.columns[1:-1],
++                           columns         = df.columns[1:],
+                            target          = Parameters.target + '(t-0)',
+                            solver          = None,
+                            embedded        = Parameters.embedded,
+@@ -830,7 +979,13 @@
+     # separate parameter). NESTED_M is the number of *additional* nested-MDE
+     # rounds beyond each target's own initial selection -- total graph depth
+     # from each target is 1 + NESTED_M levels. NESTED_M=0 is a sentinel for
+-    # "uncapped". Ported unchanged from simple-mde-gmn.py -- see
++    # "uncapped". R13 (docs/review-actions-v1.md): confirmed this is a
++    # WHOLE-NETWORK budget, shared jointly by Stage 1 and Stage 2 -- a
++    # node's depth is its distance from the target regardless of which
++    # stage discovered it (build_nested_mde_network()'s own `node_depth`),
++    # not two independent per-stage counters. This was already true before
++    # R13 (and before R12); R13 only confirmed and documented it, no
++    # arithmetic changed. Ported unchanged from simple-mde-gmn.py -- see
+     # build_nested_mde_network()'s docstring for the full algorithm.
+     cfg['NESTED_M'] = int(os.environ.get('TSLS_MDE_GMN_NESTED_M', 1))
+     # First N *raw* channels per region (CA1_/mPFC_/OFC_), TSLS-converted
+@@ -840,14 +995,52 @@
+     cfg['REGION_CHANNEL_CAP'] = int(os.environ.get('TSLS_MDE_GMN_REGION_CHANNEL_CAP', 999))
+ 
+     # ---- Two-stage nested-MDE network construction (MODE='MDE-GMN' only) --
+-    # Ported unchanged from simple-mde-gmn.py -- see build_nested_mde_network()
+-    # for the full unified two-stage-per-wave algorithm (Stage 1 real-
+-    # observable-only, Stage 2 lagged-embedding attachment, both per wave),
+-    # and that file's own load_config() docstrings for STAGE2_ALLOW_REAL_
++    # Ported from simple-mde-gmn.py -- see build_nested_mde_network() for the
++    # full serial two-stage algorithm (Stage 1 real-observable-only BFS run
++    # to completion, then Stage 2 lagged-embedding attachment, itself
++    # recursive), and that file's own load_config() docstrings for STAGE2_ALLOW_REAL_
+     # OBSERVABLES/DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP/DELAY_SET's full
+     # rationale (identical here -- this is all pure column-name/DataFrame
+-    # machinery with no TSLS-specific behavior).
+-    cfg['STAGE2_ALLOW_REAL_OBSERVABLES'] = _env_bool('TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES', False)
++    # machinery with no TSLS-specific behavior). R15 (docs/review-actions-v1.md):
++    # default flipped to True -- confirmed end-to-end (not inferred) that Stage 2's
++    # own real-observable picks genuinely recurse into further Stage 2 rounds
++    # (tests/test_r12_stage_serialization.py), bounded by the R13 shared depth
++    # budget (tests/test_r13_shared_depth_budget.py), so the step 1 condition for
++    # flipping the default holds.
++    cfg['STAGE2_ALLOW_REAL_OBSERVABLES'] = _env_bool('TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES', True)
++
++    # R14 (docs/review-actions-v1.md): a zero-driver leaf is partitioned out
++    # of the simulated network as an "external input" (partition_network())
++    # rather than getting the old unconditional self-history embedding.
++    # EXTERNAL_INPUT_MODE picks what Generate()/Forecast() actually do with
++    # such a node -- see _generalized_node_generate()'s own docstring for
++    # the full rationale (this was an explicit ask-before-implementing
++    # decision, not a default guessed at):
++    #   'real_data' (default): the node is genuinely exogenous -- its
++    #     Generate() call short-circuits to the real recorded value at each
++    #     step (self.Network.data, already loaded in full), never running
++    #     an SMap self-regression. The INTERIOR network still free-runs
++    #     autonomously; only external inputs are fed from real data. This
++    #     is what "external input" means in the standard control-theory
++    #     sense, and is the reading docs/tsls-mde-gmn-pipeline.pdf's own
++    #     future doc-rewrite pass should adopt for its Sec 1.1 claim.
++    #   'self_simulate': keeps today's exact pre-R14 behavior for these
++    #     nodes (unconditional self_delay_set embedding, genuinely self-
++    #     predicted every step, never touching real data past the initial
++    #     seed) -- R14's partition becomes reporting/visualization-only in
++    #     this mode, with no behavior change from before R14.
++    # Either way, a TARGET that itself selects zero drivers is NEVER
++    # classified as an external input regardless of this setting --
++    # partition_network() raises instead (feeding a target's own real
++    # values back in as its "simulation" and then scoring fidelity against
++    # those same real values would be circular, producing a spuriously
++    # perfect score for a network that is actually a failure).
++    cfg['EXTERNAL_INPUT_MODE'] = os.environ.get('TSLS_MDE_GMN_EXTERNAL_INPUT_MODE', 'real_data')
++    if cfg['EXTERNAL_INPUT_MODE'] not in ('real_data', 'self_simulate'):
++        raise ValueError(
++            f"TSLS_MDE_GMN_EXTERNAL_INPUT_MODE must be 'real_data' or 'self_simulate': "
++            f"{cfg['EXTERNAL_INPUT_MODE']!r}"
++        )
+ 
+     cfg['DELAY_SOURCE'] = os.environ.get('TSLS_MDE_GMN_DELAY_SOURCE', 'lag_mode').strip().lower()
+     if cfg['DELAY_SOURCE'] not in ('explicit', 'lag_mode'):
+@@ -938,11 +1131,10 @@
+     # neuron columns themselves.
+     cfg['TARGET_METRIC'] = os.environ.get('TSLS_MDE_GMN_TARGET_METRIC', 'correlation')
+     cfg['GAMMA_DELTA'] = int(os.environ.get('TSLS_MDE_GMN_GAMMA_DELTA', 2))
+-    # Every CCM convergence gate in this pipeline (proper_mde's own CCM
+-    # step, and build_interaction_matrix() below) sweeps library sizes as
+-    # PERCENTAGES of however many rows it's handed. CCM_WINDOW_ROWS bounds
+-    # that row count -- CRITICAL for calibration, not just a speed knob: too
+-    # large a window makes every tested library size land in the
++    # MODE='GMN' only (build_interaction_matrix() below) -- sweeps library
++    # sizes as PERCENTAGES of however many rows it's handed. CCM_WINDOW_ROWS
++    # bounds that row count -- CRITICAL for calibration, not just a speed
++    # knob: too large a window makes every tested library size land in the
+     # already-converged tail of the real curve, with the gate then
+     # (correctly) reporting "no rise" even though the underlying
+     # relationship is real. Fixed two past production failures this way
+@@ -950,13 +1142,104 @@
+     # rejecting every candidate for both targets) -- recalibrated against
+     # real small-libSize data from this dataset. Keep CCM_WINDOW_ROWS's
+     # smallest resulting libSize >= (max E in E_RANGE)+2.
++    #
++    # MODE='MDE-GMN' (run_mde_for_target()/run_multi_mde_for_targets(),
++    # the pipeline's own default) no longer uses this knob at all -- see
++    # TARGET_RANKING_WINDOW_ROWS/MIN_PRED_EVENTS/MAX_WINDOW_ROWS/
++    # CCM_LIB_SIZES_ROWS below, and docs/review-findings.md's own
++    # window-sizing section for why: a single fixed window/percentage-based
++    # library grid made f1-scored ranking degenerate for real neuron
++    # targets whose own reset events are too sparse within any window small
++    # enough to keep the CCM gate's own convergence curve meaningful.
+     cfg['CCM_WINDOW_ROWS'] = int(os.environ.get('TSLS_MDE_GMN_CCM_WINDOW_ROWS', 800))
++    # R17 (docs/review-actions-v1.md), gated on R9's own calibration: R9's
++    # window sweep measured, at this pipeline's CCM_WINDOW_ROWS=800 default
++    # (whose own smallest percentage below, 2%, is 16 rows), that 35% of a
++    # 54-pair stratified sample were still rising at 40 rows (the 5%
++    # point) -- a real but NOT majority fraction (R9's own decision rule:
++    # "most sampled pairs" would mean adopting the reviewer's coarser
++    # [5,20,40,60,80] grid outright, which drops everything below 40 rows
++    # entirely; 35% doesn't clear that bar). So: coarsen only the upper
++    # end, keeping the small (16/24/40/64-row) percentages that still
++    # carry real rising-curve signal for a meaningful minority of pairs,
++    # and only dropping percentages from the already-converged tail
++    # (12%, 30% removed; 20%/50% kept) -- see docs/review-findings.md's
++    # R17 section for the measured compute/selection effect on real data.
+     cfg['CCM_LIB_SIZE_PCTS'] = tuple(
+-        _env_float_list('TSLS_MDE_GMN_CCM_LIB_SIZE_PCTS', (2, 3, 5, 8, 12, 20, 30, 50))
++        _env_float_list('TSLS_MDE_GMN_CCM_LIB_SIZE_PCTS', (2, 3, 5, 8, 20, 50))
+     )
+     cfg['CCM_SAMPLE'] = int(os.environ.get('TSLS_MDE_GMN_CCM_SAMPLE', 20))
+     cfg['CCM_SLOPE'] = float(os.environ.get('TSLS_MDE_GMN_CCM_SLOPE', 0.01))
+ 
++    # Window-sizing fix (docs/review-findings.md) -- MODE='MDE-GMN' only.
++    # Replaces CCM_WINDOW_ROWS/CCM_LIB_SIZE_PCTS for run_mde_for_target()/
++    # run_multi_mde_for_targets()'s own ranking-stage/E-select window and
++    # the CCM gate's own library sweep, decoupled from each other (see
++    # _resolve_target_ranking_window()'s and proper_mde()'s own `libSizes`
++    # docstrings for the full reasoning -- a single fixed window/percentage
++    # grid made f1-scored ranking degenerate for real sparse-firing
++    # neurons).
++    #
++    # TARGET_RANKING_WINDOW_ROWS: the depth-0 seed's own fixed
++    # ranking/E-select window (behavioral targets have no reset-event
++    # concept, so there's nothing to extend against) -- arbitrary, set to
++    # 1000 for now; larger than the old CCM_WINDOW_ROWS=800 default, no
++    # other rationale yet.
++    cfg['TARGET_RANKING_WINDOW_ROWS'] = int(
++        os.environ.get('TSLS_MDE_GMN_TARGET_RANKING_WINDOW_ROWS', 1000))
++    # MIN_PRED_EVENTS: for every Stage 1/Stage 2 (neuron) node, its own
++    # ranking window is extended -- never past the leakage boundary B --
++    # until its own PRED portion (the last (1 - lib_ratio) fraction of ROWS
++    # of the window, the part `f1`-scoring actually touches) contains at
++    # least this many of that neuron's real reset events, counted strictly
++    # within [0, B). A plain fixed integer, not a fraction of anything
++    # neuron-specific (see docs/review-findings.md for why an earlier
++    # "half of this neuron's own total events" design was abandoned: it
++    # made a busy neuron face a stricter test than a quiet one for no
++    # stated reason, and -- checked against the whole window rather than
++    # its pred portion -- was found on real data to pass while the pred
++    # portion itself still had too few events to score anything on).
++    #
++    # Calibrated (not guessed) via r9_ccm_window_e_calibration.py's own
++    # MIN_PRED_EVENTS section: f1 between a real TSLS slice and a lightly
++    # perturbed copy of itself, >=200 draws per point, stratified by
++    # firing-rate tercile. Result: a smooth ~1/sqrt(N) std decay with NO
++    # natural elbow (5->0.146, 10->0.104, 20->0.070, 40->0.050, 80->0.036,
++    # 160->0.025, pooled) -- so 20 is a threshold choice justified by the
++    # cost/reachability tradeoff below, not a discovered stabilisation
++    # point. At 20, std~0.07 is still ~3x smaller than CROSS_MAP_RHO_MIN's
++    # own 0.2 default, and real data (REGION_CHANNEL_CAP=15, this session)
++    # showed only 3/45 channels unreachable within the leakage-safe range
++    # (median 3,593 rows needed) -- 40 and 80 buy modestly less noise at a
++    # steep cost in both unreachable channels (8/45, 20/45) and window
++    # length (median ~10,400 rows either way).
++    cfg['MIN_PRED_EVENTS'] = int(os.environ.get('TSLS_MDE_GMN_MIN_PRED_EVENTS', 20))
++    # MAX_WINDOW_ROWS: a plain compute ceiling on the search above -- NOT
++    # calibrated (unlike MIN_PRED_EVENTS): if a node can't reach
++    # MIN_PRED_EVENTS within min(MAX_WINDOW_ROWS, B), it's skipped (logged,
++    # with the shortfall) rather than scored on too few events.
++    # MIN_PRED_EVENTS is the statistical floor; this is the compute
++    # ceiling -- the two express one thing each. 30000 is comfortably
++    # above the largest real row count MIN_PRED_EVENTS=20 was observed to
++    # need (26,748) and safely below this dataset's own leakage boundary
++    # (~38,067) -- a backstop, not a tuned value.
++    cfg['MAX_WINDOW_ROWS'] = int(os.environ.get('TSLS_MDE_GMN_MAX_WINDOW_ROWS', 30000))
++    # CCM_LIB_SIZES_ROWS: explicit, absolute row counts (never a percentage
++    # of the -- now node-specific, potentially much larger -- ranking
++    # window above) for the CCM gate's own convergence-curve library sweep.
++    # Starts from R9/R17's own empirically-calibrated percentage grid
++    # (2,3,5,8,20,50% of the old 800-row CCM_WINDOW_ROWS = 16,24,40,64,160,
++    # 400 rows), plus one additional point (800) for better plateau
++    # visibility now that the surrounding frame can be much larger --
++    # re-validated at both an 800-row and an 8000-row frame on real data
++    # (docs/review-findings.md): the same absolute values showed the same
++    # qualitative "rising, then plateauing" shape at both scales, since
++    # that shape is a property of the absolute library size, not its ratio
++    # to the frame.
++    cfg['CCM_LIB_SIZES_ROWS'] = tuple(
++        _env_int_list('TSLS_MDE_GMN_CCM_LIB_SIZES_ROWS', (16, 24, 40, 64, 160, 400, 800))
++    )
++
+     # ---- Search reuse ---------------------------------------------------
+     # See simple-mde-gmn.py's own module docstring's SEARCH REUSE section
+     # for the full rationale; ported unchanged. Short version: reuse a past
+@@ -1052,6 +1335,106 @@
+     return windowed, lib_end
+ 
+ 
++def _resolve_target_ranking_window(target, full_df, usable_df, lib_ratio,
++                                    is_behavioral_target, target_ranking_window_rows,
++                                    min_pred_events, max_window_rows):
++    '''Window-sizing fix (found while verifying R22, docs/review-actions-v1.md
++    -- see docs/review-findings.md's own window-sizing section for the full
++    real-data investigation, including the two abandoned designs this
++    replaces): resolves the ranking-stage/E-auto-select window for one
++    node's own run_mde_for_target() call, decoupled from CCM_WINDOW_ROWS
++    (which stays governing the CCM gate's own convergence-curve library
++    sizing, now via absolute row counts -- see `ccm_lib_sizes_rows` in
++    run_mde_for_target()'s own docstring -- not this function's own frame
++    size at all).
++
++    BEHAVIORAL TARGETS (`is_behavioral_target=True`, always true at the
++    depth-0 seed): no TSLS reset-event concept applies (the target is a
++    genuine continuous trace, correlation-scored) -- window is simply
++    `min(target_ranking_window_rows, len(usable_df))`, a fixed constant
++    (default 1000), unrelated to firing rate. `min_pred_events` is not
++    used, `max_window_rows` is not used, and the returned event count is
++    always `None`.
++
++    NEURON TARGETS (`is_behavioral_target=False`, virtually every Stage 1/
++    Stage 2 node): grow the window W (in rows); within W, the PRED portion
++    is its own last `1 - lib_ratio` fraction of ROWS (the same split
++    `_ccm_window()` will later carve out of this exact W for the CCM
++    gate -- see that function). Count `target`'s real reset events that
++    fall in that row range -- never by events, only ever by rows -- and
++    stop at the smallest W where that count is >= `min_pred_events`.
++    `min_pred_events` is a plain, fixed integer (not a fraction of
++    anything neuron-specific): it answers "how many matched events does
++    f1 need before it is signal rather than noise", which is a property
++    of the metric, not of the neuron (see docs/review-findings.md for the
++    full reasoning behind abandoning the earlier
++    fraction-of-a-neuron's-own-total-events design, which made a busy
++    neuron face a stricter test than a quiet one for no stated reason, and
++    which -- checked against the WHOLE window rather than its pred
++    portion -- was later found on real data to pass while the pred
++    portion itself still had too few events to score anything on).
++
++    The search never grows W past `min(max_window_rows, len(usable_df))`
++    -- `max_window_rows` is a plain compute ceiling (not calibrated; see
++    load_config()'s own docstring), `len(usable_df)` is the leakage-safe
++    boundary this function's own caller has already trimmed to (see
++    run_mde_for_target()'s own LEAKAGE docstring). ALL event counting here
++    happens strictly within `usable_df` (i.e. `[0, B)`) -- never using
++    `full_df` rows at or past B, since sizing a search parameter from
++    held-out data is the same class of leakage the B boundary exists to
++    prevent (`full_df` is accepted only for signature symmetry with the
++    behavioral branch and is not read in this branch).
++
++    Returns (window_rows, pred_event_count). On success, `pred_event_count`
++    is the achieved count in the resolved window's own pred portion
++    (>= min_pred_events). On failure (`min_pred_events` unreachable
++    anywhere within the cap), returns (None, pred_event_count) where
++    pred_event_count is the best (largest) count achieved at ANY window
++    size tried, not necessarily at the cap itself -- the pred portion's
++    own event count is not guaranteed monotonic in W (both its edges only
++    ever move forward as W grows, but an event row can age out of the
++    portion's left edge in the same step before any new event row enters
++    at the right, so the count can dip locally) -- the caller can and
++    should report the shortfall as `min_pred_events - pred_event_count`
++    rather than silently scoring the node on too few events.'''
++    n_usable = len(usable_df)
++    if is_behavioral_target:
++        return min(target_ranking_window_rows, n_usable), None
++
++    cap = min(max_window_rows, n_usable)
++    if cap < 1:
++        return None, 0
++
++    usable_vals = usable_df[target].to_numpy()[:cap]
++    near_zero_threshold = tsls.infer_near_zero_threshold_from_true_tsls(
++        full_df[target].to_numpy())
++    # detect_reset_events_from_tsls classifies each row from only that row
++    # and the one before it (np.diff(..., prepend=x[0])), so truncating the
++    # input to `cap` rows first cannot change any detection within [0, cap).
++    event_indices = tsls.detect_reset_events_from_tsls(
++        usable_vals, near_zero_threshold=near_zero_threshold, drop_threshold=0.0)
++
++    # event_indices is sorted, so searchsorted gives the exact cumulative
++    # count up to any row bound with no explicit loop. pred_start[i] is the
++    # first row of the pred portion for window size w_candidates[i] -- the
++    # same `round(w * lib_ratio)` formula _ccm_window() uses for its own
++    # lib_end, so the final resolved window's pred portion here is exactly
++    # what the CCM gate will later carve out of it too.
++    w_candidates = np.arange(1, cap + 1)
++    pred_start = np.round(w_candidates * lib_ratio).astype(int)
++    lo = np.searchsorted(event_indices, pred_start, side='left')
++    hi = np.searchsorted(event_indices, w_candidates, side='left')
++    pred_events_up_to_w = hi - lo
++
++    passing = pred_events_up_to_w >= min_pred_events
++    if not passing.any():
++        # Best count seen at ANY window size tried, not just at the cap --
++        # see this function's own docstring for why the two can differ.
++        return None, int(pred_events_up_to_w.max())
++    first = int(np.argmax(passing))
++    return int(w_candidates[first]), int(pred_events_up_to_w[first])
++
++
+ def _metric_for(column, targets, metric, target_metric):
+     '''TARGETS (continuous behavioral traces) always score via
+     target_metric ('correlation'); everything else (TSLS-converted neuron
+@@ -1202,11 +1585,13 @@
+                         mde_d, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                         results_dir, delay_set, tp=1,
+                         metric='f1', target_metric='correlation', gamma_delta=2,
+-                        ccm_window_rows=800, ccm_lib_size_pcts=(2, 3, 5, 8, 12, 20, 30, 50),
+                         ccm_sample=20, ccm_slope=0.01,
++                        is_behavioral_target=True, target_ranking_window_rows=1000,
++                        min_pred_events=20, max_window_rows=30000,
++                        ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
+                         reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                         data_file=None, data_file_sha256=None, code_fingerprint=None,
+-                        cache_stage='stage1', max_e=None, inner_workers=1):
++                        cache_stage='stage1', max_e=None, inner_workers=1, raw_columns=None):
+     '''Run cleaned_helper_functions.proper_mde's forward selection for a
+     single target variable -- TSLS-flavored equivalent of
+     simple-mde-gmn.py's own run_mde_for_target() (dimx.MDE), matching that
+@@ -1238,27 +1623,51 @@
+     same numeric value as before, just not redundantly re-pinned here.
+ 
+     metric vs. ccmMetric passed to proper_mde: `target_metric` scores the
+-    RANKING stage (predictions of `target`, a continuous TARGETS column --
+-    never `metric`) AND the E-auto-select sweep above (same reasoning: it
+-    also predicts `target`); `metric` scores the CCM causality gate
+-    (predictions of each CANDIDATE column, a TSLS-converted neuron series)
+-    -- see load_config()'s TARGET_METRIC docstring and this file's
+-    _metric_for(); proper_mde's own docstring anticipates exactly this
+-    split.
++    RANKING stage (predictions of `target` -- a continuous TARGETS column
++    at the depth-0 seed, a neuron at every Stage 1/Stage 2 node -- never
++    `metric`) AND the E-auto-select sweep above (same reasoning: it also
++    predicts `target`); `metric` scores the CCM causality gate (predictions
++    of each CANDIDATE column, always a TSLS-converted neuron series) -- see
++    load_config()'s TARGET_METRIC docstring and this file's _metric_for().
++    Callers are responsible for resolving `target_metric` correctly for
++    whatever `target` actually is here (`_metric_for(target, targets,
++    metric, target_metric)` at the depth>=1 call sites -- see the
++    metric-routing fix in docs/review-findings.md for why this call site
++    previously got it wrong for every neuron node).
++
++    WINDOW SIZING (docs/review-findings.md's own window-sizing section --
++    found and fixed alongside the metric-routing bug above, since fixing
++    that bug alone made `f1`-scored ranking degenerate under the previous
++    fixed CCM_WINDOW_ROWS=800 window): the ranking-stage/E-auto-select
++    window is no longer CCM_WINDOW_ROWS -- it is resolved per node by
++    `_resolve_target_ranking_window()` (see that function's own docstring),
++    decoupled entirely from the CCM gate's own convergence-curve library
++    sizing (`ccm_lib_sizes_rows`, absolute row counts, never a percentage
++    of this window -- see that parameter's own docstring below for why).
++    `is_behavioral_target=True` (the depth-0 seed's own case): a fixed
++    `target_ranking_window_rows` (default 1000), no event-count concept.
++    `is_behavioral_target=False` (virtually every Stage 1/Stage 2 node):
++    extended until `target`'s own PRED portion of the window (the part
++    `f1`-scoring actually touches, not the window as a whole) contains at
++    least `min_pred_events` (default 20, empirically calibrated -- see
++    load_config()'s own docstring) real reset events, capped at
++    `max_window_rows` (default 30000, a plain compute ceiling, not
++    calibrated) -- see `_resolve_target_ranking_window()`'s own docstring
++    for the full reasoning and the two earlier designs this replaces.
+ 
+     LEAKAGE (see load_config()'s three-way A/B/end window docstring,
+     identical rationale to simple-mde-gmn.py's own run_mde_for_target()):
+     `prediction_start`/`prediction_length` here are always A and B-A. The
+-    row range handed to proper_mde is trimmed twice before being windowed
+-    to CCM_WINDOW_ROWS (see _ccm_window() and load_config()'s own
+-    CCM_WINDOW_ROWS docstring for why that windowing is necessary at this
+-    pipeline's row counts): `warmup` rows are skipped at the front (delay-
++    row range handed to proper_mde is trimmed twice before being resolved
++    to this node's own ranking window (see _resolve_target_ranking_window()
++    and _ccm_window()): `warmup` rows are skipped at the front (delay-
+     expansion NaN warm-up, same as simple-mde-gmn.py) and `tp` rows are
+     trimmed from the back (B - tp, not B, so the last validated row's own
+     t+tp target label can never land at or past B) -- both applied BEFORE
+-    windowing, so the CCM window itself can never reach into the Generate/
+-    Forecast validation segment [B, end) regardless of CCM_WINDOW_ROWS's
+-    value.
++    the window is resolved, so neither the fixed depth-0 window nor the
++    extended per-node neuron window can ever reach into the Generate/
++    Forecast validation segment [B, end), regardless of how large either
++    grows.
+ 
+     CACHE (reuse_cache, gated by TSLS_MDE_GMN_REUSE_BEST_PARAMS): ported
+     unchanged from simple-mde-gmn.py -- a cache hit reconstructs the same
+@@ -1287,7 +1696,35 @@
+     pyEDM.CCM's nested pools caused once, before that fix. No TSLS-side
+     equivalent of that bug ever existed here (proper_mde never had any
+     multiprocessing at all until this parameter) -- this inner pool is
+-    new, sized the same careful way from the start.'''
++    new, sized the same careful way from the start.
++
++    `raw_columns` (R21, docs/review-actions-v1.md): when given, builds a
++    `{column: delay}` lookup via `observable_and_delay()` for every column
++    in `observable_columns` and passes it to `proper_mde` as
++    `column_delay`, enabling that function's own dynamic per-dimension
++    exclusion radius (see its docstring). `None` (default, and what
++    main()'s own depth-0 seed call passes -- that pool is always
++    real-only, so there is no delay to look up) -> `column_delay=None` ->
++    proper_mde's own no-op default. `build_nested_mde_network()`'s Stage 1
++    and Stage 2 calls both pass `raw_columns=raw_columns` (their
++    `observable_columns`/`candidate_pool` can genuinely contain
++    delay-suffixed synthetic names, confirmed on real data this session).
++
++    `ccm_lib_sizes_rows` (window-sizing fix, docs/review-findings.md):
++    explicit, absolute row counts for the CCM gate's own convergence-curve
++    library sweep, passed to `proper_mde` as `libSizes` (bypassing its own
++    `pLibSizes`-as-percentage-of-window computation entirely). Deliberately
++    NOT a percentage of this node's own (now node-specific, potentially
++    much larger) ranking window: R9's own empirical calibration
++    (docs/review-findings.md) found the "rising, then plateauing"
++    convergence shape is a property of the *absolute* library size, not
++    its ratio to the surrounding frame -- confirmed by re-running that same
++    calibration at both an 800-row frame (R9's own original scale) and an
++    8000-row frame (a realistic neuron-target scale under this fix): the
++    same absolute values showed the same qualitative shape at both scales.
++    See load_config()'s own CCM_LIB_SIZES_ROWS docstring for the exact
++    calibrated default and the reasoning behind extending R9/R17's own
++    6-value grid with one more point.'''
+     # Fallback only -- every real call site (main()'s depth-0 seed, and
+     # both of build_nested_mde_network()'s per-wave passes) passes this
+     # explicitly as the raw TSLS_MDE_GMN_MDE_D value. Falls back to mde_d
+@@ -1304,13 +1741,40 @@
+     warmup = max((abs(d) for d in delay_set), default=0)
+     usable_end = prediction_start + prediction_length - tp
+ 
++    usable_df = mde_df.iloc[warmup:usable_end].reset_index(drop=True)
++    lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
++
++    # Window-sizing fix (docs/review-findings.md) -- resolved BEFORE the
++    # cache fingerprint below, since both the resolved window size and (for
++    # a neuron target) pred_event_count are real, data-dependent inputs to
++    # this call's own outcome and must be part of it (A5).
++    window_rows, pred_event_count = _resolve_target_ranking_window(
++        target, df, usable_df, lib_ratio,
++        is_behavioral_target, target_ranking_window_rows, min_pred_events, max_window_rows,
++    )
++    if window_rows is None:
++        shortfall = min_pred_events - pred_event_count
++        cap = min(max_window_rows, len(usable_df))
++        print(f'{target}: cannot reach MIN_PRED_EVENTS={min_pred_events} in the pred portion '
++              f'of any window up to min(MAX_WINDOW_ROWS, leakage-safe range)={cap} rows -- '
++              f'best achievable was {pred_event_count} events (short by {shortfall}). '
++              f'Treating as a dead-end (zero drivers selected, no further nesting from this '
++              f'node) rather than scoring it on too few events.', flush=True)
++        return _failed_mde_result(target)
++    if not is_behavioral_target:
++        print(f'{target}: resolved ranking window={window_rows} rows, '
++              f'pred_event_count={pred_event_count} (MIN_PRED_EVENTS={min_pred_events})',
++              flush=True)
++
+     fingerprint = None
+     cache_filename = f'mde_selection_{cache_stage}_{target}.pkl'
+     if reuse_cache:
+         fingerprint = build_mde_selection_fingerprint(
+             target, observable_columns, mde_d, tp, embed_dim_rho_min, cross_map_rho_min,
+             exclusion_radius, delay_set, prediction_start, prediction_length,
+-            metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
++            metric, target_metric, gamma_delta,
++            is_behavioral_target, target_ranking_window_rows, min_pred_events, max_window_rows,
++            window_rows, pred_event_count, ccm_lib_sizes_rows,
+             ccm_sample, ccm_slope,
+             data_file, data_file_sha256, code_fingerprint, cache_stage, max_e,
+         )
+@@ -1337,9 +1801,7 @@
+         print(f'{target}: TSLS_MDE_GMN_REUSE_BEST_PARAMS set but no matching cached MDE selection '
+               f'found under {prev_runs_dir} -- running forward-selection.', flush=True)
+ 
+-    usable_df = mde_df.iloc[warmup:usable_end].reset_index(drop=True)
+-    lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
+-    ccm_df, ccm_lib_end = _ccm_window(usable_df, lib_ratio, ccm_window_rows)
++    ccm_df, ccm_lib_end = _ccm_window(usable_df, lib_ratio, window_rows)
+ 
+     # One inner pool for this node's WHOLE proper_mde() call -- opened
+     # once here, reused across every dimension's ranking loop and every
+@@ -1353,15 +1815,28 @@
+         ThreadPoolExecutor(max_workers=inner_workers) if inner_workers > 1
+         else nullcontext()
+     )
++    # R21 (docs/review-actions-v1.md): column_delay lookup for proper_mde's
++    # own dynamic per-dimension exclusion radius -- only meaningful when
++    # `observable_columns` can contain delay-suffixed synthetic names
++    # (build_nested_mde_network()'s Stage 1/Stage 2 candidate pools; see
++    # that function's own call sites, which pass raw_columns=raw_columns).
++    # `raw_columns=None` (main()'s own depth-0 seed call, always a
++    # real-only pool) -> column_delay=None -> proper_mde's own no-op
++    # default, identical to before this parameter existed.
++    column_delay = (
++        {c: observable_and_delay(c, raw_columns)[1] for c in observable_columns}
++        if raw_columns is not None else None
++    )
++
+     with inner_pool_ctx as inner_pool:
+         result = tsls.proper_mde(
+             ccm_df, target=target, columns=observable_columns, D=mde_d,
+             lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)],
+             Tp=tp, E=0, maxE=max_e, exclusionRadius=exclusion_radius,
+-            pLibSizes=ccm_lib_size_pcts, sample=ccm_sample, ccmSlope=ccm_slope,
++            libSizes=ccm_lib_sizes_rows, sample=ccm_sample, ccmSlope=ccm_slope,
+             crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
+             metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
+-            verbose=True, pool=inner_pool,
++            verbose=True, pool=inner_pool, column_delay=column_delay,
+         )
+ 
+     mde_out = pd.DataFrame({'rho': result['MDErho']})
+@@ -1402,8 +1877,9 @@
+                                mde_d, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                                results_dir, delay_set, tp=1,
+                                metric='f1', target_metric='correlation', gamma_delta=2,
+-                               ccm_window_rows=800, ccm_lib_size_pcts=(2, 3, 5, 8, 12, 20, 30, 50),
+                                ccm_sample=20, ccm_slope=0.01,
++                               target_ranking_window_rows=1000,
++                               ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
+                                reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                                data_file=None, data_file_sha256=None, code_fingerprint=None,
+                                cache_stage='stage1', E=3, target_aggregate='mean'):
+@@ -1435,6 +1911,15 @@
+     # instead of one.
+     warmup = max((abs(d) for d in delay_set), default=0)
+     usable_end = prediction_start + prediction_length - tp
++    usable_df = mde_df.iloc[warmup:usable_end].reset_index(drop=True)
++    lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
++
++    # Window-sizing fix (docs/review-findings.md): every target here is
++    # always behavioral (GMN_MODE='combined''s depth-0 seed only, per this
++    # function's own docstring) -- no per-node event-count extension, just
++    # the same fixed constant _resolve_target_ranking_window() uses for a
++    # single behavioral target, applied once for the whole joint call.
++    window_rows = min(target_ranking_window_rows, len(usable_df))
+ 
+     targets_tag = '_'.join(targets)
+     fingerprint = None
+@@ -1443,7 +1928,8 @@
+         fingerprint = build_multi_mde_selection_fingerprint(
+             targets, observable_columns, mde_d, tp, embed_dim_rho_min, cross_map_rho_min,
+             exclusion_radius, delay_set, prediction_start, prediction_length,
+-            metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
++            metric, target_metric, gamma_delta,
++            target_ranking_window_rows, window_rows, ccm_lib_sizes_rows,
+             ccm_sample, ccm_slope,
+             data_file, data_file_sha256, code_fingerprint, cache_stage, E, target_aggregate,
+         )
+@@ -1470,15 +1956,13 @@
+         print(f'{targets_tag}: TSLS_MDE_GMN_REUSE_BEST_PARAMS set but no matching cached joint '
+               f'MDE selection found under {prev_runs_dir} -- running forward-selection.', flush=True)
+ 
+-    usable_df = mde_df.iloc[warmup:usable_end].reset_index(drop=True)
+-    lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
+-    ccm_df, ccm_lib_end = _ccm_window(usable_df, lib_ratio, ccm_window_rows)
++    ccm_df, ccm_lib_end = _ccm_window(usable_df, lib_ratio, window_rows)
+ 
+     result = tsls.multi_proper_mde(
+         ccm_df, targets=list(targets), columns=observable_columns, D=mde_d,
+         lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)],
+         Tp=tp, E=E, exclusionRadius=exclusion_radius,
+-        pLibSizes=ccm_lib_size_pcts, sample=ccm_sample, ccmSlope=ccm_slope,
++        libSizes=ccm_lib_sizes_rows, sample=ccm_sample, ccmSlope=ccm_slope,
+         crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
+         metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
+         target_aggregate=target_aggregate,
+@@ -1776,21 +2260,69 @@
+                               prediction_start, prediction_length, nested_n, nested_m,
+                               embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                               results_dir, mde_results, delay_set, tp,
+-                              metric, target_metric, gamma_delta, ccm_window_rows,
+-                              ccm_lib_size_pcts, ccm_sample, ccm_slope, cores,
++                              metric, target_metric, gamma_delta,
++                              target_ranking_window_rows, min_pred_events, max_window_rows,
++                              ccm_lib_sizes_rows, ccm_sample, ccm_slope, cores,
+                               lag_set, stage2_allow_real_observables,
+                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                               data_file=None, data_file_sha256=None, code_fingerprint=None):
+-    '''Two-stage nested-MDE network construction, unified into ONE BFS --
+-    MODE='MDE-GMN' only. Ported from simple-mde-gmn.py's own (also
+-    unified, as of 2026-08-25) build_nested_mde_network(); see that
+-    function's docstring for the full algorithm (BFS out from targets,
+-    both a Stage-1-style real-observable-only call and a Stage-2-style
+-    lagged-embedding call per node per wave, cycle/self-loop/NaN-gain
+-    rejection, delay=0-only nesting continuation from EITHER stage --
+-    revised so Stage 2's own real-observable selections now recurse
+-    exactly like Stage 1's, instead of always being terminal) --
+-    identical here, data-agnostic.
++    '''Two-stage nested-MDE network construction, MODE='MDE-GMN' only --
++    FULLY SERIAL between stages (R12, 2026-08-27: reverted from the
++    2026-08-25 unified-per-wave-BFS design -- see JOB_LOG.md for that
++    design and why it's being replaced here). Stage 1's own real-
++    observable BFS runs to completion, over every depth the shared
++    nested_m budget allows, before Stage 2 ever starts. Stage 2 then runs
++    its own separate BFS -- seeded with EVERY node Stage 1 discovered (so
++    every backbone node still gets a lagged/real embedding attached, the
++    same guarantee the old unified design gave one wave at a time) --
++    and Stage 2 selections are themselves recursive: a delay=0 (real-
++    observable) driver Stage 2 selects (only reachable when
++    stage2_allow_real_observables=True) is enqueued for its own further
++    Stage 2 round, exactly like Stage 1 nodes recurse into further Stage
++    1 rounds, NOT a Stage 1 round -- Stage 2 never triggers a fresh
++    Stage-1-style (real-observable-only) call on anything.
++
++    This is a deliberate, explicit un-doing of the 2026-08-25 unification,
++    per review action R12: that revision fixed a real bug (the historical
++    dead-end-leaf problem, Sec 5.3 -- attach_lag_embeddings() ran ONCE
++    over Stage 1's final node set, non-recursively, so a Stage-2-selected
++    real observable could never itself become a nested-MDE target) but
++    serialization and recursion are orthogonal properties, and the fix
++    conflated them. What had to be restored is the sequencing (Stage 1
++    complete, THEN Stage 2); what had to be kept is Stage 2's own
++    recursion (added 2026-08-25, not reverted here). Neither this
++    function's Stage 1 phase nor its Stage 2 phase flattens into a single
++    non-recursive sweep.
++
++    Depth accounting is joint across both phases -- a node's depth is its
++    distance from the target regardless of which phase discovered it (see
++    `node_depth` below), and the same nested_m budget check
++    (`nested_m == 0 or depth < nested_m`, depth = the discovering node's
++    OWN depth, unchanged arithmetic from the prior revision -- R13 does
++    not touch this) gates further recursion in EITHER phase. A
++    consequence documented in the review (R12/R15's own interaction
++    note, R15 itself out of scope here): because Stage 1 now runs to full
++    depth before Stage 2 ever sees a node, a real-observable Stage 2
++    selects on a branch Stage 1 already carried out to the depth cap is
++    beyond budget and terminates immediately -- correct budget-bound
++    termination, not a broken recursion. Distinguishing that from Stage 2
++    simply finding zero real-observable drivers on a branch (driver-
++    exhausted termination) in the run log is R15 step 4's own job, not
++    done by this revision.
++
++    Stage 2's initial wave seeds every node Stage 1 visited, at whatever
++    depth Stage 1 discovered it at -- these depths are NOT uniform within
++    that first Stage 2 wave (Stage 1's own BFS produced them one wave per
++    depth; Stage 2 processes them all at once for maximum parallelism, the
++    same "single sweep over Stage 1's final node set" shape the historical
++    §5.3 bug had -- the difference is this sweep recurses further whereas
++    that one didn't). Because a wave can therefore mix depths, a brand-new
++    driver proposed by more than one same-wave parent takes the SHALLOWEST
++    proposed depth (see the next_wave dict-of-mins pattern below), not an
++    arbitrary iteration-order-dependent one -- this is a strict
++    correctness improvement over the prior revision's plain-list next_wave
++    (harmless there, since every wave was single-depth by construction, so
++    plain-list and min-tracked next_wave picked the same result).
+ 
+     Differences from simple-mde-gmn.py, both pre-existing (not new to
+     this revision): (1) neither pool passes `initializer=` -- simple-
+@@ -1798,8 +2330,8 @@
+     monkeypatches inside every worker, which has no TSLS-side equivalent
+     (no dimx.Run to monkeypatch at all); (2) the outer/inner split is
+     computed the same way (outer_workers = min(node count, cores),
+-    inner_workers = cores // outer_workers, recomputed fresh per stage
+-    per wave from that stage's own real node count) but fed to a
++    inner_workers = cores // outer_workers, recomputed fresh per phase
++    per wave from that phase's own real node count) but fed to a
+     different layer than simple-mde-gmn.py's dx.MDE(cores=...) -- here
+     inner_workers becomes a ThreadPoolExecutor opened once per node
+     inside run_mde_for_target() itself (see that function's own INNER
+@@ -1819,13 +2351,19 @@
+ 
+     edges = []
+     nested_mde_results = {}
+-    visited = set()
++    node_depth = {t: 0 for t in targets}
++
++    # =====================================================================
++    # PHASE 1 -- Stage 1: real-observable-only BFS, run to full completion
++    # (every depth the nested_m budget allows) before Stage 2 starts at all.
++    # =====================================================================
++    visited1 = set()
+     current_wave = [(t, 0) for t in targets]
+ 
+     while current_wave:
+         wave_nodes, seen = [], set()
+         for node, depth in current_wave:
+-            if node in visited or node in seen:
++            if node in visited1 or node in seen:
+                 continue
+             seen.add(node)
+             wave_nodes.append((node, depth))
+@@ -1833,7 +2371,6 @@
+         if not wave_nodes:
+             break
+ 
+-        # ---- Stage 1 pass: real-observable-only ----
+         to_compute = [(node, depth) for node, depth in wave_nodes
+                       if not (depth == 0 and node in mde_results)]
+         stage1_results = {
+@@ -1844,9 +2381,13 @@
+         if to_compute:
+             outer_workers = min(len(to_compute), max(1, cores))
+             inner_workers = max(1, cores // outer_workers)
++            # R5 (docs/review-actions-v1.md): product logged explicitly so
++            # a run's own log can be checked for outer*inner <= cores
++            # without re-deriving it by hand.
+             print(f'nested MDE (Stage 1): wave of {len(to_compute)} node(s) at depth '
+                   f'{to_compute[0][1]} -- {outer_workers} parallel worker(s) '
+-                  f'x {inner_workers} inner thread(s) each', flush=True)
++                  f'x {inner_workers} inner thread(s) each '
++                  f'(product={outer_workers * inner_workers}, cores={cores})', flush=True)
+ 
+             with ProcessPoolExecutor(max_workers=outer_workers,
+                                       mp_context=mp.get_context('fork')) as executor:
+@@ -1855,16 +2396,41 @@
+                     candidate_pool = [c for c in expanded_columns
+                                        if observable_and_delay(c, raw_columns)[0] != node]
+                     effective_d = effective_mde_dimension(nested_n, candidate_pool, stage1_num_delays)
++                    # Metric-routing fix (found while verifying R22's own
++                    # E-engine-swap effect): `node` here is virtually never
++                    # one of `targets` (Stage 1 discovers real-observable
++                    # DRIVERS) -- passing the closed-over `target_metric`
++                    # unconditionally would score this node's own ranking
++                    # stage/E-auto-select via TARGET_METRIC ('correlation')
++                    # instead of _metric_for()'s own rule ('f1' for any
++                    # non-TARGETS column). See run_mde_for_target()'s own
++                    # docstring for why target_metric drives that stage
++                    # (predictions of `target` == `node` here) -- the CCM
++                    # gate's own `metric` argument is untouched, already
++                    # correct (it always scores a candidate, never `node`
++                    # itself, and no candidate here is ever a target).
++                    # All arguments from `tp` onward passed by keyword --
++                    # this call site inserts new parameters (window-sizing
++                    # fix) ahead of several trailing ones (reuse_cache
++                    # onward); relying on positional order here would be a
++                    # silent-miswiring trap the moment either signature
++                    # changes again.
+                     fut = executor.submit(
+                         run_mde_for_target, node, expanded_df, candidate_pool,
+                         prediction_start, prediction_length, effective_d,
+                         embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+-                        results_dir, delay_set, tp,
+-                        metric, target_metric, gamma_delta, ccm_window_rows,
+-                        ccm_lib_size_pcts, ccm_sample, ccm_slope,
+-                        reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+-                        code_fingerprint,
+-                        max_e=nested_n, inner_workers=inner_workers,
++                        results_dir, delay_set,
++                        tp=tp, metric=metric,
++                        target_metric=_metric_for(node, targets, metric, target_metric),
++                        gamma_delta=gamma_delta, ccm_sample=ccm_sample, ccm_slope=ccm_slope,
++                        is_behavioral_target=(node in targets),
++                        target_ranking_window_rows=target_ranking_window_rows,
++                        min_pred_events=min_pred_events, max_window_rows=max_window_rows,
++                        ccm_lib_sizes_rows=ccm_lib_sizes_rows,
++                        reuse_cache=reuse_cache, prev_runs_dir=prev_runs_dir,
++                        run_cache_dir=run_cache_dir, data_file=data_file,
++                        data_file_sha256=data_file_sha256, code_fingerprint=code_fingerprint,
++                        max_e=nested_n, inner_workers=inner_workers, raw_columns=raw_columns,
+                     )
+                     futures[fut] = node
+                 for fut in as_completed(futures):
+@@ -1881,14 +2447,62 @@
+                               f'node)', flush=True)
+                         stage1_results[node] = _failed_mde_result(node)
+ 
+-        # ---- Stage 2 pass: lagged (+ optionally real) embedding -- every
+-        # node in this wave, no depth-0 shortcut (Stage 2 was never
+-        # precomputed for depth-0, before or after this restructuring) ----
++        next_wave = {}
++        for node, depth in wave_nodes:
++            visited1.add(node)
++            node_depth[node] = depth
++            result1 = stage1_results[node]
++            nested_mde_results[node] = result1
++
++            accepted1 = _accept_mde_result_edges(graph, edges, node, result1, raw_columns)
++            for driver, delay in accepted1:
++                if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited1:
++                    next_wave[driver] = min(next_wave.get(driver, depth + 1), depth + 1)
++
++        current_wave = list(next_wave.items())
++
++    print(f'nested MDE (Stage 1): completed -- {len(visited1)} node(s) in the real-observable '
++          f'backbone, Stage 2 starts now', flush=True)
++
++    # =====================================================================
++    # PHASE 2 -- Stage 2: lagged (+ optionally real) BFS. Seeded with EVERY
++    # node Stage 1 discovered (so every backbone node still gets a lagged
++    # embedding attached), then its own delay=0 (real-observable)
++    # selections recurse into further Stage 2 rounds -- never a Stage 1
++    # round -- subject to the same shared nested_m budget/depth.
++    # =====================================================================
++    visited2 = set()
++    current_wave = [(node, node_depth[node]) for node in visited1]
++    # R15: distinguishable termination causes for Stage 2's own real-
++    # observable recursion -- budget_bound counts an accepted delay=0 pick
++    # that would have recursed except the shared nested_m budget already
++    # stopped at this depth; driver_exhausted counts a node whose own
++    # depth was still within budget but whose Stage 2 call simply
++    # selected zero real-observable drivers, so there was nothing to
++    # recurse into regardless of budget. See build_nested_mde_network()'s
++    # own final summary print for where these get reported.
++    stage2_budget_bound = 0
++    stage2_driver_exhausted = 0
++
++    while current_wave:
++        wave_nodes, seen = [], set()
++        for node, depth in current_wave:
++            if node in visited2 or node in seen:
++                continue
++            seen.add(node)
++            wave_nodes.append((node, depth))
++
++        if not wave_nodes:
++            break
++
++        wave_depths = sorted({d for _, d in wave_nodes})
+         outer_workers2 = min(len(wave_nodes), max(1, cores))
+         inner_workers2 = max(1, cores // outer_workers2)
+-        print(f'nested MDE (Stage 2): wave of {len(wave_nodes)} node(s) at depth '
+-              f'{wave_nodes[0][1]} -- {outer_workers2} parallel worker(s) '
+-              f'x {inner_workers2} inner thread(s) each, candidate pool size '
++        # R5: product logged explicitly, same reasoning as Stage 1's own print above.
++        print(f'nested MDE (Stage 2): wave of {len(wave_nodes)} node(s) at depth(s) '
++              f'{wave_depths} -- {outer_workers2} parallel worker(s) '
++              f'x {inner_workers2} inner thread(s) each '
++              f'(product={outer_workers2 * inner_workers2}, cores={cores}), candidate pool size '
+               f'{len(stage2_candidate_universe)} (lag_set={lag_set}, '
+               f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
+ 
+@@ -1900,16 +2514,29 @@
+                 candidate_pool = [c for c in stage2_candidate_universe
+                                    if observable_and_delay(c, raw_columns)[0] != node]
+                 effective_d = effective_mde_dimension(nested_n, candidate_pool, stage2_num_delays)
++                # Metric-routing fix -- see Stage 1's own identical comment
++                # above. `node` here is a Stage 1 backbone node (real
++                # observable) or a Stage-2-recursed real observable, never
++                # one of `targets` at this depth. All arguments from `tp`
++                # onward passed by keyword -- see Stage 1's own identical
++                # comment for why.
+                 fut = executor.submit(
+                     run_mde_for_target, node, stage2_df, candidate_pool,
+                     prediction_start, prediction_length, effective_d,
+                     embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+-                    results_dir, lag_set, tp,
+-                    metric, target_metric, gamma_delta, ccm_window_rows,
+-                    ccm_lib_size_pcts, ccm_sample, ccm_slope,
+-                    reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+-                    code_fingerprint, 'stage2',
+-                    max_e=nested_n, inner_workers=inner_workers2,
++                    results_dir, lag_set,
++                    tp=tp, metric=metric,
++                    target_metric=_metric_for(node, targets, metric, target_metric),
++                    gamma_delta=gamma_delta, ccm_sample=ccm_sample, ccm_slope=ccm_slope,
++                    is_behavioral_target=(node in targets),
++                    target_ranking_window_rows=target_ranking_window_rows,
++                    min_pred_events=min_pred_events, max_window_rows=max_window_rows,
++                    ccm_lib_sizes_rows=ccm_lib_sizes_rows,
++                    reuse_cache=reuse_cache, prev_runs_dir=prev_runs_dir,
++                    run_cache_dir=run_cache_dir, data_file=data_file,
++                    data_file_sha256=data_file_sha256, code_fingerprint=code_fingerprint,
++                    cache_stage='stage2',
++                    max_e=nested_n, inner_workers=inner_workers2, raw_columns=raw_columns,
+                 )
+                 futures[fut] = node
+             for fut in as_completed(futures):
+@@ -1921,33 +2548,51 @@
+                           f'a dead-end (zero lagged drivers attached for this node)', flush=True)
+                     stage2_results[node] = _failed_mde_result(node)
+ 
+-        # ---- Edge acceptance: Stage 1's result first, then Stage 2's --
+-        # either stage's delay=0 discoveries feed the next wave.
+-        next_wave = []
++        next_wave = {}
+         for node, depth in wave_nodes:
+-            visited.add(node)
+-            result1 = stage1_results[node]
+-            nested_mde_results[node] = result1
+-
+-            accepted1 = _accept_mde_result_edges(graph, edges, node, result1, raw_columns)
+-            for driver, delay in accepted1:
+-                if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited:
+-                    next_wave.append((driver, depth + 1))
+-
++            visited2.add(node)
++            node_depth.setdefault(node, depth)
+             result2 = stage2_results[node]
+             accepted2 = _accept_mde_result_edges(graph, edges, node, result2, raw_columns)
+-            for driver, delay in accepted2:
+-                if delay == 0 and (nested_m == 0 or depth < nested_m) and driver not in visited:
+-                    next_wave.append((driver, depth + 1))
++            under_budget = nested_m == 0 or depth < nested_m
++
++            real_picks = [(driver, delay) for driver, delay in accepted2 if delay == 0]
++            if under_budget and not real_picks:
++                # Budget wasn't the constraint here -- Stage 2 genuinely
++                # found no real-observable driver for this node at all.
++                stage2_driver_exhausted += 1
++
++            for driver, delay in real_picks:
++                # A delay=0 (real-observable) pick here recurses into its
++                # own further Stage 2 round -- NOT a Stage 1 round -- same
++                # nested_m budget as Stage 1's own recursion above.
++                if under_budget:
++                    if driver not in visited2:
++                        next_wave[driver] = min(next_wave.get(driver, depth + 1), depth + 1)
++                else:
++                    stage2_budget_bound += 1
+                 # delay != 0: leaf -- edge already added above.
+ 
+-        current_wave = next_wave
++        current_wave = list(next_wave.items())
++
++    if stage2_allow_real_observables:
++        print(f'nested MDE (Stage 2): real-observable recursion terminations -- '
++              f'{stage2_budget_bound} budget-bound, {stage2_driver_exhausted} driver-exhausted',
++              flush=True)
+ 
+     edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
+ 
++    # R13: nested_m is a whole-network depth budget shared by both stages
++    # (node_depth is one dict populated by whichever stage discovers a
++    # node first, checked against the same nested_m in both phases' own
++    # recursion above) -- realized_max_depth reports how deep that joint
++    # budget actually got used this run, distinct from the configured cap
++    # itself (nested_m_display below).
++    realized_max_depth = max(node_depth.values()) if node_depth else 0
+     nested_m_display = 'unlimited' if nested_m == 0 else nested_m
+     print(f'nested MDE: {len(graph.nodes)} nodes, {len(edges_df)} edges '
+-          f'(N={nested_n}, M={nested_m_display})', flush=True)
++          f'(N={nested_n}, M={nested_m_display}, realized max depth={realized_max_depth})',
++          flush=True)
+ 
+     return graph, edges_df, nested_mde_results
+ 
+@@ -2022,7 +2667,25 @@
+     Returns (kept_columns, scores) -- `kept_columns` is `candidate_columns`
+     (with `targets` excluded) filtered down to those scoring >= `rho_min`,
+     in original order; `scores` is {candidate: mean_rho} for every
+-    candidate considered (including dropped ones), for diagnostics.'''
++    candidate considered (including dropped ones), for diagnostics.
++
++    R2 (docs/review-actions-v1.md): audited main()'s call site and traced
++    every column this function ever sees back to convert_to_tsls()'s own
++    `f'{n}_tsls'` construction -- real channel names, never containing
++    DELAY_MARKER, and expand_delay_columns() (the only place a
++    DELAY_MARKER-suffixed name is ever created) is never called before
++    this point in main() (it only runs inside build_nested_mde_network(),
++    itself called from build_network(), which runs strictly after every
++    call to this function). No cached mde_results entry feeds this
++    function's candidate list either -- it always comes straight from
++    main()'s own `obs_cols`. Confirmed clean; this assertion is kept as a
++    cheap, permanent guard against a future change reopening that path,
++    not a fix for a live issue.'''
++    bad = [c for c in candidate_columns if DELAY_MARKER in c]
++    assert not bad, (
++        f'ccm_prefilter_observables() received DELAY_MARKER-suffixed column(s): {bad} -- '
++        f'candidate_columns must be real (delay-0) observables only'
++    )
+     candidates = [c for c in candidate_columns if c not in targets]
+     if not candidates:
+         return [], {}
+@@ -2047,17 +2710,118 @@
+     return kept, scores
+ 
+ 
++def partition_network(graph, targets, external_input_mode):
++    '''R14 (docs/review-actions-v1.md): partitions a MultiDiGraph built by
++    build_nested_mde_network() into interior nodes (>=1 discovered driver
++    -- genuinely simulated, their embedding built from those in-edges only,
++    see _embedding_spec_for()'s docstring) and external inputs (0 discovered
++    drivers -- what EXTERNAL_INPUT_MODE does with them is that function's
++    own concern, not this one's). Stored explicitly on the graph object
++    (`graph.graph['interior_nodes']`/`['external_inputs']`/
++    `['external_input_mode']`) rather than left implicit in edge counts, so
++    every consumer (embedding-spec construction, theta search, the 3D
++    figure, run-log reporting) reads the same authoritative classification
++    instead of re-deriving it.
++
++    A TARGET with zero discovered drivers is NEVER classified as an
++    external input, regardless of `external_input_mode` -- raises instead.
++    This is a failed network, not a valid one: feeding a target's own real
++    values back in as its "simulation" (EXTERNAL_INPUT_MODE='real_data')
++    and then scoring Generate() fidelity against those same real values
++    would be circular, producing a spuriously perfect score for exactly the
++    case that most needs to be flagged as a failure (confirmed against Run
++    A: head_position_y selected zero real drivers at depth 0 in that run --
++    this exemption exists because that is a real, not hypothetical, case).
++
++    Mutates `graph` in place; returns (interior_nodes, external_inputs) as
++    plain sets for convenience.'''
++    interior_nodes = set()
++    external_inputs = set()
++    for node in graph.nodes:
++        if graph.in_degree(node) == 0:
++            if node in targets:
++                raise ValueError(
++                    f"{node}: target selected zero drivers after nested-MDE (both stages) -- "
++                    f"this is a failed network, not a valid external input. A target can never "
++                    f"be exogenous: EXTERNAL_INPUT_MODE='real_data' would feed its own real "
++                    f"values back in as its \"simulation\" and then score fidelity against those "
++                    f"same real values, which is circular. Investigate why {node} found no "
++                    f"drivers (EMBED_DIM_RHO_MIN/CROSS_MAP_RHO_MIN/CCM_PREFILTER_RHO_MIN too "
++                    f"strict? too few candidate observables?) rather than working around it here."
++                )
++            external_inputs.add(node)
++        else:
++            interior_nodes.add(node)
++
++    graph.graph['interior_nodes'] = interior_nodes
++    graph.graph['external_inputs'] = external_inputs
++    graph.graph['external_input_mode'] = external_input_mode
++    return interior_nodes, external_inputs
++
++
++def _simulated_nodes(graph):
++    '''Nodes that actually go through gmn's own SMap/embedding machinery --
++    interior nodes always, plus external inputs too under
++    EXTERNAL_INPUT_MODE='self_simulate' (where they keep the old
++    unconditional self_delay_set embedding, see _embedding_spec_for()'s
++    docstring). Excludes real-data-mode external inputs: their Generate()/
++    Forecast() short-circuit to a real-data passthrough with no embedding
++    at all, so retuning theta for them (retune_theta_for_all_nodes(), which
++    calls _embedding_spec_for() directly) would either waste effort on an
++    inert result or crash on an empty spec.'''
++    external_inputs = graph.graph.get('external_inputs', set())
++    mode = graph.graph.get('external_input_mode', 'real_data')
++    if mode == 'self_simulate':
++        return list(graph.nodes)
++    return [n for n in graph.nodes if n not in external_inputs]
++
++
++def report_partition(graph, network_id, results_dir):
++    '''R14's own explicit reporting requirement: how many external inputs,
++    which observables and delays, and which interior nodes each feeds --
++    printed to the run log and written to a per-network CSV in
++    `results_dir` (partition_{network_id}.csv). Reads the classification
++    partition_network() already stored on `graph.graph` rather than
++    recomputing it.'''
++    external_inputs = graph.graph.get('external_inputs', set())
++    interior_nodes = graph.graph.get('interior_nodes', set())
++    mode = graph.graph.get('external_input_mode', 'real_data')
++
++    print(f'{network_id}: partition -- {len(interior_nodes)} interior node(s), '
++          f'{len(external_inputs)} external input(s) (EXTERNAL_INPUT_MODE={mode!r})', flush=True)
++
++    rows = []
++    for node in sorted(external_inputs):
++        out_edges = list(graph.out_edges(node, data=True))
++        if not out_edges:
++            print(f'  external input {node}: feeds nothing (dead-end leaf)', flush=True)
++            rows.append({'node': node, 'role': 'external_input', 'feeds': '', 'delay': ''})
++            continue
++        for _, fed_node, data in out_edges:
++            print(f'  external input {node} -> {fed_node} (delay {data["delay"]})', flush=True)
++            rows.append({'node': node, 'role': 'external_input', 'feeds': fed_node,
++                         'delay': data['delay']})
++    for node in sorted(interior_nodes):
++        rows.append({'node': node, 'role': 'interior', 'feeds': '', 'delay': ''})
++
++    partition_file = results_dir / f'partition_{network_id}.csv'
++    pd.DataFrame(rows, columns=['node', 'role', 'feeds', 'delay']).to_csv(partition_file, index=False)
++
++
+ def build_network(targets, mde_results, df, prediction_start, prediction_length,
+                    mode, e_range, tau_range, results_dir, cores,
+                    metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
+                    ccm_sample, ccm_slope,
++                   target_ranking_window_rows=1000, min_pred_events=20, max_window_rows=30000,
++                   ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
+                    observable_columns=None, nested_n=None, nested_m=None,
+                    embed_dim_rho_min=None, cross_map_rho_min=None, exclusion_radius=None,
+                    lag_set=None, stage2_allow_real_observables=False, tp=1,
+                    threshold=0, fallback_node_dimension=4, max_node_dimension=15,
+                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                    data_file=None, data_file_sha256=None, code_fingerprint=None,
+-                   gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None):
++                   gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
++                   external_input_mode='real_data'):
+     '''Build one network spanning `targets` and their driver candidates, via
+     one of two unrelated constructions depending on `mode` -- same
+     mode-branch restructuring as simple-mde-gmn.py's own build_network():
+@@ -2098,6 +2862,9 @@
+             stage2_allow_real_observables=stage2_allow_real_observables,
+             gmn_mode=gmn_mode, multi_mde_e=multi_mde_e,
+             multi_mde_target_aggregate=multi_mde_target_aggregate,
++            target_ranking_window_rows=target_ranking_window_rows,
++            min_pred_events=min_pred_events, max_window_rows=max_window_rows,
++            ccm_lib_sizes_rows=ccm_lib_sizes_rows,
+         )
+         hit = find_cached(prev_runs_dir, cache_filename, fingerprint, load_one=_load_pickle_cache_entry)
+         if hit is not None:
+@@ -2118,22 +2885,27 @@
+             # called, so depth-0 itself only ever searches already-
+             # filtered observables too (see main()'s own depth-0
+             # docstring for why the pre-filter had to move there rather
+-            # than staying here). Both stages, interleaved per BFS wave,
+-            # in one call -- see build_nested_mde_network()'s own
+-            # docstring (revised 2026-08-25: Stage 2's own real-observable
+-            # selections now recurse exactly like Stage 1's).
++            # than staying here). Both stages, fully serial (Stage 1 runs
++            # to completion, then Stage 2), in one call -- see
++            # build_nested_mde_network()'s own docstring (revised
++            # 2026-08-27, R12: Stage 2's own real-observable selections
++            # still recurse exactly like Stage 1's, just after Stage 1
++            # completes rather than interleaved with it wave-by-wave).
+             graph, _, _ = build_nested_mde_network(
+                 targets, df, observable_columns, observable_columns,
+                 prediction_start, prediction_length,
+                 nested_n, nested_m, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                 results_dir, mde_results, [], tp,
+-                metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
+-                ccm_sample, ccm_slope, cores,
++                metric, target_metric, gamma_delta,
++                target_ranking_window_rows, min_pred_events, max_window_rows,
++                ccm_lib_sizes_rows, ccm_sample, ccm_slope, cores,
+                 lag_set, stage2_allow_real_observables,
+                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
+                 code_fingerprint,
+             )
+         graph.graph['self_delay_set'] = sorted(set(lag_set) | {0}, reverse=True)
++        partition_network(graph, targets, external_input_mode)
++        report_partition(graph, network_id, results_dir)
+         selected_union = [n for n in graph.nodes if n not in targets]
+         edges_file = results_dir / f'edges_nestedMDE_N{nested_n}_M{nested_m}_{network_id}.csv'
+         edges_rows = [{'driver': u, 'node': v, 'delay': d['delay'], 'weight': d['weight']}
+@@ -2322,6 +3094,77 @@
+     plt.close(fig)
+ 
+ 
++def plot_3d_network(net_result, target_colors, save_path):
++    '''R14 (docs/review-actions-v1.md): the explicit 3D representation its
++    "leaf nodes become external inputs" decision requires -- MODE='MDE-GMN'
++    only (needs the per-edge delay data and interior/external partition
++    only that mode's MultiDiGraph has, both absent from MODE='GMN''s plain
++    DiGraph). x-y plane: a standard graph layout of the real-observable
++    (delay=0) backbone from Stages 1 and 2 -- the same structural skeleton
++    draw_colored_network() draws in 2D. z axis: for every node, one vertical
++    stick per delay!=0 driver nested-MDE discovered for it, rising from
++    z=0 to z=|delay| at that node's own (x, y) -- literally "the delayed
++    observables that further drive each node," stacked above it rather than
++    laid out in the plane, since a lagged driver is a copy of an existing
++    real observable at a different point in time, not a new spatial
++    position. External inputs (partition_network()'s own classification,
++    read from graph.graph -- not re-derived here) are drawn as a distinct
++    marker shape (triangle vs. circle) from interior nodes, per the task's
++    own explicit requirement, independent of target coloring.'''
++    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 -- registers the 3d projection
++
++    graph = net_result['network']['Graph']
++    interior_nodes = graph.graph.get('interior_nodes', set())
++    external_inputs = graph.graph.get('external_inputs', set())
++
++    real_edges = [(u, v) for u, v, d in graph.edges(data=True) if d['delay'] == 0]
++    backbone = nx.DiGraph()
++    backbone.add_nodes_from(graph.nodes)
++    backbone.add_edges_from(real_edges)
++    pos = nx.spring_layout(backbone, seed=0)
++
++    fig = plt.figure(figsize=(12, 10))
++    ax = fig.add_subplot(111, projection='3d')
++
++    for u, v in real_edges:
++        xu, yu = pos[u]
++        xv, yv = pos[v]
++        ax.plot([xu, xv], [yu, yv], [0, 0], color='gray', linewidth=1, alpha=0.6, zorder=1)
++
++    for u, v, data in graph.edges(data=True):
++        if data['delay'] == 0:
++            continue
++        x, y = pos[v]
++        z = abs(data['delay'])
++        ax.plot([x, x], [y, y], [0, z], color='steelblue', linewidth=1, alpha=0.5, zorder=2)
++        ax.scatter([x], [y], [z], color='steelblue', marker='s', s=15, zorder=6)
++        ax.text(x, y, z, u, fontsize=5, color='steelblue')
++
++    for node in graph.nodes:
++        x, y = pos[node]
++        is_external = node in external_inputs
++        color = target_colors.get(node, 'tab:orange' if is_external else 'tab:blue')
++        marker = '^' if is_external else 'o'
++        ax.scatter([x], [y], [0], color=color, marker=marker, s=100,
++                   edgecolors='black', linewidths=0.8, zorder=5)
++        ax.text(x, y, 0, node, fontsize=7, fontweight='bold')
++
++    node_handles = [
++        plt.Line2D([0], [0], marker='o', color='w', markersize=10,
++                   markerfacecolor='tab:blue', markeredgecolor='black', label='interior'),
++        plt.Line2D([0], [0], marker='^', color='w', markersize=10,
++                   markerfacecolor='tab:orange', markeredgecolor='black', label='external input'),
++    ]
++    ax.legend(handles=node_handles, loc='upper left', bbox_to_anchor=(1.0, 1.0),
++              title=f"n_interior={len(interior_nodes)}, n_external={len(external_inputs)}")
++    ax.set_xlabel('X (real-observable network layout)')
++    ax.set_ylabel('Y (real-observable network layout)')
++    ax.set_zlabel('|delay| (lagged driver depth)')
++    ax.set_title(f"3D network projection ({net_result['network_id']})")
++    fig.savefig(save_path, dpi=300, bbox_inches='tight')
++    plt.close(fig)
++
++
+ # =============================================================================
+ # GMN node generation config (mirrors notebook cell 8) -- ported UNCHANGED
+ # from simple-mde-gmn.py. Pure gmn/.cfg-file mechanics, no dependency on
+@@ -2598,6 +3441,10 @@
+         'prediction_start': cfg['PREDICTION_START'],
+         'prediction_length': cfg['PREDICTION_LENGTH'],
+         'network_nodes': sorted(graph.nodes),
++        # R14: doesn't change topology (build_network_fingerprint()'s own
++        # concern), but does change what Generate()/theta search actually
++        # do with a zero-driver node -- belongs here, not there.
++        'external_input_mode': cfg['EXTERNAL_INPUT_MODE'],
+         'code_fingerprint': code_fingerprint,
+         'stage': 'theta_search',
+     }
+@@ -2610,7 +3457,10 @@
+                                ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
+                                data_file, data_file_sha256, code_fingerprint,
+                                stage2_allow_real_observables=False,
+-                               gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None):
++                               gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
++                               target_ranking_window_rows=1000, min_pred_events=20,
++                               max_window_rows=30000,
++                               ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800)):
+     '''Everything that determines one group's network-construction outcome
+     -- ported from simple-mde-gmn.py, TSLS scoring/CCM-calibration knobs
+     folded in. Computable *before* that construction runs, since the whole
+@@ -2631,7 +3481,16 @@
+     this fingerprint too -- otherwise switching GMN_MODE (or its
+     multi_proper_mde knobs) between two REUSE_BEST_PARAMS runs wouldn't
+     invalidate a stale cached network built from the other mode's
+-    mde_results.'''
++    mde_results.
++
++    `target_ranking_window_rows`/`min_pred_events`/`max_window_rows`/
++    `ccm_lib_sizes_rows` (window-sizing fix, docs/review-findings.md):
++    MODE='MDE-GMN' only -- `build_nested_mde_network()`'s own per-node
++    calls now resolve their own ranking window from these, decoupled from
++    `ccm_window_rows`/`ccm_lib_size_pcts` (which stay exactly what they
++    always were, MODE='GMN'-only, via `build_interaction_matrix()`). Real
++    topology inputs for MDE-GMN networks now, same reasoning as every
++    other knob here.'''
+     return {
+         'mode': mode,
+         'gmn_mode': gmn_mode,
+@@ -2654,6 +3513,10 @@
+         'gamma_delta': gamma_delta,
+         'ccm_window_rows': ccm_window_rows,
+         'ccm_lib_size_pcts': list(ccm_lib_size_pcts),
++        'target_ranking_window_rows': target_ranking_window_rows,
++        'min_pred_events': min_pred_events,
++        'max_window_rows': max_window_rows,
++        'ccm_lib_sizes_rows': list(ccm_lib_sizes_rows),
+         'ccm_sample': ccm_sample,
+         'ccm_slope': ccm_slope,
+         'prediction_start': prediction_start,
+@@ -2669,7 +3532,9 @@
+                                      cross_map_rho_min, exclusion_radius, delay_set,
+                                      prediction_start, prediction_length,
+                                      metric, target_metric, gamma_delta,
+-                                     ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
++                                     is_behavioral_target, target_ranking_window_rows,
++                                     min_pred_events, max_window_rows, window_rows, pred_event_count,
++                                     ccm_lib_sizes_rows, ccm_sample, ccm_slope,
+                                      data_file, data_file_sha256, code_fingerprint,
+                                      cache_stage='stage1', max_e=None):
+     '''Everything that determines one run_mde_for_target() call's outcome,
+@@ -2683,7 +3548,17 @@
+     own docstring) is a real input to the outcome now that E is
+     auto-selected rather than a hardcoded constant, so it must be part of
+     the fingerprint too: a run with a different max_e can select a
+-    different E, hence different candidates, for the same everything else.'''
++    different E, hence different candidates, for the same everything else.
++
++    Window-sizing fix (docs/review-findings.md): `window_rows`/
++    `pred_event_count` are the RESOLVED, data-dependent outputs of
++    _resolve_target_ranking_window() for this specific node -- not just the
++    config-level knobs (`target_ranking_window_rows`/`min_pred_events`/
++    `max_window_rows`) that produced them. All must be in the
++    fingerprint (A5): the resolved window is itself a real input to this
++    call's outcome, and a cache built before this fix (a different window,
++    a different -- previously wrong -- target_metric for every neuron
++    node) must not be silently reused.'''
+     return {
+         'node': node,
+         'candidate_pool': list(candidate_pool),
+@@ -2697,8 +3572,13 @@
+         'metric': metric,
+         'target_metric': target_metric,
+         'gamma_delta': gamma_delta,
+-        'ccm_window_rows': ccm_window_rows,
+-        'ccm_lib_size_pcts': list(ccm_lib_size_pcts),
++        'is_behavioral_target': is_behavioral_target,
++        'target_ranking_window_rows': target_ranking_window_rows,
++        'min_pred_events': min_pred_events,
++        'max_window_rows': max_window_rows,
++        'window_rows': window_rows,
++        'pred_event_count': pred_event_count,
++        'ccm_lib_sizes_rows': list(ccm_lib_sizes_rows),
+         'ccm_sample': ccm_sample,
+         'ccm_slope': ccm_slope,
+         'prediction_start': prediction_start,
+@@ -2714,7 +3594,8 @@
+                                            cross_map_rho_min, exclusion_radius, delay_set,
+                                            prediction_start, prediction_length,
+                                            metric, target_metric, gamma_delta,
+-                                           ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
++                                           target_ranking_window_rows, window_rows,
++                                           ccm_lib_sizes_rows, ccm_sample, ccm_slope,
+                                            data_file, data_file_sha256, code_fingerprint,
+                                            cache_stage='stage1', E=3, target_aggregate='mean'):
+     '''Multi-target counterpart of build_mde_selection_fingerprint() -- same
+@@ -2722,7 +3603,11 @@
+     function's own candidate_pool-ordering rationale, identical here) in
+     place of a single `node`, plus `E`/`target_aggregate`
+     (multi_proper_mde's own extra required/optional arguments, with no
+-    proper_mde equivalent -- see run_multi_mde_for_targets()'s docstring).'''
++    proper_mde equivalent -- see run_multi_mde_for_targets()'s docstring).
++    `window_rows` (window-sizing fix, docs/review-findings.md): the
++    resolved window itself, not just the `target_ranking_window_rows`
++    constant that produced it -- kept as its own field for the same A5
++    reason build_mde_selection_fingerprint() records both.'''
+     return {
+         'targets': list(targets),
+         'candidate_pool': list(candidate_pool),
+@@ -2737,8 +3622,9 @@
+         'metric': metric,
+         'target_metric': target_metric,
+         'gamma_delta': gamma_delta,
+-        'ccm_window_rows': ccm_window_rows,
+-        'ccm_lib_size_pcts': list(ccm_lib_size_pcts),
++        'target_ranking_window_rows': target_ranking_window_rows,
++        'window_rows': window_rows,
++        'ccm_lib_sizes_rows': list(ccm_lib_sizes_rows),
+         'ccm_sample': ccm_sample,
+         'ccm_slope': ccm_slope,
+         'prediction_start': prediction_start,
+@@ -2829,16 +3715,74 @@
+ # simple-mde-gmn.py's own equivalent change.
+ # =============================================================================
+ 
+-def retune_theta_for_all_nodes(data_lib, graph, nodes, theta_range, cores, min_pred_rows=20):
+-    '''Finds each node's own best theta via PredictNonlinear on a 70/30
+-    lib/pred split of that node's own generalized embedding -- ported
+-    UNCHANGED from simple-mde-gmn.py. No TSLS-aware equivalent exists for
+-    this step (a plain pyEDM.SMap-specific concept with no analog in
+-    cleaned_helper_functions.py's own KDTree engine -- see this module's
+-    own docstring), so it's scored the same way here as there: plain
+-    PredictNonlinear rho, not metric/target_metric. Falls back to theta=3
+-    whenever there's too little data for the split or PredictNonlinear
+-    itself fails.'''
++def proper_predict_nonlinear(dataFrame, columns, target, theta, lib, pred,
++                              E=1, Tp=1, knn=0, tau=-1, exclusionRadius=0,
++                              embedded=False, metric='correlation', gamma_delta=2):
++    '''R20 (docs/review-actions-v1.md): TSLS-aware replacement for
++    pyEDM.PredictNonlinear's own theta-selection sweep -- NOT a new S-map
++    engine. R10 found no native S-map in cleaned_helper_functions.py, but
++    reading pyEDM's own source (pyEDM/API.py's PredictNonlinear;
++    pyEDM/PoolFunc.py's PredictNLSMapFunc worker) shows PredictNonlinear
++    already does nothing more than call pyEDM.SMap(...) once per
++    candidate theta and score it via `ComputeError(obs, pred)['rho']` --
++    the SAME compiled S-map gmn's own Forecast()/Generate() already calls
++    directly at runtime for every node (unaffected by this function
++    either way -- theta is just a number once chosen, regardless of which
++    sweep chose it). `ComputeError`'s own `rho = corrcoef(obs, pred)[0,1]`
++    is the identical formula `cleaned_helper_functions._score(kind=
++    'correlation')` uses, so this function reproduces PredictNonlinear's
++    own selection exactly at metric='correlation' (see
++    tests/test_r20_predict_nonlinear.py's own equivalence check) while
++    also supporting 'f1'/'gamma'/'mae' for non-target (neuron) nodes,
++    which PredictNonlinear itself can never score.
++
++    Deliberately sequential -- one pyEDM.SMap call per theta, in-process,
++    no multiprocessing.Pool. See sitecustomize.py's own module docstring
++    (this venv) for why: pyEDM's own default PredictNonlinear/
++    EmbedDimension/PredictInterval each spawn a *fresh* Pool per call,
++    which is what turned this pipeline's jobs into a ~2-day-regardless-
++    of-config bug before that file patched all three to a sequential
++    drop-in. This function must not reintroduce that mistake -- theta
++    grids here are ~10-20 values, cheap enough sequentially that adding
++    pooling machinery back in isn't warranted.
++
++    Returns a DataFrame with columns 'theta'/'score' (one row per
++    candidate) -- callers pick `df.loc[df['score'].idxmax(), 'theta']`,
++    mirroring PredictNonlinear's own `df.loc[df['rho'].idxmax(), 'theta']`
++    idiom exactly, just against a metric-agnostic column name instead of
++    a hardcoded 'rho'.'''
++    rows = []
++    for th in theta:
++        S = SMap(
++            dataFrame=dataFrame, columns=columns, target=target,
++            lib=lib, pred=pred, E=E, Tp=Tp, knn=knn, tau=tau,
++            theta=th, exclusionRadius=exclusionRadius,
++            embedded=embedded, showPlot=False,
++        )
++        predictions = S['predictions']
++        obs = predictions['Observations'].to_numpy()
++        prd = predictions['Predictions'].to_numpy()
++        rows.append({'theta': th, 'score': tsls._score(obs, prd, metric, gammaDelta=gamma_delta)})
++    return pd.DataFrame(rows)
++
++
++def retune_theta_for_all_nodes(data_lib, graph, nodes, targets, theta_range, cores,
++                                metric, target_metric, gamma_delta, min_pred_rows=20):
++    '''Finds each node's own best theta via proper_predict_nonlinear() (R20,
++    docs/review-actions-v1.md) on a 70/30 lib/pred split of that node's own
++    generalized embedding. Previously scored via pyEDM.PredictNonlinear's
++    own internal Pearson rho regardless of METRIC -- the one stage in this
++    pipeline that didn't route through _metric_for() (confirmed against
++    source before this change, per A1). Now scores each node via
++    _metric_for(node, targets, metric, target_metric) -- 'f1' for neuron
++    nodes, 'correlation' (target_metric) for TARGETS, matching every
++    other scoring call site in this file. `cores` is no longer used here
++    (proper_predict_nonlinear() is deliberately sequential -- see its own
++    docstring) but is kept as a parameter for call-site compatibility with
++    run_theta_search(), which still needs it for evaluate_smap_candidate()'s
++    own Generate() call right after this one. Falls back to theta=3
++    whenever there's too little data for the split or the sweep itself
++    fails (unchanged from before).'''
+     best_theta_by_node = {}
+ 
+     for node in nodes:
+@@ -2856,14 +3800,15 @@
+ 
+         lib_range = f'1 {split}'
+         pred_range = f'{split + 1} {n_emb}'
++        node_metric = _metric_for(node, targets, metric, target_metric)
+ 
+         try:
+-            pn = PredictNonlinear(
+-                dataFrame=embedded, columns=list(embedded.columns[1:-1]), target=node,
++            pn = proper_predict_nonlinear(
++                embedded, columns=list(embedded.columns[1:-1]), target=node,
+                 theta=list(theta_range), lib=lib_range, pred=pred_range,
+-                Tp=1, embedded=True, showPlot=False, numProcess=cores,
++                Tp=1, embedded=True, metric=node_metric, gamma_delta=gamma_delta,
+             )
+-            best_theta_by_node[node] = float(pn.loc[pn['rho'].idxmax(), 'theta'])
++            best_theta_by_node[node] = float(pn.loc[pn['score'].idxmax(), 'theta'])
+         except Exception:
+             best_theta_by_node[node] = 3
+ 
+@@ -2915,7 +3860,7 @@
+ 
+ 
+ def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range, results_dir,
+-                      cores, target_metric, gamma_delta,
++                      cores, metric, target_metric, gamma_delta,
+                       generate_length=None, reuse_best_params=False, prev_runs_dir=None,
+                       run_cache_dir=None, fingerprints=None, exclusion_radius=0,
+                       generate_validation_start=None):
+@@ -2929,7 +3874,9 @@
+     for network_id, run in gmn_runs.items():
+         net_result = run['net_result']
+         graph = net_result['network']['Graph']
+-        all_nodes = list(graph.nodes)
++        # R14: exclude real-data-mode external inputs -- they have no
++        # embedding to retune theta for (see _simulated_nodes()'s docstring).
++        all_nodes = _simulated_nodes(graph)
+         data_after_mde_lib = pd.read_csv(net_result['DATA_AFTER_MDE']).iloc[:prediction_start]
+ 
+         fingerprint = fingerprints[network_id] if fingerprints else None
+@@ -2950,7 +3897,8 @@
+ 
+         print(f'{network_id}: retuning theta for {len(all_nodes)} node(s)', flush=True)
+         best_node_theta = retune_theta_for_all_nodes(
+-            data_after_mde_lib, graph, all_nodes, theta_range, cores,
++            data_after_mde_lib, graph, all_nodes, net_result['targets'], theta_range, cores,
++            metric, target_metric, gamma_delta,
+         )
+ 
+         try:
+@@ -3127,7 +4075,22 @@
+     run_theta_search(), and the winning start row found by
+     sweep_generate_start(). Ported from simple-mde-gmn.py -- try/except-
+     guarded per network: a failure here is logged and that network is
+-    skipped (run['G'] stays unset) rather than crashing the whole job.'''
++    skipped (run['G'] stays unset) rather than crashing the whole job.
++
++    R11 (docs/review-actions-v1.md): the search OBJECTIVE stays
++    target-only -- confirmed evaluate_smap_candidate()'s own `score` (what
++    both run_theta_search() and sweep_generate_start() actually optimize)
++    is already a mean over `net_result['targets']` only, via
++    `target_metric`, never scoring a driver node or mixing metrics into
++    that mean. This function's own per-node print loop below (every node,
++    its own `_metric_for`-resolved metric, tagged TARGET/driver) already
++    existed and is PURELY REPORTING on the one already-decided winning
++    configuration -- it does not feed back into any search. The only
++    thing this task adds is writing that same data to a CSV in
++    `results_dir` alongside the existing print, so it survives past the
++    log (metrics are not mutually comparable across rows -- correlation
++    for targets, f1 for neurons -- so the CSV labels each row's own metric
++    and is not meant to be summed down the score column).'''
+     for network_id, run in gmn_runs.items():
+         net_result = run['net_result']
+         node_theta = theta_search_results[network_id]['best_node_theta']
+@@ -3156,12 +4119,21 @@
+         nodes = [c for c in generated.columns if c != 'Time']
+ 
+         print(f"{network_id} Generate() score, held-out window (start row {generate_start}):", flush=True)
++        per_node_rows = []
+         for node in nodes:
+             node_metric = _metric_for(node, net_result['targets'], metric, target_metric)
+             a = actual_df[node].to_numpy()[generate_start:generate_start + len(generated)]
+             r = tsls._score(a, generated[node].to_numpy(), node_metric, gammaDelta=gamma_delta)
+             tag = 'TARGET' if node in net_result['targets'] else 'driver'
+             print(f"  {node:20s} {tag:7s} {node_metric}={r:7.3f}", flush=True)
++            per_node_rows.append({'node': node, 'role': tag, 'metric': node_metric, 'score': r})
++
++        # R11: purely additive -- same data the print loop above already
++        # reports, written to a file so it survives past the log. Metrics
++        # differ per row (correlation for targets, f1 for neurons) -- do
++        # not sum/average the score column, it mixes incompatible scales.
++        pd.DataFrame(per_node_rows, columns=['node', 'role', 'metric', 'score']).to_csv(
++            results_dir / f'per_node_scores_{network_id}.csv', index=False)
+ 
+ 
+ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
+@@ -3308,13 +4280,16 @@
+ # MDE-only diagnostics (mirrors notebook cells 15, 17, 19 -- skipped when
+ # MODE == 'GMN', same guard the notebook uses)
+ # =============================================================================
+-# NOTE: the notebook cell 15 diagnostic (dx.Evaluate: MDE selection vs.
+-# PCA/diffusion-map baselines) has no cleaned_helper_functions.py equivalent
+-# -- proper_mde replaced dimx.MDE for selection itself, but dx.Evaluate is a
+-# standalone dimx tool with no TSLS-aware port, and it depended on the
+-# dx.MDE result object this pipeline no longer constructs. Stays dropped,
+-# exactly as this file's own architecture has always established (see this
+-# module's own docstring).
++# NOTE (superseded by R19, docs/review-actions-v1.md): the notebook cell 15
++# diagnostic (dx.Evaluate: MDE selection vs. PCA/diffusion-map baselines)
++# used to have no cleaned_helper_functions.py equivalent here -- dx.Evaluate
++# is a standalone dimx tool with no TSLS-aware port, and it depended on a
++# dx.MDE result object this pipeline no longer constructs. run_mde_evaluate()
++# below reimplements the same MDE/PCA/diffusion-map comparison directly
++# against this pipeline's own building blocks (proper_simplex, sklearn,
++# pydiffmap -- the same underlying libraries dx.Evaluate itself wraps)
++# instead of routing through dimx at all -- see that function's own
++# docstring and docs/review-findings.md's R19 section for the full design.
+ 
+ def run_tp_vs_rho_sweep(mde_results, targets, max_tp, target_colors, results_dir,
+                          target_metric, gamma_delta):
+@@ -3322,7 +4297,16 @@
+     (continuous), never metric (see load_config()'s TARGET_METRIC
+     docstring). Reads r['m'].args.lib/pred/tau -- the 'm' namespace shape
+     every run_mde_for_target() result carries (see that function's own
+-    docstring).'''
++    docstring).
++
++    R7 (docs/review-actions-v1.md): previously called fig.savefig()
++    unconditionally, even when every target hit the `if not cols`
++    skip below (all zero-driver, or all _failed_mde_result()'s own
++    mde_df=None case, which also carries SELECTED_COLUMNS=[] -- see
++    _failed_mde_result()'s own docstring) -- an empty axes with no data
++    and a legend with nothing to show, written to disk as if it were a
++    real result. Now skips the write entirely in that case (figure is
++    still closed either way, so no resource leak).'''
+     fig, ax = plt.subplots(figsize=(8, 5))
+     annotation_lines = []
+     for target in targets:
+@@ -3340,6 +4324,12 @@
+         ax.plot(pi['Tp'], pi[target_metric], marker='o', label=target, color=target_colors[target])
+         annotation_lines.append(f'{target}: E={len(cols)}, vars={", ".join(cols)}')
+ 
++    if not annotation_lines:
++        print('Tp-vs-rho sweep: every target had zero MDE-selected columns -- '
++              'skipping the figure entirely (no data to plot).', flush=True)
++        plt.close(fig)
++        return
++
+     ax.axvline(1, color='gray', ls=':', lw=1)
+     ax.set_xlabel('Forecast interval Tp (steps)')
+     ax.set_ylabel(f'Prediction skill ({target_metric})')
+@@ -3353,10 +4343,28 @@
+ 
+ def run_univariate_e_tau_grid(mde_results, targets, e_range, tau_range, rho_threshold, results_dir,
+                                target_metric, gamma_delta):
++    '''R7 (docs/review-actions-v1.md): unlike run_tp_vs_rho_sweep() above,
++    this is a UNIVARIATE self-predictability grid (columns=target,
++    target=target) -- it needs no MDE-selected drivers at all, so it
++    deliberately does NOT skip on SELECTED_COLUMNS being empty (a
++    legitimate zero-driver target, e.g. Run A's own head_position_y, still
++    gets a real, informative grid here). It DOES need `mde_df` to be a
++    real DataFrame, though: a target whose depth-0 MDE call itself raised
++    (not "selected zero drivers", a different case -- see
++    _failed_mde_result()'s own docstring) gets mde_df=None, which would
++    otherwise crash proper_simplex() below outright, and take down every
++    remaining target's own (unrelated, otherwise-computable) figure with
++    it, since the exception would propagate out of this whole function.
++    Guarded per-target instead, matching this codebase's own established
++    "one degenerate item dead-ends cleanly, it doesn't crash the batch"
++    convention (_failed_mde_result()'s own docstring).'''
+     e_vals, tau_vals = list(e_range), list(tau_range)
+ 
+     for target in targets:
+         r = mde_results[target]
++        if r['mde_df'] is None:
++            print(f'{target}: MDE call failed (mde_df is None), skipping E/tau grid.', flush=True)
++            continue
+         rho_grid = np.full((len(e_vals), len(tau_vals)), np.nan)
+ 
+         for i, E in enumerate(e_vals):
+@@ -3391,6 +4399,240 @@
+         plt.close(fig)
+ 
+ 
++def _cae(x, y):
++    '''Cumulative absolute error -- recovered verbatim from dimx.Evaluate's
++    own CAE() (.venv/.../dimx/Evaluate.py:503-506: `sum(abs(x - y))`), per
++    R19 (docs/review-actions-v1.md)'s explicit instruction to read the
++    source and replicate the exact definition rather than reimplementing
++    from the name. Unnormalized -- not a mean, not a fraction -- and, for
++    a 2-column (x, y) array (GMN_MODE='combined'), sums the absolute error
++    over BOTH columns at once (numpy's own `abs`/`sum` broadcast this way
++    with no axis given), which is the natural generalization used for the
++    combined-mode spatial panel's own CAE.'''
++    return float(np.sum(np.abs(np.asarray(x) - np.asarray(y))))
++
++
++def run_mde_evaluate(net_result, prediction_start, prediction_length, results_dir,
++                      target_metric, gamma_delta, exclusion_radius=0,
++                      dmap_k=15, dmap_epsilon='bgh_generous', max_traces_shown=7,
++                      figsize=(8, 8)):
++    '''R19 (docs/review-actions-v1.md): TSLS-side counterpart of
++    simple-mde-gmn.py's dx.Evaluate()-based run_mde_evaluate() -- see the
++    NOTE above this function for why this pipeline had no such comparison
++    until now. Reimplements dx.Evaluate's own MDE-vs-PCA-vs-diffusion-map
++    comparison directly against proper_simplex (MDE) and sklearn.PCA /
++    pydiffmap.diffusion_map (the same two libraries dx.Evaluate itself
++    wraps, confirmed by reading dimx/Evaluate.py in full) rather than
++    reusing dx.Evaluate, which has no _metric_for()/_score() awareness and
++    depends on a dimx.MDE result object this pipeline no longer
++    constructs.
++
++    D = the number of *direct* drivers of the target in the COMPLETE
++    nested-MDE network (both stages) -- graph.predecessors(target), read
++    from net_result['network']['Graph'] (built by build_network() /
++    build_nested_mde_network()), NOT a depth-0-only SELECTED_COLUMNS list.
++    PCA and diffusion-map each fit their first D components on the same
++    pool, so all three methods compare at equal dimensionality (R19's own
++    requirement). That pool is every non-target column in
++    net_result['DATA_AFTER_MDE'] -- i.e. every observable nested-MDE kept
++    anywhere in the whole network (a superset of the target's own direct
++    drivers whenever Stage 2 chains through an intermediate node), the
++    TSLS-side analog of dx.Evaluate's own FilterData()-selected column
++    subset (confirmed: simple-mde-gmn.py's own run_mde_evaluate() passes
++    `columns_range=[1, mde_df.shape[1]]` against `mde_df = df[[target] +
++    observable_columns]` -- i.e. every candidate column except the target
++    itself, never the full pre-CCM-prefilter universe, which isn't
++    serialized anywhere after build_network() returns).
++
++    net_result['targets'] has one entry (GMN_MODE='separate') -> a
++    standard single-target figure, panel 1 an actual-vs-predicted time
++    series, matching docs/reference/mde-evaluate-reference-plot.png's
++    layout exactly. Two entries (GMN_MODE='combined') -> ONE joint figure
++    for the pair: panel 1 is a spatial (x, y) trajectory instead (explicit
++    user direction -- R19's own "ask before implementing" gate: "the
++    instruction reads as [a spatial plot]" -- confirmed against the
++    reference plot's own single-target case, which does not settle it).
++    D for this joint figure is the union of each target's own
++    direct-driver set (this pipeline's own reading, documented here since
++    R19's text only defines D for a single target -- "how many distinct
++    driver nodes feed the target(s) this figure is about," the natural
++    generalization once there is more than one target to be a direct
++    driver of). PCA/diffusion-map's own linear-regression step predicts
++    both target columns at once (sklearn's LinearRegression natively
++    supports a 2-column y) -- R19's own "PCA and diffusion-map extract
++    components of the multivariate target" -- rather than two independent
++    single-target Evaluate runs; MDE still reconstructs each target
++    separately (proper_simplex predicts one column at a time) and the two
++    reconstructions are combined into one (x, y) trajectory for the
++    spatial panel, since there is no multivariate Simplex call to make
++    instead.
++
++    Held-out window: [prediction_start, prediction_start+prediction_length)
++    -- the same MDE validation segment (B) evaluate_smap_candidate() and
++    every other MDE-side diagnostic in this file already uses; fit window
++    is [0, prediction_start). Never touches the Generate/Forecast
++    validation segment [B, end) -- same leakage boundary as everywhere
++    else in this pipeline.
++
++    Every target in net_result['targets'] is guaranteed to have D >= 1 by
++    the time this runs: build_network() already calls partition_network()
++    on this same graph, which raises if any target has zero drivers (R14)
++    -- so there is no zero-driver-target case to guard here.
++
++    Scoring (R19's own "scoring routes through _metric_for" acceptance
++    criterion): TARGETS are always continuous, so _metric_for() always
++    resolves to target_metric here regardless of which node is being
++    scored -- reported per method via tsls._score(), alongside CAE (which
++    stays the reference figure's own display convention, not replaced by
++    it). Writes results_dir/mde_evaluate_{network_id}.png; returns a dict
++    of the computed CAE/score values for the caller to log.'''
++    targets = net_result['targets']
++    graph = net_result['network']['Graph']
++    combined = len(targets) > 1
++
++    data_after_mde = pd.read_csv(net_result['DATA_AFTER_MDE'])
++    pool_columns = [c for c in data_after_mde.columns if c not in ('Time', *targets)]
++
++    lib = [1, prediction_start]
++    pred = [prediction_start + 1, prediction_start + prediction_length]
++    pred_slice = slice(prediction_start, prediction_start + prediction_length)
++
++    direct_drivers = {t: list(graph.predecessors(t)) for t in targets}
++    driver_union = sorted(set().union(*direct_drivers.values()))
++    D = len(driver_union)
++
++    # ---- MDE: each target's own reconstruction from its own direct drivers ----
++    mde_predicted, mde_cae, mde_score = {}, {}, {}
++    for t in targets:
++        out = tsls.proper_simplex(
++            data_after_mde, columns=direct_drivers[t], target=t,
++            lib=lib, pred=pred, Tp=0, embedded=True,
++            exclusionRadius=exclusion_radius,
++            metric=target_metric, gammaDelta=gamma_delta,
++        )
++        predicted = out['predictions']['Predictions'].to_numpy()
++        actual = out['predictions']['Observations'].to_numpy()
++        mde_predicted[t] = predicted
++        mde_cae[t] = _cae(actual, predicted)
++        mde_score[t] = out['metrics'][target_metric]
++
++    # ---- PCA / diffusion-map: fit on the network-wide driver pool, regress
++    # onto the target(s) (jointly, in combined mode) ----------------------
++    pool_lib = data_after_mde[pool_columns].iloc[:prediction_start].to_numpy()
++    pool_pred = data_after_mde[pool_columns].iloc[pred_slice].to_numpy()
++    target_lib = data_after_mde[targets].iloc[:prediction_start].to_numpy()
++    target_pred = data_after_mde[targets].iloc[pred_slice].to_numpy()
++    if not combined:
++        target_lib = target_lib.ravel()
++        target_pred = target_pred.ravel()
++
++    pca = PCA(n_components=D)
++    pca.fit(pool_lib)
++    pca_lib_proj, pca_pred_proj = pca.transform(pool_lib), pca.transform(pool_pred)
++    pca_predicted = LinearRegression().fit(pca_lib_proj, target_lib).predict(pca_pred_proj)
++
++    dmap_model = dmap.DiffusionMap.from_sklearn(
++        n_evecs=D, k=dmap_k, epsilon=dmap_epsilon,
++        neighbor_params={'n_jobs': -1, 'algorithm': 'kd_tree'},
++    )
++    dmap_model.fit(pool_lib)
++    dmap_lib_proj, dmap_pred_proj = dmap_model.transform(pool_lib), dmap_model.transform(pool_pred)
++    dmap_predicted = LinearRegression().fit(dmap_lib_proj, target_lib).predict(dmap_pred_proj)
++
++    pca_cae, dmap_cae = _cae(target_pred, pca_predicted), _cae(target_pred, dmap_predicted)
++    if combined:
++        pca_score = float(np.nanmean([
++            tsls._score(target_pred[:, i], pca_predicted[:, i], target_metric, gammaDelta=gamma_delta)
++            for i in range(len(targets))
++        ]))
++        dmap_score = float(np.nanmean([
++            tsls._score(target_pred[:, i], dmap_predicted[:, i], target_metric, gammaDelta=gamma_delta)
++            for i in range(len(targets))
++        ]))
++    else:
++        pca_score = tsls._score(target_pred, pca_predicted, target_metric, gammaDelta=gamma_delta)
++        dmap_score = tsls._score(target_pred, dmap_predicted, target_metric, gammaDelta=gamma_delta)
++
++    print(f"run_mde_evaluate ({net_result['network_id']}, D={D}): "
++          f"MDE CAE={ {t: round(mde_cae[t], 2) for t in targets} } "
++          f"{target_metric}={ {t: round(mde_score[t], 3) for t in targets} } | "
++          f"PCA CAE={pca_cae:.2f} {target_metric}={pca_score:.3f} | "
++          f"D-Map CAE={dmap_cae:.2f} {target_metric}={dmap_score:.3f}", flush=True)
++
++    # ---- Figure: 4 stacked panels, matching the reference -----------------
++    maxN = min(max_traces_shown, D)
++    x_pred = np.arange(prediction_start, prediction_start + prediction_length)
++
++    fig = plt.figure(figsize=figsize)
++    if combined:
++        # Panel 1 is spatial (x-y position), not a time series -- cannot
++        # share a time x-axis with panels 2-4, unlike the single-target case.
++        gs = fig.add_gridspec(4, 1, height_ratios=[2, 1, 1, 1])
++        ax0 = fig.add_subplot(gs[0])
++        ax1 = fig.add_subplot(gs[1])
++        ax2 = fig.add_subplot(gs[2], sharex=ax1)
++        ax3 = fig.add_subplot(gs[3], sharex=ax1)
++    else:
++        (ax0, ax1, ax2, ax3) = fig.subplots(4, 1, sharex=True)
++    axs = [ax0, ax1, ax2, ax3]
++
++    axs[0].set_title(f"{net_result['network_id']}: train {lib}  predict {pred}")
++    axs[1].set_ylabel('MDE', fontsize=12)
++    axs[2].set_ylabel('Diffusion Map', fontsize=12)
++    axs[3].set_ylabel('PCA', fontsize=12)
++    lw = 2.0
++
++    if combined:
++        tx, ty = targets
++        axs[0].plot(target_pred[:, 0], target_pred[:, 1], color='black', lw=lw,
++                    label=f'{tx}/{ty}')
++        mde_xy = np.column_stack([mde_predicted[tx], mde_predicted[ty]])
++        axs[0].plot(mde_xy[:, 0], mde_xy[:, 1], lw=lw,
++                     label=f'MDE   {mde_cae[tx] + mde_cae[ty]:.2f}')
++        axs[0].plot(pca_predicted[:, 0], pca_predicted[:, 1], lw=lw, label=f'PCA    {pca_cae:.2f}')
++        axs[0].plot(dmap_predicted[:, 0], dmap_predicted[:, 1], lw=lw, label=f'D-Map {dmap_cae:.2f}')
++        axs[0].set_xlabel(tx)
++        axs[0].set_ylabel(ty)
++        axs[0].set_ylabel('Predictions', fontsize=12)
++    else:
++        target = targets[0]
++        axs[0].set_ylabel('Predictions', fontsize=12)
++        axs[0].plot(x_pred, dmap_predicted, lw=lw, label=f'D-Map {dmap_cae:.2f}')
++        axs[0].plot(x_pred, pca_predicted, lw=lw, label=f'PCA    {pca_cae:.2f}')
++        axs[0].plot(x_pred, mde_predicted[target], lw=lw, label=f'MDE   {mde_cae[target]:.2f}')
++        axs[0].plot(x_pred, target_pred, color='black', lw=lw, label=target)
++    axs[0].legend(title='CAE', bbox_to_anchor=(1.0, 1.0), loc='upper left')
++
++    # driver_union, not a per-target loop -- a driver shared by more than
++    # one target in combined mode (e.g. a common upstream node) would
++    # otherwise get plotted and labeled once per target it feeds, showing
++    # the identical trace twice under the same name.
++    for driver in driver_union[:maxN]:
++        axs[1].plot(x_pred, data_after_mde[driver].iloc[pred_slice], lw=lw, label=driver)
++    axs[1].legend(title='MDE', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
++
++    for col in range(maxN):
++        axs[2].plot(x_pred, dmap_pred_proj[:, col], lw=lw, label=str(col))
++    axs[2].legend(title='Diffusion Map', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
++
++    for col in range(maxN):
++        axs[3].plot(x_pred, pca_pred_proj[:, col], lw=lw, label=str(col))
++    axs[3].legend(title='PCA', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
++
++    fig.tight_layout()
++    fig.subplots_adjust(hspace=0.3 if combined else 0.04)
++    fig.savefig(results_dir / f"mde_evaluate_{net_result['network_id']}.png",
++                dpi=300, bbox_inches='tight')
++    plt.close(fig)
++
++    return {
++        'D': D, 'direct_drivers': direct_drivers,
++        'mde_cae': mde_cae, 'mde_score': mde_score,
++        'pca_cae': pca_cae, 'pca_score': pca_score,
++        'dmap_cae': dmap_cae, 'dmap_score': dmap_score,
++    }
++
++
+ def target_groups_for_mode(targets, gmn_mode):
+     if gmn_mode == 'combined':
+         return [list(targets)]
+@@ -3526,7 +4768,8 @@
+                     tp=cfg['TP'],
+                     metric=cfg['METRIC'], target_metric=cfg['TARGET_METRIC'],
+                     gamma_delta=cfg['GAMMA_DELTA'],
+-                    ccm_window_rows=cfg['CCM_WINDOW_ROWS'], ccm_lib_size_pcts=cfg['CCM_LIB_SIZE_PCTS'],
++                    target_ranking_window_rows=cfg['TARGET_RANKING_WINDOW_ROWS'],
++                    ccm_lib_sizes_rows=cfg['CCM_LIB_SIZES_ROWS'],
+                     ccm_sample=cfg['CCM_SAMPLE'], ccm_slope=cfg['CCM_SLOPE'],
+                     reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
+                     run_cache_dir=cfg['RUN_CACHE_DIR'],
+@@ -3557,7 +4800,11 @@
+                         tp=cfg['TP'],
+                         metric=cfg['METRIC'], target_metric=cfg['TARGET_METRIC'],
+                         gamma_delta=cfg['GAMMA_DELTA'],
+-                        ccm_window_rows=cfg['CCM_WINDOW_ROWS'], ccm_lib_size_pcts=cfg['CCM_LIB_SIZE_PCTS'],
++                        is_behavioral_target=True,
++                        target_ranking_window_rows=cfg['TARGET_RANKING_WINDOW_ROWS'],
++                        min_pred_events=cfg['MIN_PRED_EVENTS'],
++                        max_window_rows=cfg['MAX_WINDOW_ROWS'],
++                        ccm_lib_sizes_rows=cfg['CCM_LIB_SIZES_ROWS'],
+                         ccm_sample=cfg['CCM_SAMPLE'], ccm_slope=cfg['CCM_SLOPE'],
+                         reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
+                         run_cache_dir=cfg['RUN_CACHE_DIR'],
+@@ -3606,6 +4853,10 @@
+             cfg['MODE'], cfg['E_RANGE'], cfg['TAU_RANGE'], cfg['RESULTS_DIR'], cfg['CORES'],
+             cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'], cfg['CCM_WINDOW_ROWS'],
+             cfg['CCM_LIB_SIZE_PCTS'], cfg['CCM_SAMPLE'], cfg['CCM_SLOPE'],
++            target_ranking_window_rows=cfg['TARGET_RANKING_WINDOW_ROWS'],
++            min_pred_events=cfg['MIN_PRED_EVENTS'],
++            max_window_rows=cfg['MAX_WINDOW_ROWS'],
++            ccm_lib_sizes_rows=cfg['CCM_LIB_SIZES_ROWS'],
+             observable_columns=filtered_pools.get(tuple(group), obs_cols),
+             nested_n=cfg['MDE_D'], nested_m=cfg['NESTED_M'],
+             embed_dim_rho_min=cfg['EMBED_DIM_RHO_MIN'], cross_map_rho_min=cfg['CROSS_MAP_RHO_MIN'],
+@@ -3618,11 +4869,17 @@
+             code_fingerprint=code_fingerprint,
+             gmn_mode=cfg['GMN_MODE'], multi_mde_e=cfg['MULTI_MDE_E'],
+             multi_mde_target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
++            external_input_mode=cfg['EXTERNAL_INPUT_MODE'],
+         )
+         draw_colored_network(
+             net_result, cfg['TARGET_COLORS'],
+             cfg['RESULTS_DIR'] / f"gmn_network_{net_result['network_id']}.png",
+         )
++        if cfg['MODE'] == 'MDE-GMN':
++            plot_3d_network(
++                net_result, cfg['TARGET_COLORS'],
++                cfg['RESULTS_DIR'] / f"network_3d_{net_result['network_id']}.png",
++            )
+         gmn_runs[net_result['network_id']] = {'group': group, 'net_result': net_result}
+ 
+     fingerprints = None
+@@ -3634,7 +4891,7 @@
+ 
+     theta_search_results = run_theta_search(
+         gmn_runs, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'], cfg['THETA_RANGE'],
+-        cfg['RESULTS_DIR'], cfg['CORES'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
++        cfg['RESULTS_DIR'], cfg['CORES'], cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
+         generate_length=cfg['GENERATE_LENGTH'],
+         reuse_best_params=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
+         run_cache_dir=cfg['RUN_CACHE_DIR'],
+@@ -3706,6 +4963,13 @@
+         run_univariate_e_tau_grid(mde_results, cfg['TARGETS'], cfg['E_RANGE'], cfg['TAU_RANGE'],
+                                    cfg['GRID_RHO_THRESHOLD'], cfg['RESULTS_DIR'],
+                                    cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'])
++        # R19 (docs/review-actions-v1.md): per constructed network -- needs
++        # net_result['network']['Graph'] for D (direct-driver count), which
++        # mde_results (depth-0-only) doesn't carry.
++        for network_id, run in gmn_runs.items():
++            run_mde_evaluate(run['net_result'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
++                              cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
++                              exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
+     else:
+         print(f"MODE={cfg['MODE']!r} / RUN_MDE_DIAGNOSTICS={cfg['RUN_MDE_DIAGNOSTICS']}: "
+               f"skipping MDE-only diagnostics.", flush=True)
+```
+
+---
+
+
 ## Job 39674609
 
 Generated: 2026-08-25T14:39:17+09:00
