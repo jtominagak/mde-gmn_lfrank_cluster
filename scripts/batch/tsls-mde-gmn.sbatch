@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=run_tsls_mde_gmn
 #SBATCH --partition=compute
-#SBATCH --time=4-00:00:00
-#SBATCH --mem=128G
-#SBATCH --cpus-per-task=64
+#SBATCH --time=2:00:00
+#SBATCH --mem=16G
+#SBATCH --cpus-per-task=8
 # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
 # parses #SBATCH directives itself before this script (or any shell) runs,
 # so no shell variable expansion happens here. Pointed directly at
@@ -57,83 +57,61 @@ set -euo pipefail
 # Generate()/Forecast() core count (cores=) and PredictNonlinear's
 # numProcess= (theta retuning).
 #
-# --cpus-per-task=64 / --mem=128G / --time=4-00:00:00 below carry forward
-# this pipeline's prior resource escalation (SECOND in a row before the
-# inner-pool change above), both grounded in real measured evidence, not
-# guesses -- cpus-per-task raised 32->64 for THIS submission specifically to
-# give the new inner pool real headroom to show up in the numbers on a wave
-# that's still typically narrower than 64 nodes at this validation scale,
-# rather than mostly going to outer parallelism alone as 32 would:
-#   (1) job 38976891 (REGION_CHANNEL_CAP=15/MDE_D=4/NESTED_M=1/TP=1) TIMED
-#       OUT at an original --time=04:00:00: depth-0 finished both targets
-#       in ~2 minutes, but the single depth-1 wave (3 nodes) produced no
-#       new output after 4+ hours, confirmed still doing real work the
-#       whole time (9 worker processes at 90-105% CPU each, not hung).
-#   (2) job 39024490, resubmitted at --time=24:00:00/--mem=96G/
-#       --cpus-per-task=16 specifically to clear that same bottleneck, was
-#       CANCELLED before finishing -- per explicit instruction, its own
-#       config was changed to a considerably LARGER sweep in the same
-#       stroke (REGION_CHANNEL_CAP 15->30, MDE_D 4->10, NESTED_M 1->5,
-#       TP 1->10 -- every axis that plausibly drove (1)'s cost except
-#       GENERATE_LENGTH, which dropped 100->40), so it was cancelled and
-#       resized together rather than left to prove the same point twice.
-# The real Stage-1 cost driver is STILL not isolated (open item in
-# docs/tsls-mde-gmn-pipeline.pdf's Development History and Future
-# Directions) -- these numbers are a bounded, evidence-informed response
-# to the severity actually observed twice now, not a substitute for that
-# profiling work, which remains the recommended next step before a third
-# blind resubmission:
-#   - cpus-per-task=32 (up from 16, historical): job 38976891's own
-#     bottleneck was wall-clock-bound on a wave of only 3 nodes, not
-#     core-starved -- but MDE_D 4->10 means each round can now select up
-#     to 2.5x more real drivers per node, so a wave at this config can
-#     plausibly be far wider than 3; doubled to give a wider wave room to
-#     actually parallelize rather than serialize in batches.
-#   - cpus-per-task=32->64 (this submission): the inner-pool change above
-#     means --cpus-per-task no longer only sizes outer_workers -- once a
-#     wave is narrower than 32, the surplus now goes to each node's own
-#     inner_workers instead of sitting idle, so this bump is exercising
-#     that new headroom, not re-litigating (1)/(2)'s original node-count
-#     concern.
-#   - mem=128G (up from 96G): REGION_CHANNEL_CAP 15->30 doubles the real-
-#     observable candidate pool Stage 1 searches; more concurrent workers
-#     also means more simultaneous per-worker working sets. Still <26% of
-#     a compute-partition node's 500G (`scontrol show node`) -- real
-#     headroom, not a tight fit -- and threads (the inner pool) share
-#     their outer worker's own process memory rather than each needing a
-#     fresh copy, so the 32->64 cpus-per-task bump doesn't scale this
-#     number the way another process pool would have.
-#   - time=4-00:00:00 (up from 24h): a single depth-1 wave alone consumed
-#     an entire 4h budget at HALF this config's REGION_CHANNEL_CAP and
-#     2.5-5x smaller MDE_D/NESTED_M, so a proportionally small bump risks
-#     a third uninformative timeout. Deliberately capped at
-#     simple-mde-gmn.sbatch's own PROVEN-SUFFICIENT production budget
-#     (4-00:00:00, currently running clean at REGION_CHANNEL_CAP=999 --
-#     33x this config's own 30) rather than escalated further into
-#     genuinely open-ended territory: if REGION_CHANNEL_CAP=30 for THIS
-#     pipeline doesn't fit in the same wall-clock budget REGION_CHANNEL_-
-#     CAP=999 fits in for the sibling pipeline, that itself is a finding
-#     worth investigating directly, not resourcing around indefinitely.
-#     NOTE: --partition=compute (PriorityTier=20, confirmed via `scontrol
-#     show partition compute`) is scheduled ahead of the `short` partition
-#     (PriorityTier=1) regardless of job size/duration -- kept on compute
-#     rather than switched to `short`.
+# --cpus-per-task=8 / --mem=16G / --time=2:00:00 below are a deliberate
+# SHRINK from this file's own prior VALIDATION RUN scale
+# (REGION_CHANNEL_CAP=30/MDE_D=10/NESTED_M=5, 64 cpus/128G/4 days) down to
+# a SMOKE TEST (REGION_CHANNEL_CAP=3/MDE_D=2/NESTED_M=2 below) -- the first
+# end-to-end run since the depth>=1 metric-routing fix, per-node window
+# resolution (MIN_PRED_EVENTS/MAX_WINDOW_ROWS), and the CCM gate's absolute
+# library sizes (CCM_LIB_SIZES_ROWS) all landed (docs/review-findings.md).
+# Cost at this exact combination is genuinely unknown -- none of those
+# changes has run end-to-end at cluster scale yet -- so these numbers are
+# an estimate, not a measurement, reasoned from what evidence exists:
+#   - This pipeline has a real history of surprising cost at even modest
+#     scale under the OLD (fixed 800-row window) design: job 38976891
+#     (REGION_CHANNEL_CAP=15/MDE_D=4/NESTED_M=1/TP=1) timed out after 4+
+#     hours on a single depth-1 wave of just 3 nodes, confirmed still doing
+#     real work throughout (not hung). REGION_CHANNEL_CAP=3/MDE_D=2/
+#     NESTED_M=2 here is far smaller on every one of those axes, but that
+#     history is why this isn't treated as trivially fast by assumption.
+#   - Direct single-node timing this session (verify_window_fix_real.py,
+#     scratchpad, not committed): one full run_mde_for_target() call at
+#     REGION_CHANNEL_CAP=15's own 44-candidate pool and a 3,971-row
+#     resolved window took 25.5s wall-clock (ranking stage only -- every
+#     candidate failed crossMapRhoMin before reaching the more expensive
+#     CCM gate). This smoke test's own candidate pool is ~5x smaller (9
+#     real channels total at REGION_CHANNEL_CAP=3), but a slow-firing
+#     target node could still resolve a window up to MAX_WINDOW_ROWS=
+#     30000 (~7.5x that 3,971-row measurement) -- a cost axis that measurement
+#     doesn't fully cover, and the reason for real margin rather than
+#     scaling that number down linearly by pool size alone.
+#   - cpus-per-task=8: --cpus-per-task sizes BOTH layers (outer per-wave
+#     ProcessPoolExecutor parallelism AND, through inner_workers, each
+#     node's own proper_mde() ranking loop / CCM gate -- see UPDATED note
+#     above). At REGION_CHANNEL_CAP=3 the whole real-observable candidate
+#     pool is 9 channels, so BFS waves will be narrow (likely 1-3 nodes) --
+#     8 gives real inner-pool headroom per node without requesting cluster
+#     allocation a wave this narrow can't plausibly use.
+#   - mem=16G: this scale's own TSLS-converted DataFrame (same ~45k-row
+#     recording, far fewer columns than REGION_CHANNEL_CAP=15/30) is at
+#     most tens of MB; 16G is generous headroom, not a tight fit.
+#   - time=2:00:00: below the "not the full 4-hour calibration budget"
+#     ceiling this smoke test was scoped to, above the 25.5s single-node
+#     measurement by roughly two orders of magnitude to cover an unknown
+#     node count (Stage 1 + Stage 2 across depth 0-2, plus the depth-0
+#     joint MDE seed, Generate/Forecast, and the R7/R19/R20/R21
+#     diagnostics -- all of which also run) and the possibility of at
+#     least one node resolving a window near the 30,000-row ceiling.
 #
-# GENERATE_LENGTH is ALSO load-bearing for calibration scale, not just a
-# Generate()-step-count knob: LAG_MODE=generation_length_adjusted derives
-# Stage 2's lag-candidate bound directly from it (derive_lag_set()), and
-# GENERATE_LENGTH's own 0 sentinel resolves in main() to the FULL held-out
-# window (thousands of rows) before that happens -- so leaving it at 0
-# would silently make Stage 2 search thousands of lag columns even with
-# REGION_CHANNEL_CAP/MDE_D capped small. Marked VALIDATION RUN below
-# alongside REGION_CHANNEL_CAP/MDE_D for exactly this reason.
-#
-# STRONGLY RECOMMENDED: before an uncapped (REGION_CHANNEL_CAP=999,
-# GENERATE_LENGTH=0) run, submit a small calibration job first --
-# REGION_CHANNEL_CAP/MDE_D/GENERATE_LENGTH are marked VALIDATION RUN below
-# with small values for exactly this -- and time it end-to-end before
-# scaling up, adjusting --cpus-per-task/--mem/--time from real measured
-# usage rather than a guess.
+# GENERATE_LENGTH remains explicitly set (40, unchanged from the prior
+# VALIDATION RUN scale) rather than left at its own 0 sentinel -- confirmed
+# still necessary, not just carried forward by habit: LAG_MODE=
+# generation_length_adjusted derives Stage 2's lag-candidate bound directly
+# from it (derive_lag_set()), and 0 resolves in main() to the FULL held-out
+# window (thousands of rows at this dataset's scale) before that happens --
+# unrelated to, and not implied by, shrinking REGION_CHANNEL_CAP/MDE_D
+# below. Leaving it at 0 here would silently make Stage 2 search thousands
+# of lag columns even at this otherwise-tiny smoke scale.
 
 # ---- Data ----------------------------------------------------------------
 DATA_FILE="J1620210605_epoch_8_freq_40_Hz.csv"   # default: the 40 Hz (25ms-bin) spike-train file
@@ -183,7 +161,7 @@ TARGETS="head_position_x,head_position_y"   # comma-separated target column name
 # CCM causality gate -- no separate maxE knob is exposed here, per
 # explicit direction to reuse this already-exposed budget rather than
 # introduce a second one.
-MDE_D=10                       # VALIDATION RUN (see NOTE above) -- default: 20
+MDE_D=2                        # SMOKE TEST (see NOTE above) -- default: 20
 # Prediction interval every proper_mde forward-selection call ranks/
 # validates every candidate driver against -- ported from
 # simple-mde-gmn.py's own TP parameter (ranking, not just final scoring).
@@ -257,12 +235,12 @@ EXCLUSION_RADIUS=0            # default: 0. Plain integer only -- no 'auto' opti
 # of rounds. Combinatorially expensive -- see simple-mde-gmn.sbatch's own
 # NESTED_M comment for the full rationale (identical here); keep both
 # MDE_D and NESTED_M small for a first test run.
-NESTED_M=5                    # default: 1, additional nested-MDE rounds beyond each target's own selection. 0 = uncapped
+NESTED_M=2                    # SMOKE TEST (see NOTE above) -- default: 1, additional nested-MDE rounds beyond each target's own selection. 0 = uncapped
 # First N *raw* channels per region (CA1_/mPFC_/OFC_), TSLS-converted and
 # offered as MDE candidates (or, when MODE=GMN, used directly as the
 # interaction-matrix's full node set). 999 is effectively uncapped (matches
 # notebooks/tsls-mde-gmn.ipynb's own full-channel-set decision).
-REGION_CHANNEL_CAP=30         # VALIDATION RUN (see NOTE above) -- default: 999
+REGION_CHANNEL_CAP=3          # SMOKE TEST (see NOTE above) -- default: 999
 
 # Stage 2's (and every node's self_delay_set's) nonzero-delay list (in
 # rows, always negative) -- MODE=MDE-GMN only. Each real observable is
@@ -322,7 +300,7 @@ MDE_VALIDATION_RATIO=0.5        # default: 0.5
 # the LIB_RATIO/MDE_VALIDATION_RATIO-derived held-out window -- see
 # simple-mde-gmn.sbatch's own GENERATE_LENGTH comment for the full
 # rationale (identical here). 0 means "use the entire held-out window".
-GENERATE_LENGTH=40             # VALIDATION RUN (see NOTE above) -- default: 0 (= full held-out window)
+GENERATE_LENGTH=40             # SMOKE TEST -- explicitly capped, see NOTE above -- default: 0 (= full held-out window)
 
 # Theiler-window / neighbor-exclusion radius for GMN's own recursive
 # Generate()/Forecast() SMap nearest-neighbor search -- a PLAIN STATIC

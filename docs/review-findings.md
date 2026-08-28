@@ -2838,7 +2838,15 @@ the code. Nothing was committed before this was noticed, so a clean split
 was technically still possible, but reconstructing two independently-
 correct intermediate states from an already-intertwined working-tree diff
 by hand carried more risk of a subtle bug than the review benefit
-justified. Flagged to the user rather than deciding silently; landing as
-one commit whose message clearly separates the two concerns, unless
-directed to attempt the split anyway.
+justified. Flagged to the user rather than deciding silently; landed
+(`8d02c3e`) as one commit whose message clearly separates the two
+concerns, per the user's own acknowledgement of this tradeoff.
+
+**Consequence, stated plainly: the two changes are not separately
+bisectable.** A `git bisect` landing on `8d02c3e` cannot distinguish
+"window-sizing broke this" from "the CCM-gate library-size change broke
+this" — both must be inspected together if a future regression bisects to
+this commit. This is the concrete cost of the combined commit, not just a
+process footnote; recorded here so it's visible to whoever runs a bisect
+later, not only to whoever reads this section first.
 

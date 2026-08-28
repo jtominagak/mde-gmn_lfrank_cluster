@@ -73,8 +73,13 @@ one-line reason. R16 is the explicit exception.
 
 ### A4. Verification before submission
 `python3 -m py_compile` on both pipelines and `bash -n` on both sbatch scripts must pass. No
-cluster submission from this work without a local smoke test on real data at
+cluster submission from this work without a small-scale smoke test on a compute node at
 `REGION_CHANNEL_CAP=3, MDE_D=2`.
+
+**Amended 2026-08-28:** the original wording ("a local smoke test") assumed the fixed 800-row
+`CCM_WINDOW_ROWS` window and is now misleading — per-node ranking windows can reach
+`MAX_WINDOW_ROWS` (default 30000 rows) since the window-sizing redesign, so this is compute-node
+work regardless of `REGION_CHANNEL_CAP`/`MDE_D`, not something to run on the login node.
 
 ### A5. Cache invalidation
 Any change that alters a cacheable stage's numerical outcome must add its new knobs to the
