@@ -159,10 +159,12 @@ import multiprocessing as mp
 import os
 import pickle
 import sys
+import time
 import types
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
 from configparser import ConfigParser
 from contextlib import nullcontext
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib
@@ -1435,6 +1437,47 @@ def _resolve_target_ranking_window(target, full_df, usable_df, lib_ratio,
     return int(w_candidates[first]), int(pred_events_up_to_w[first])
 
 
+def _preview_window_rows(node, full_df, delay_set, prediction_start, prediction_length, tp,
+                          is_behavioral_target, target_ranking_window_rows,
+                          min_pred_events, max_window_rows):
+    '''Speculative, read-only resolve of one node's own expected ranking-
+    window size, called from the progress-monitoring log's own ETA
+    estimate (see _format_eta()'s per-window-row mode) BEFORE that node's
+    real run_mde_for_target() call -- independent of, and without any
+    effect on, the real resolve that call performs later. Node cost scales
+    roughly with resolved window size (see _resolve_target_ranking_window()
+    itself), so this gives the monitoring log a real cost signal per
+    pending node instead of treating every node as equally expensive.
+
+    Mirrors run_mde_for_target()'s own usable_df/lib_ratio derivation
+    exactly (see that function's own LEAKAGE docstring), narrowed to just
+    `node`'s own column -- cheap relative to the real MDE call it is
+    estimating (a single-column slice plus one vectorized event-count
+    search, not the full candidate-pool ranking sweep). Returns 0 (not a
+    real window size) if the node turns out unreachable -- an unreachable
+    node fails fast in the real call regardless, so weighting it as
+    negligible cost for the ETA is reasonable, not misleading.
+
+    Behavioral targets short-circuit before touching `full_df` at all:
+    `_resolve_target_ranking_window()`'s own behavioral branch never reads
+    the target's column either (the window is the fixed
+    `target_ranking_window_rows`, capped by available rows) -- mirroring
+    that here avoids requiring `full_df` to even contain this node's own
+    column for a case where the real resolve never looks at it.'''
+    warmup = max((abs(d) for d in delay_set), default=0)
+    usable_end = prediction_start + prediction_length - tp
+    n_usable = usable_end - warmup
+    if is_behavioral_target:
+        return min(target_ranking_window_rows, n_usable)
+    usable_df = full_df[[node]].iloc[warmup:usable_end].reset_index(drop=True)
+    lib_ratio = (prediction_start - warmup) / max(1, n_usable)
+    window_rows, _ = _resolve_target_ranking_window(
+        node, full_df, usable_df, lib_ratio,
+        is_behavioral_target, target_ranking_window_rows, min_pred_events, max_window_rows,
+    )
+    return window_rows or 0
+
+
 def _metric_for(column, targets, metric, target_metric):
     '''TARGETS (continuous behavioral traces) always score via
     target_metric ('correlation'); everything else (TSLS-converted neuron
@@ -2174,6 +2217,78 @@ def build_interaction_matrix(data_lib, nodes, targets, ccm_E, ccm_tau, metric, t
     return iMatrix
 
 
+# Progress-monitoring log (found necessary this session: this pipeline has
+# a real history of runs that never finish -- job 38976891 timed out after
+# 4+ hours on a single depth-1 Stage 1 wave of 3 nodes, still doing real
+# work throughout but producing no new output -- with no timing
+# instrumentation anywhere to say which node was slow or how close to done
+# it was). HEARTBEAT_SECONDS: how often the Stage 1/Stage 2 wave loops
+# below re-check and log "still working" while a wave's own nodes are
+# still running, even if none of them have finished yet -- frequent enough
+# to show real liveness on a run that used to go silent for hours, not so
+# frequent it adds meaningful I/O overhead or log noise.
+HEARTBEAT_SECONDS = 300
+
+
+def _log_progress(log_path, message):
+    '''Appends one timestamped line to the progress-monitoring log (see
+    load_config()'s own PROGRESS_LOG_PATH -- flash, not bucket, so it's
+    readable while a job is still running, and survives independently of
+    the bucket-archival step). Every write is flushed and fsynced
+    immediately -- this is a diagnostic log for a pipeline with a real
+    history of runs that never finish (see JOB_LOG.md), so a line must
+    survive a crash/OOM/timeout the instant after it's written, not just
+    on a clean close. `log_path=None` is a silent no-op (callers that
+    don't have one, e.g. tests, never need to guard every call site with
+    an `if`).
+
+    Only ever called from the main process -- Stage 1/Stage 2 worker
+    processes (run inside ProcessPoolExecutor) are never given this path,
+    so there is no concurrent-writer question to solve here (see this
+    module's own docstring section on the monitoring log for why timing
+    is measured from the orchestrating process's own submit/as_completed
+    calls instead of from inside proper_mde itself).'''
+    if log_path is None:
+        return
+    with open(log_path, 'a') as f:
+        f.write(f'{datetime.now().isoformat()} {message}\n')
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _format_eta(durations, n_remaining, per_unit=None, unit_remaining=None):
+    '''Rough remaining-time estimate for a monitoring-log heartbeat/summary
+    line, from durations already observed *in this same run* (never across
+    jobs -- see load_config()'s own PROGRESS_LOG_PATH docstring for why).
+
+    Two modes:
+    - Flat per-task average: pass `durations` (list of completed task
+      durations, seconds) and `n_remaining` (how many more of that same
+      task type are left) -- estimate is `mean(durations) * n_remaining`.
+    - Per-window-row rate (used for Stage 1/Stage 2 nodes, whose own cost
+      scales roughly with resolved window size -- see
+      _resolve_target_ranking_window()): pass `per_unit` (list of
+      observed seconds-per-window-row, one entry per completed node) and
+      `unit_remaining` (total window rows still queued across pending
+      nodes) instead of/alongside durations -- estimate is
+      `mean(per_unit) * unit_remaining`. Falls back to the flat estimate
+      if `per_unit` has no observations yet (e.g. the very first node in
+      a wave).
+
+    Returns '' (not an estimate) when there is nothing completed yet to
+    base one on -- an ETA fabricated from zero observations would be
+    actively misleading, not just uninformative.'''
+    if per_unit and unit_remaining is not None and unit_remaining > 0:
+        rate = sum(per_unit) / len(per_unit)
+        return (f' (~{rate * unit_remaining:.0f}s remaining, based on {len(per_unit)} '
+                f'completed node(s) averaging {rate * 1000:.2f}ms/window-row)')
+    if durations and n_remaining and n_remaining > 0:
+        mean_s = sum(durations) / len(durations)
+        return (f' (~{mean_s * n_remaining:.0f}s remaining, based on {len(durations)} '
+                f'completed averaging {mean_s:.1f}s each)')
+    return ''
+
+
 def _failed_mde_result(target):
     '''Fallback run_mde_for_target()-shaped result for a node/target whose
     MDE call raised, instead of returning normally -- ported unchanged from
@@ -2265,7 +2380,8 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                               ccm_lib_sizes_rows, ccm_sample, ccm_slope, cores,
                               lag_set, stage2_allow_real_observables,
                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
-                              data_file=None, data_file_sha256=None, code_fingerprint=None):
+                              data_file=None, data_file_sha256=None, code_fingerprint=None,
+                              progress_log_path=None):
     '''Two-stage nested-MDE network construction, MODE='MDE-GMN' only --
     FULLY SERIAL between stages (R12, 2026-08-27: reverted from the
     2026-08-25 unified-per-wave-BFS design -- see JOB_LOG.md for that
@@ -2359,6 +2475,10 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # =====================================================================
     visited1 = set()
     current_wave = [(t, 0) for t in targets]
+    stage1_start = time.perf_counter()
+    stage1_durations = []   # seconds per completed node, this run only
+    stage1_rates = []       # seconds per resolved window-row, this run only -- see _format_eta()
+    _log_progress(progress_log_path, 'STAGE 1 START (real-observable BFS)')
 
     while current_wave:
         wave_nodes, seen = [], set()
@@ -2388,14 +2508,27 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                   f'{to_compute[0][1]} -- {outer_workers} parallel worker(s) '
                   f'x {inner_workers} inner thread(s) each '
                   f'(product={outer_workers * inner_workers}, cores={cores})', flush=True)
+            wave_start = time.perf_counter()
+            _log_progress(progress_log_path,
+                          f'stage1 wave START -- {len(to_compute)} node(s) at depth '
+                          f'{to_compute[0][1]}: {[n for n, _ in to_compute]}')
 
             with ProcessPoolExecutor(max_workers=outer_workers,
                                       mp_context=mp.get_context('fork')) as executor:
                 futures = {}
+                node_window_estimate = {}
                 for node, depth in to_compute:
                     candidate_pool = [c for c in expanded_columns
                                        if observable_and_delay(c, raw_columns)[0] != node]
                     effective_d = effective_mde_dimension(nested_n, candidate_pool, stage1_num_delays)
+                    is_behav = (node in targets)
+                    # Monitoring-log ETA input only -- see _preview_window_rows()'s
+                    # own docstring for why this speculative resolve is safe and
+                    # independent of the real one run_mde_for_target() performs.
+                    node_window_estimate[node] = _preview_window_rows(
+                        node, expanded_df, delay_set, prediction_start, prediction_length, tp,
+                        is_behav, target_ranking_window_rows, min_pred_events, max_window_rows,
+                    )
                     # Metric-routing fix (found while verifying R22's own
                     # E-engine-swap effect): `node` here is virtually never
                     # one of `targets` (Stage 1 discovers real-observable
@@ -2423,7 +2556,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                         tp=tp, metric=metric,
                         target_metric=_metric_for(node, targets, metric, target_metric),
                         gamma_delta=gamma_delta, ccm_sample=ccm_sample, ccm_slope=ccm_slope,
-                        is_behavioral_target=(node in targets),
+                        is_behavioral_target=is_behav,
                         target_ranking_window_rows=target_ranking_window_rows,
                         min_pred_events=min_pred_events, max_window_rows=max_window_rows,
                         ccm_lib_sizes_rows=ccm_lib_sizes_rows,
@@ -2433,19 +2566,59 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                         max_e=nested_n, inner_workers=inner_workers, raw_columns=raw_columns,
                     )
                     futures[fut] = node
-                for fut in as_completed(futures):
-                    node = futures[fut]
-                    try:
-                        stage1_results[node] = fut.result()
-                    except Exception as exc:
-                        # See _failed_mde_result()'s own docstring -- a
-                        # single node's MDE call failing must not crash the
-                        # rest of this wave or every already-completed node
-                        # in prior waves.
-                        print(f'nested MDE (Stage 1): {node} MDE call FAILED: {exc!r} -- treating '
-                              f'as a dead-end (zero drivers selected, no further nesting from this '
-                              f'node)', flush=True)
-                        stage1_results[node] = _failed_mde_result(node)
+
+                # Heartbeat-polling replacement for a plain `for fut in
+                # as_completed(futures):` -- see this module's own
+                # HEARTBEAT_SECONDS docstring for why: a wave with no
+                # heartbeat can go silent for hours (job 38976891) with no
+                # way to tell "still working" from "stuck". Each timeout
+                # with nothing newly done logs one heartbeat line; each
+                # newly completed future is logged (and timed) immediately.
+                pending = set(futures)
+                while pending:
+                    done, pending = wait(pending, timeout=HEARTBEAT_SECONDS,
+                                          return_when=FIRST_COMPLETED)
+                    if not done:
+                        elapsed = time.perf_counter() - wave_start
+                        still_waiting = sorted(futures[f] for f in pending)
+                        remaining_rows = sum(node_window_estimate.get(futures[f], 0)
+                                              for f in pending)
+                        eta = _format_eta(stage1_durations, len(pending),
+                                          per_unit=stage1_rates, unit_remaining=remaining_rows)
+                        _log_progress(
+                            progress_log_path,
+                            f'stage1 wave HEARTBEAT -- {len(futures) - len(pending)}/{len(futures)} '
+                            f'done, elapsed={elapsed:.0f}s, still waiting on: {still_waiting}{eta}')
+                        continue
+                    for fut in done:
+                        node = futures[fut]
+                        node_duration = time.perf_counter() - wave_start
+                        try:
+                            stage1_results[node] = fut.result()
+                            _log_progress(
+                                progress_log_path,
+                                f'stage1 node END -- {node} duration={node_duration:.1f}s '
+                                f'selected={stage1_results[node]["SELECTED_COLUMNS"]}')
+                        except Exception as exc:
+                            # See _failed_mde_result()'s own docstring -- a
+                            # single node's MDE call failing must not crash the
+                            # rest of this wave or every already-completed node
+                            # in prior waves.
+                            print(f'nested MDE (Stage 1): {node} MDE call FAILED: {exc!r} -- treating '
+                                  f'as a dead-end (zero drivers selected, no further nesting from this '
+                                  f'node)', flush=True)
+                            _log_progress(
+                                progress_log_path,
+                                f'stage1 node END -- {node} duration={node_duration:.1f}s FAILED: {exc!r}')
+                            stage1_results[node] = _failed_mde_result(node)
+                        stage1_durations.append(node_duration)
+                        window_est = node_window_estimate.get(node, 0)
+                        if window_est > 0:
+                            stage1_rates.append(node_duration / window_est)
+
+            _log_progress(progress_log_path,
+                          f'stage1 wave END -- {len(to_compute)} node(s), '
+                          f'{time.perf_counter() - wave_start:.1f}s total')
 
         next_wave = {}
         for node, depth in wave_nodes:
@@ -2461,6 +2634,9 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
 
         current_wave = list(next_wave.items())
 
+    _log_progress(progress_log_path,
+                  f'STAGE 1 END -- {len(visited1)} node(s), '
+                  f'{time.perf_counter() - stage1_start:.1f}s total')
     print(f'nested MDE (Stage 1): completed -- {len(visited1)} node(s) in the real-observable '
           f'backbone, Stage 2 starts now', flush=True)
 
@@ -2483,6 +2659,10 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # own final summary print for where these get reported.
     stage2_budget_bound = 0
     stage2_driver_exhausted = 0
+    stage2_start = time.perf_counter()
+    stage2_durations = []
+    stage2_rates = []
+    _log_progress(progress_log_path, 'STAGE 2 START (lagged/real BFS)')
 
     while current_wave:
         wave_nodes, seen = [], set()
@@ -2505,15 +2685,29 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
               f'(product={outer_workers2 * inner_workers2}, cores={cores}), candidate pool size '
               f'{len(stage2_candidate_universe)} (lag_set={lag_set}, '
               f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
+        wave_start = time.perf_counter()
+        _log_progress(progress_log_path,
+                      f'stage2 wave START -- {len(wave_nodes)} node(s) at depth(s) '
+                      f'{wave_depths}: {[n for n, _ in wave_nodes]}')
 
         stage2_results = {}
         with ProcessPoolExecutor(max_workers=outer_workers2,
                                   mp_context=mp.get_context('fork')) as executor:
             futures = {}
+            node_window_estimate = {}
             for node, depth in wave_nodes:
                 candidate_pool = [c for c in stage2_candidate_universe
                                    if observable_and_delay(c, raw_columns)[0] != node]
                 effective_d = effective_mde_dimension(nested_n, candidate_pool, stage2_num_delays)
+                is_behav = (node in targets)
+                # Monitoring-log ETA input only -- see Stage 1's own
+                # identical comment above / _preview_window_rows()'s
+                # docstring. Uses stage2_df/lag_set (Stage 2's own frame
+                # and delay set), matching the real call just below.
+                node_window_estimate[node] = _preview_window_rows(
+                    node, stage2_df, lag_set, prediction_start, prediction_length, tp,
+                    is_behav, target_ranking_window_rows, min_pred_events, max_window_rows,
+                )
                 # Metric-routing fix -- see Stage 1's own identical comment
                 # above. `node` here is a Stage 1 backbone node (real
                 # observable) or a Stage-2-recursed real observable, never
@@ -2528,7 +2722,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                     tp=tp, metric=metric,
                     target_metric=_metric_for(node, targets, metric, target_metric),
                     gamma_delta=gamma_delta, ccm_sample=ccm_sample, ccm_slope=ccm_slope,
-                    is_behavioral_target=(node in targets),
+                    is_behavioral_target=is_behav,
                     target_ranking_window_rows=target_ranking_window_rows,
                     min_pred_events=min_pred_events, max_window_rows=max_window_rows,
                     ccm_lib_sizes_rows=ccm_lib_sizes_rows,
@@ -2539,14 +2733,47 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                     max_e=nested_n, inner_workers=inner_workers2, raw_columns=raw_columns,
                 )
                 futures[fut] = node
-            for fut in as_completed(futures):
-                node = futures[fut]
-                try:
-                    stage2_results[node] = fut.result()
-                except Exception as exc:
-                    print(f'nested MDE (Stage 2): {node} MDE call FAILED: {exc!r} -- treating as '
-                          f'a dead-end (zero lagged drivers attached for this node)', flush=True)
-                    stage2_results[node] = _failed_mde_result(node)
+
+            # Heartbeat-polling -- see Stage 1's own identical comment above.
+            pending = set(futures)
+            while pending:
+                done, pending = wait(pending, timeout=HEARTBEAT_SECONDS,
+                                      return_when=FIRST_COMPLETED)
+                if not done:
+                    elapsed = time.perf_counter() - wave_start
+                    still_waiting = sorted(futures[f] for f in pending)
+                    remaining_rows = sum(node_window_estimate.get(futures[f], 0) for f in pending)
+                    eta = _format_eta(stage2_durations, len(pending),
+                                      per_unit=stage2_rates, unit_remaining=remaining_rows)
+                    _log_progress(
+                        progress_log_path,
+                        f'stage2 wave HEARTBEAT -- {len(futures) - len(pending)}/{len(futures)} '
+                        f'done, elapsed={elapsed:.0f}s, still waiting on: {still_waiting}{eta}')
+                    continue
+                for fut in done:
+                    node = futures[fut]
+                    node_duration = time.perf_counter() - wave_start
+                    try:
+                        stage2_results[node] = fut.result()
+                        _log_progress(
+                            progress_log_path,
+                            f'stage2 node END -- {node} duration={node_duration:.1f}s '
+                            f'selected={stage2_results[node]["SELECTED_COLUMNS"]}')
+                    except Exception as exc:
+                        print(f'nested MDE (Stage 2): {node} MDE call FAILED: {exc!r} -- treating as '
+                              f'a dead-end (zero lagged drivers attached for this node)', flush=True)
+                        _log_progress(
+                            progress_log_path,
+                            f'stage2 node END -- {node} duration={node_duration:.1f}s FAILED: {exc!r}')
+                        stage2_results[node] = _failed_mde_result(node)
+                    stage2_durations.append(node_duration)
+                    window_est = node_window_estimate.get(node, 0)
+                    if window_est > 0:
+                        stage2_rates.append(node_duration / window_est)
+
+        _log_progress(progress_log_path,
+                      f'stage2 wave END -- {len(wave_nodes)} node(s), '
+                      f'{time.perf_counter() - wave_start:.1f}s total')
 
         next_wave = {}
         for node, depth in wave_nodes:
@@ -2575,6 +2802,10 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
 
         current_wave = list(next_wave.items())
 
+    _log_progress(progress_log_path,
+                  f'STAGE 2 END -- {len(visited2)} node(s), '
+                  f'{time.perf_counter() - stage2_start:.1f}s total')
+
     if stage2_allow_real_observables:
         print(f'nested MDE (Stage 2): real-observable recursion terminations -- '
               f'{stage2_budget_bound} budget-bound, {stage2_driver_exhausted} driver-exhausted',
@@ -2593,6 +2824,8 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     print(f'nested MDE: {len(graph.nodes)} nodes, {len(edges_df)} edges '
           f'(N={nested_n}, M={nested_m_display}, realized max depth={realized_max_depth})',
           flush=True)
+    _log_progress(progress_log_path,
+                  f'NESTED MDE NETWORK COMPLETE -- {len(graph.nodes)} nodes, {len(edges_df)} edges')
 
     return graph, edges_df, nested_mde_results
 
@@ -2821,7 +3054,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                    data_file=None, data_file_sha256=None, code_fingerprint=None,
                    gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
-                   external_input_mode='real_data'):
+                   external_input_mode='real_data', progress_log_path=None):
     '''Build one network spanning `targets` and their driver candidates, via
     one of two unrelated constructions depending on `mode` -- same
     mode-branch restructuring as simple-mde-gmn.py's own build_network():
@@ -2902,6 +3135,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                 lag_set, stage2_allow_real_observables,
                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
                 code_fingerprint,
+                progress_log_path=progress_log_path,
             )
         graph.graph['self_delay_set'] = sorted(set(lag_set) | {0}, reverse=True)
         partition_network(graph, targets, external_input_mode)
@@ -2948,6 +3182,8 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                                   results_dir, run_cache_dir)
     else:  # mode == 'GMN'
         if cache_hit is None:
+            gmn_construction_start = time.perf_counter()
+            _log_progress(progress_log_path, f'{network_id}: GMN network construction START')
             e_vals, tau_vals = list(e_range), list(tau_range)
             # target_E_tau_rho_grid always scores a TARGETS column's own
             # self-predictability -- always target_metric (continuous),
@@ -3002,6 +3238,10 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                 outputFile        = str(network_file),
                 plotNetwork       = False,
             )
+            _log_progress(
+                progress_log_path,
+                f'{network_id}: GMN network construction END -- '
+                f'{time.perf_counter() - gmn_construction_start:.1f}s total')
         else:
             network_file = results_dir / f'Network_E{ccm_E}_tau{ccm_tau}_CCM_{network_id}.pkl'
 
@@ -3767,7 +4007,8 @@ def proper_predict_nonlinear(dataFrame, columns, target, theta, lib, pred,
 
 
 def retune_theta_for_all_nodes(data_lib, graph, nodes, targets, theta_range, cores,
-                                metric, target_metric, gamma_delta, min_pred_rows=20):
+                                metric, target_metric, gamma_delta, min_pred_rows=20,
+                                progress_log_path=None):
     '''Finds each node's own best theta via proper_predict_nonlinear() (R20,
     docs/review-actions-v1.md) on a 70/30 lib/pred split of that node's own
     generalized embedding. Previously scored via pyEDM.PredictNonlinear's
@@ -3784,8 +4025,12 @@ def retune_theta_for_all_nodes(data_lib, graph, nodes, targets, theta_range, cor
     whenever there's too little data for the split or the sweep itself
     fails (unchanged from before).'''
     best_theta_by_node = {}
+    theta_durations = []
+    _log_progress(progress_log_path, f'theta retuning START -- {len(nodes)} node(s)')
+    theta_stage_start = time.perf_counter()
 
     for node in nodes:
+        node_start = time.perf_counter()
         spec = _embedding_spec_for(graph, node)
         embedded, offset = _generalized_embed(data_lib, spec)
         embedded.insert(0, 'Time', np.arange(len(embedded)))
@@ -3796,6 +4041,7 @@ def retune_theta_for_all_nodes(data_lib, graph, nodes, targets, theta_range, cor
         n_pred = n_emb - split
         if n_pred < min_pred_rows:
             best_theta_by_node[node] = 3
+            theta_durations.append(time.perf_counter() - node_start)
             continue
 
         lib_range = f'1 {split}'
@@ -3811,7 +4057,16 @@ def retune_theta_for_all_nodes(data_lib, graph, nodes, targets, theta_range, cor
             best_theta_by_node[node] = float(pn.loc[pn['score'].idxmax(), 'theta'])
         except Exception:
             best_theta_by_node[node] = 3
+        node_duration = time.perf_counter() - node_start
+        theta_durations.append(node_duration)
+        eta = _format_eta(theta_durations, len(nodes) - len(theta_durations))
+        _log_progress(progress_log_path,
+                      f'theta node END -- {node} duration={node_duration:.1f}s '
+                      f'theta={best_theta_by_node[node]}{eta}')
 
+    _log_progress(progress_log_path,
+                  f'theta retuning END -- {len(nodes)} node(s), '
+                  f'{time.perf_counter() - theta_stage_start:.1f}s total')
     return best_theta_by_node
 
 
@@ -3863,7 +4118,7 @@ def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range,
                       cores, metric, target_metric, gamma_delta,
                       generate_length=None, reuse_best_params=False, prev_runs_dir=None,
                       run_cache_dir=None, fingerprints=None, exclusion_radius=0,
-                      generate_validation_start=None):
+                      generate_validation_start=None, progress_log_path=None):
     '''Retunes each network's per-node theta once, then scores the result
     with a single Generate() call -- ported from simple-mde-gmn.py. E and
     each driver's delay are no longer search parameters at all: for
@@ -3899,6 +4154,7 @@ def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range,
         best_node_theta = retune_theta_for_all_nodes(
             data_after_mde_lib, graph, all_nodes, net_result['targets'], theta_range, cores,
             metric, target_metric, gamma_delta,
+            progress_log_path=progress_log_path,
         )
 
         try:
@@ -3953,7 +4209,8 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
                           results_dir, cores, generate_length, start_offsets,
                           target_metric, gamma_delta, exclusion_radius=0,
                           reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
-                          fingerprints=None, generate_validation_start=None):
+                          fingerprints=None, generate_validation_start=None,
+                          progress_log_path=None):
     '''Finds, per network, which row Generate() should start free-running
     from to best match the real held-out data -- ported from
     simple-mde-gmn.py, scored via the same TSLS-aware evaluate_smap_candidate()
@@ -4030,6 +4287,9 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
                 pickle.dump({'start_offsets': start_offsets,
                              'generate_length': generate_length, 'scores': scores}, f)
             print(f'{network_id}: start offset {offset:5d} (row {generate_start}) score={score:.4f}', flush=True)
+            _log_progress(progress_log_path,
+                          f'{network_id}: generate-start offset {offset} done '
+                          f'({len(scores)}/{len(start_offsets)}), score={score:.4f}')
 
         valid_offsets = [o for o in start_offsets if not np.isnan(scores.get(o, np.nan))]
         best_offset = max(valid_offsets, key=lambda o: scores[o]) if valid_offsets else start_offsets[0]
@@ -4070,7 +4330,8 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
 def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, prediction_length,
                             results_dir, cores, metric, target_metric, gamma_delta,
                             generate_length=None, generate_starts=None,
-                            exclusion_radius=0, generate_validation_start=None):
+                            exclusion_radius=0, generate_validation_start=None,
+                            progress_log_path=None):
     '''Reruns Generate() at the winning per-node theta found by
     run_theta_search(), and the winning start row found by
     sweep_generate_start(). Ported from simple-mde-gmn.py -- try/except-
@@ -4096,6 +4357,8 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
         node_theta = theta_search_results[network_id]['best_node_theta']
         generate_start = generate_starts[network_id] if generate_starts else generate_validation_start
 
+        generate_rebuild_start = time.perf_counter()
+        _log_progress(progress_log_path, f'{network_id}: FINAL Generate() rebuild START')
         try:
             config_file = build_gmn_config(
                 net_result, prediction_start, prediction_length, results_dir,
@@ -4108,7 +4371,14 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
         except Exception as exc:
             print(f'{network_id}: FINAL Generate() rebuild FAILED: {exc!r} -- '
                   f'skipping this network (no plots/fidelity/output for it)', flush=True)
+            _log_progress(
+                progress_log_path,
+                f'{network_id}: FINAL Generate() rebuild END -- FAILED '
+                f'{time.perf_counter() - generate_rebuild_start:.1f}s: {exc!r}')
             continue
+        _log_progress(progress_log_path,
+                      f'{network_id}: FINAL Generate() rebuild END -- '
+                      f'{time.perf_counter() - generate_rebuild_start:.1f}s')
 
         run['G'] = G
         run['best_node_theta'] = node_theta
@@ -4649,6 +4919,17 @@ def target_groups_for_mode(targets, gmn_mode):
 def main():
     cfg = load_config()
 
+    # Progress-monitoring log (see HEARTBEAT_SECONDS/_log_progress()'s own
+    # docstrings): cfg['RESULTS_DIR'] is already on /flash for the whole
+    # run's duration (TSLS_MDE_GMN_RESULTS_DIR -> $OUT_DIR in the sbatch
+    # script, archived to bucket only at job end), so this needs no new
+    # path plumbing. Opened in truncate mode -- each job already gets its
+    # own fresh RESULTS_DIR, so there is no earlier content to preserve.
+    progress_log_path = cfg['RESULTS_DIR'] / 'progress.log'
+    open(progress_log_path, 'w').close()
+    pipeline_start = time.perf_counter()
+    _log_progress(progress_log_path, 'PIPELINE START')
+
     df_raw = pd.read_csv(cfg['DATA_DIR'] / cfg['DATA_FILE'])
     print('Raw data shape:', df_raw.shape, flush=True)
 
@@ -4760,6 +5041,8 @@ def main():
             # working completely unchanged.
             candidate_pool = [c for c in filtered_pools[tuple(cfg['TARGETS'])] if c not in cfg['TARGETS']]
             effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
+            depth0_start = time.perf_counter()
+            _log_progress(progress_log_path, f"depth0 joint MDE START -- targets={cfg['TARGETS']}")
             try:
                 shared_result = run_multi_mde_for_targets(
                     cfg['TARGETS'], df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
@@ -4786,12 +5069,17 @@ def main():
                 print(f"{cfg['TARGETS']}: joint (multi-target) MDE call FAILED: {exc!r} -- "
                       f'treating as a dead-end (zero drivers selected for every target)', flush=True)
                 shared_result = _failed_multi_mde_result(cfg['TARGETS'])
+            _log_progress(progress_log_path,
+                          f'depth0 joint MDE END -- {time.perf_counter() - depth0_start:.1f}s '
+                          f"selected={shared_result['SELECTED_COLUMNS']}")
             for target in cfg['TARGETS']:
                 mde_results[target] = {**shared_result, 'target': target}
         else:
             for target in cfg['TARGETS']:
                 candidate_pool = [c for c in filtered_pools[(target,)] if c != target]
                 effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
+                depth0_start = time.perf_counter()
+                _log_progress(progress_log_path, f'depth0 MDE START -- {target}')
                 try:
                     mde_results[target] = run_mde_for_target(
                         target, df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
@@ -4828,6 +5116,9 @@ def main():
                     print(f'{target}: top-level MDE call FAILED: {exc!r} -- treating as a dead-end '
                           f'(zero drivers selected for this target)', flush=True)
                     mde_results[target] = _failed_mde_result(target)
+                _log_progress(progress_log_path,
+                              f'depth0 MDE END -- {target} {time.perf_counter() - depth0_start:.1f}s '
+                              f"selected={mde_results[target]['SELECTED_COLUMNS']}")
 
         if cfg['RUN_MDE_DIAGNOSTICS']:
             plot_mde_rho_vs_dimension(
@@ -4870,6 +5161,7 @@ def main():
             gmn_mode=cfg['GMN_MODE'], multi_mde_e=cfg['MULTI_MDE_E'],
             multi_mde_target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
             external_input_mode=cfg['EXTERNAL_INPUT_MODE'],
+            progress_log_path=progress_log_path,
         )
         draw_colored_network(
             net_result, cfg['TARGET_COLORS'],
@@ -4897,6 +5189,7 @@ def main():
         run_cache_dir=cfg['RUN_CACHE_DIR'],
         fingerprints=fingerprints, exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
         generate_validation_start=cfg['GENERATE_VALIDATION_START'],
+        progress_log_path=progress_log_path,
     )
 
     generate_starts = sweep_generate_start(
@@ -4907,6 +5200,7 @@ def main():
         reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
         run_cache_dir=cfg['RUN_CACHE_DIR'], fingerprints=fingerprints,
         generate_validation_start=cfg['GENERATE_VALIDATION_START'],
+        progress_log_path=progress_log_path,
     )
 
     rebuild_at_best_params(
@@ -4915,6 +5209,7 @@ def main():
         generate_length=cfg['GENERATE_LENGTH'], generate_starts=generate_starts,
         exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
         generate_validation_start=cfg['GENERATE_VALIDATION_START'],
+        progress_log_path=progress_log_path,
     )
 
     for network_id, run in gmn_runs.items():
@@ -4926,6 +5221,8 @@ def main():
                   f'Forecast()/fidelity/output for this network', flush=True)
             continue
 
+        forecast_start = time.perf_counter()
+        _log_progress(progress_log_path, f'{network_id}: Forecast() diagnostic START')
         Gf, forecast_rho = run_forecast_diagnostic(
             run['net_result'], run['G'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
             run['best_node_theta'],
@@ -4937,6 +5234,9 @@ def main():
             plot_range_mode=cfg['FORECAST_PLOT_RANGE'],
             generate_validation_start=cfg['GENERATE_VALIDATION_START'], total_rows=len(df),
         )
+        _log_progress(progress_log_path,
+                      f'{network_id}: Forecast() diagnostic END -- '
+                      f'{time.perf_counter() - forecast_start:.1f}s')
         run['Gf'] = Gf
         run['forecast_rho'] = forecast_rho
         if Gf is None:
@@ -4958,22 +5258,33 @@ def main():
 
     # ---- MDE-only diagnostics -------------------------------------------
     if cfg['MODE'] == 'MDE-GMN' and cfg['RUN_MDE_DIAGNOSTICS']:
+        _log_progress(progress_log_path, 'R7 diagnostics START (tp-vs-rho sweep, E/tau grid)')
+        r7_start = time.perf_counter()
         run_tp_vs_rho_sweep(mde_results, cfg['TARGETS'], cfg['MAX_TP'], cfg['TARGET_COLORS'],
                              cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'])
         run_univariate_e_tau_grid(mde_results, cfg['TARGETS'], cfg['E_RANGE'], cfg['TAU_RANGE'],
                                    cfg['GRID_RHO_THRESHOLD'], cfg['RESULTS_DIR'],
                                    cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'])
+        _log_progress(progress_log_path,
+                      f'R7 diagnostics END -- {time.perf_counter() - r7_start:.1f}s')
         # R19 (docs/review-actions-v1.md): per constructed network -- needs
         # net_result['network']['Graph'] for D (direct-driver count), which
         # mde_results (depth-0-only) doesn't carry.
         for network_id, run in gmn_runs.items():
+            r19_start = time.perf_counter()
+            _log_progress(progress_log_path, f'{network_id}: R19 run_mde_evaluate START')
             run_mde_evaluate(run['net_result'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
                               cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
                               exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
+            _log_progress(progress_log_path,
+                          f'{network_id}: R19 run_mde_evaluate END -- '
+                          f'{time.perf_counter() - r19_start:.1f}s')
     else:
         print(f"MODE={cfg['MODE']!r} / RUN_MDE_DIAGNOSTICS={cfg['RUN_MDE_DIAGNOSTICS']}: "
               f"skipping MDE-only diagnostics.", flush=True)
 
+    _log_progress(progress_log_path,
+                  f'PIPELINE COMPLETE -- {time.perf_counter() - pipeline_start:.1f}s total')
     print('Pipeline complete.', flush=True)
 
 

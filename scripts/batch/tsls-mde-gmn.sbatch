@@ -540,7 +540,33 @@ mkdir -p "$OUTPUT_ARCHIVE_DIR"
 # archive. Same mechanism as simple-mde-gmn.sbatch's own `cleanup` trap.
 SLURM_OUT="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.out"
 SLURM_ERR="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.err"
+# How the job actually ended, appended to the progress-monitoring log
+# (RESULTS_DIR/progress.log -- see tsls-mde-gmn.py's own _log_progress()
+# docstring) so a crash/timeout/OOM has an explicit, unambiguous final
+# line instead of the file just going silent. This is the one piece of
+# that log that CANNOT be written by Python itself: a hard kill means the
+# Python process never gets to write anything of its own. `$?` alone
+# (PY_STATUS below) can't distinguish OOM from a plain crash from a
+# timeout, so this queries sacct -- SLURM's own authoritative record --
+# with a couple of retries since its accounting can lag a few seconds
+# right at job-end. Honest limitation, not hidden: a true instantaneous
+# whole-cgroup SIGKILL (rare) can prevent this trap itself from running --
+# `sacct -j <job_id>` run separately, after the fact, is the authoritative
+# fallback in that case regardless of what this managed to write.
+log_final_outcome() {
+    local progress_log="$OUT_DIR/progress.log"
+    [ -f "$progress_log" ] || return 0
+    local slurm_state=""
+    for _ in 1 2 3; do
+        slurm_state="$(sacct -j "$SLURM_JOB_ID" --format=State -P -n 2>/dev/null | head -1 | tr -d ' ')"
+        [ -n "$slurm_state" ] && break
+        sleep 2
+    done
+    echo "$(date -Iseconds) JOB ENDED: PY_STATUS=${PY_STATUS:-unset} SLURM_STATE=${slurm_state:-unknown (sacct had no record yet -- check \`sacct -j $SLURM_JOB_ID\` manually)}" \
+        >> "$progress_log"
+}
 cleanup() {
+    log_final_outcome
     [ -f "$SLURM_OUT" ] && mv -f "$SLURM_OUT" "$OUT_DIR"/
     [ -f "$SLURM_ERR" ] && mv -f "$SLURM_ERR" "$OUT_DIR"/
     if [ "${PY_STATUS:-1}" = "0" ] && [ -d "$OUT_DIR" ]; then
