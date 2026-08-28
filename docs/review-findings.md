@@ -2192,3 +2192,315 @@ confirmed by reading that function this task — folded into
 `build_code_fingerprint()`) — a cache built before this change will not
 be silently reused, since the helper file's own bytes changed.
 
+---
+
+## Depth>=1 metric-routing bug — found while verifying R22, not one of the
+22 numbered tasks
+
+**Status:** Fix implemented and tested; **held on branch
+`metric-routing-depth-ge1-fix`, not merged to `main`**, pending a decision
+on a severe recalibration problem it exposes. Do not read this as R22's
+own work — R22 itself has not resumed (see its own section below for why).
+
+### How this was found
+
+While producing R22's own required "before/after on Run A" measurement
+for the historical `E=3` static → `E=0` auto-select change (R4's own
+finding), reproducing a real Stage-2-style call
+(`target='CA1_1_tsls'`, a neuron, `metric='f1'`) required tracing exactly
+which metric `run_mde_for_target()`'s own ranking stage actually used.
+The verbose log showed `(correlation=0.9997)` for a neuron's own
+ranking-stage acceptance line — the wrong metric name printed for a node
+that should score via `'f1'`.
+
+### The bug
+
+Read `build_nested_mde_network()`'s Stage 1 and Stage 2
+`executor.submit(run_mde_for_target, ...)` call sites in full: both pass
+the closed-over `metric`/`target_metric` (`cfg['METRIC']`/
+`cfg['TARGET_METRIC']`) **positionally, unconditionally, for every
+node** — never resolved per-node via `_metric_for()`. Inside
+`run_mde_for_target()`, `target_metric` scores the ranking stage and the
+E-auto-select sweep (predictions of `target`); `metric` scores only the
+CCM gate (predictions of the candidate). That split is correct exactly
+once: the depth-0 seed (`main()`'s own `for target in cfg['TARGETS']:`
+loop), where `target` is always a real behavioral TARGETS column. At
+depth >= 1 (Stage 1 discovering real-observable drivers; all of Stage 2),
+`node`/`target` is virtually always a **neuron**, and `_metric_for()`'s
+own documented rule says a neuron should score via `metric` ('f1'), not
+`target_metric` ('correlation') — a rule this call site never consulted.
+Confirmed via `git blame`/`JOB_LOG.md` that no earlier fix or design note
+addresses this; it is not deliberate.
+
+**Net effect, this whole session (and presumably before it):** every
+discovered neuron driver's own ranking-stage acceptance and per-candidate
+E-auto-select in Stage 1/Stage 2 has been scored via Pearson correlation
+on a TSLS (time-since-last-spike, sawtooth) series, not the TSLS-aware
+`f1` event-timing metric `_metric_for()` says it should use. Only the CCM
+convergence gate (`ccmMetric=metric`) was already correct — it always
+scores a *candidate*, never `node` itself, and no candidate here is ever
+a target, so it was never affected.
+
+### Fix
+
+At both Stage 1's and Stage 2's `executor.submit(run_mde_for_target,
+...)` call sites, replaced the raw `target_metric` positional argument
+with `_metric_for(node, targets, metric, target_metric)`. No change
+needed to `run_mde_for_target()` or `build_mde_selection_fingerprint()`
+themselves — the resolved value already flows through both
+automatically: `run_mde_for_target()` forwards whatever `target_metric`
+it receives straight into its own `build_mde_selection_fingerprint(...,
+target_metric, ...)` call, so **A5 is satisfied by construction** — a
+cache built under the old (unresolved, wrong) value has a different
+`target_metric` in its own stored fingerprint and will not be reused
+under the fixed code.
+
+### Test
+
+`tests/test_metric_routing_depth_ge1.py` — a synthetic `T -> A -> B` BFS
+(`T` the only target; `A`/`B` discovered real-observable drivers,
+`STAGE2_ALLOW_REAL_OBSERVABLES=True` so `B` is Stage 2's own recursive
+pick), with a custom fake `run_mde_for_target()` that records the exact
+`(metric, target_metric)` arguments each call received. Asserts a target
+node gets `target_metric == TARGET_METRIC` and every non-target node
+gets `target_metric == METRIC`, and that the CCM-gate `metric` is
+untouched (always `METRIC`) for every node. **Verified the test actually
+discriminates old vs. new code**: ran it against the pre-fix commit
+(`git stash`) — fails exactly as expected
+(`stage1/A: non-target node got target_metric='correlation'`); passes
+against the fix.
+
+### Required recalibration check (before this fix can be considered safe
+to land) — **result: severe, not marginal**
+
+Real data (`J1620210605_epoch_8_freq_40_Hz.csv`, `REGION_CHANNEL_CAP=15`),
+`CCM_WINDOW_ROWS=800`'s own derived ranking-stage window
+(`lib=[1,659]`, `pred=[660,800]` — a **141-row** prediction slice), `f1`
+ranking score for every real candidate against three real neuron targets:
+
+| target | f1 min/median/max | passing `CROSS_MAP_RHO_MIN=0.2` | correlation min/median/max (same window) | correlation passing |
+|---|---|---|---|---|
+| `CA1_1_tsls` | 0.0000 / 0.0000 / 0.0000 | 0/44 | -0.84 / 0.06 / 1.00 | 18/44 |
+| `mPFC_1_tsls` | 0.0000 / 0.0000 / 0.0000 | 0/44 | -0.72 / 0.03 / 0.99 | 17/44 |
+| `OFC_1_tsls` | 0.0000 / 0.0000 / 0.0000 | 0/44 | -0.83 / -0.10 / 1.00 | 8/44 |
+
+**`f1` is exactly `0.0000` for every one of 44 candidates, for all three
+targets** — not "mostly fails," uniformly zero. Traced the cause: counted
+actual TSLS reset events in the 141-row prediction window itself —
+`CA1_1_tsls`: **0**, `mPFC_1_tsls`: **1**, `OFC_1_tsls`: **0**. With 0-1
+true events, `f1` (event-timing precision/recall) is structurally
+degenerate regardless of which candidate is tried — this is not about
+prediction quality, the window is simply too event-sparse.
+
+**Confirmed this is the ranking stage's own problem specifically, not a
+general "141 rows is too few" problem, and not one the CCM gate shares**
+(item 3 of the requested checks): read `proper_ccm()` in full. It never
+receives a `lib`/`pred` split at all — its own prediction indices
+(`idx_fwd`/`idx_rev`) are computed from validity masks over the **entire**
+dataframe passed in (the full 800-row `ccm_df`), and only its `libSizes`
+(the random-subsample *library* size, not the prediction set) are
+percentages of that same 800. So the CCM gate's own earlier-reported
+"`f1` works fine" result (R22's own E-engine-swap measurement, above) is
+real but doesn't generalize to the ranking stage — that measurement used
+the **pre-fix** code (`target_metric='correlation'` for ranking,
+`ccmMetric='f1'` for the gate only), so it only ever exercised the gate's
+own (already-adequate, ~800-row-wide) `f1` scoring, never the ranking
+stage's own (141-row, degenerate) `f1` scoring. **Correcting my own
+earlier report accordingly** — that measurement is not evidence the fix
+is safe; it measured a different code path than the one this fix changes.
+
+**A quieter, second degeneracy (item 4): E-auto-select silently defaults
+to `E=1`, not visibly.** `proper_embed_dimension`'s own `f1`-vs-`E` sweep
+(same 141-row window) is **completely flat at 0.0000 for every `E` from 1
+to 15**, for every (target, candidate) pair tested — `np.nanargmax` picks
+index 0 (`E=1`) every time. Unlike the ranking-stage rejection (which at
+least visibly rejects every candidate), this failure produces a
+plausible-looking `E=1` with no indication it was never actually
+selected from real signal.
+
+**Root cause is firing-rate heterogeneity, not just window size (item
+5).** Counted real TSLS reset events (~spikes) for all 45 real channels
+in this config, over the full 800-row `ccm_df`:
+
+- **21/45 channels (47%) have zero events in the current 141-row pred
+  window.** Several (`CA1_0_tsls`, `CA1_5_tsls`, `CA1_7_tsls`) have
+  **zero events in the entire 800-row window**.
+- Defining "workable" as >= 20 events (this report's own threshold, not
+  an established convention: with `f1 = 2PR/(P+R)`, fewer than ~20 true
+  events means a single miss or false positive swings the score by >= 5
+  percentage points, too noisy to trust as a selection criterion) — rows
+  needed for 20 events, across all 45 real channels: min **98**, median
+  **1600**, and several channels effectively **never** reach it (rate =
+  0 within the 800-row window sampled).
+- **A single fixed window cannot serve both ends of this distribution.**
+  Even a substantially larger ranking window (say, several hundred rows)
+  would only help the fastest-firing quartile; the slowest channels
+  found in this sample would need thousands of rows or more — a
+  per-node minimum-event check with an explicit skip (rather than a
+  silent `E=1`/all-reject fallback) looks necessary, not just a bigger
+  single number.
+
+**Confirms `correlation` degraded gracefully where `f1` degenerates
+(item 6):** the same 141-row window's `correlation` scores (table above)
+show a healthy, informative spread (18/44, 17/44, 8/44 candidates
+passing `CROSS_MAP_RHO_MIN=0.2`) — this window was **not** already
+marginal for the metric it was actually calibrated against. The problem
+is specific to `f1`'s own event-counting nature, not a generic
+small-sample problem this window already had.
+
+**Connection to the depth-0 metric question, noted not acted on (item
+7):** the mechanism here (TSLS event sparsity making `f1` degenerate) is
+a *different* failure from why `f1` is wrong at depth 0 (see the next
+section) — depth-0's own target (`head_position_x`/`_y`) is not a
+TSLS-converted series at all, so "reset events" don't even apply to it
+conceptually, independent of any window size. The two findings are
+related only in that both concern where `f1` vs. `correlation` is
+appropriate; they don't share a root cause and one doesn't imply a fix
+for the other.
+
+### Proposed decoupling (item 2) — **proposal only, not implemented**
+
+Traced (item 1) that `CCM_WINDOW_ROWS` currently bounds two genuinely
+different things through one shared 800-row `ccm_df`: (a) the
+ranking-stage/E-auto-select `lib`/`pred` split (`_ccm_window`'s own
+`lib_ratio`-derived split of the 800 rows) — plain train/test Simplex
+prediction, no convergence requirement; (b) the CCM gate's own
+`libSizes` sweep (`pLibSizes` percentages of that same 800) — which
+*does* need to stay small, per §18.4/§7.4's own established reasoning
+(R9's own finding: a too-large library flattens genuinely causal pairs'
+convergence curves). Only (b) has a principled reason to stay bounded at
+800; (a) has none — it just needs enough rows (and, per the finding
+above, enough real *events*) for `f1` to be meaningful.
+
+A decoupling would need: `run_mde_for_target()` building a **second,
+independently-sized** window specifically for the `dataFrame`/`lib`/
+`pred` that steps 1-2 (ranking) and 4a (E-select) operate on, while
+`proper_mde`'s own CCM gate (step 4b) continues to derive `libSizes` from
+a *separate*, still-800-row-bounded quantity rather than
+`dataFrame.shape[0]` directly (today, `libSizes = [int(N * p/100) for p
+in pLibSizes]` where `N = dataFrame.shape[0]` — the same dataframe
+`proper_mde` uses for everything; decoupling requires either passing
+`proper_mde` two differently-sized dataframes, or adding an explicit
+`ccm_window_rows`-style cap to `proper_mde` itself so its own `libSizes`
+computation stops depending on the ranking dataframe's own (now larger)
+row count). This does not obviously disturb the §18.12 pre-filter
+ordering fix (a separate, earlier-stage mechanism, R2's own section
+already confirmed unaffected by unrelated changes this session) or the
+leakage guard (`prediction_start`/`prediction_length` stay the external
+boundary either window is built within) — but given the firing-rate
+heterogeneity finding above, **a bigger single ranking window alone would
+not fully resolve this** — the per-node minimum-event-count question
+(item 5) is a separate, likely necessary piece of any real fix. Not
+implemented; this is a design sketch for discussion, not a proposal
+ready to build from directly.
+
+### R9 as the extension vehicle
+
+R9 (`scripts/calibration/r9_ccm_window_e_calibration.py`, already run,
+real results committed) swept `CCM_WINDOW_ROWS`/`CCM_PREFILTER_E` for the
+**CCM pre-filter** (`ccm_prefilter_observables()`) specifically — a
+separate, earlier-stage mechanism from `run_mde_for_target()`'s own
+ranking/E-select/CCM-gate logic, and it never measured event density or
+`f1` at all (its own metric there is the pre-filter's own scoring
+convention). Extending R9's own script to cover this event-density
+question (rather than a new parallel script) looks like the right
+vehicle, per this session's own established preference for reusing
+existing calibration infrastructure — but this has not been started; no
+code changes made beyond the standalone diagnostic scripts used to
+produce the numbers above (not committed, scratch-only).
+
+### Status / what's still pending
+
+No defaults changed (`CROSS_MAP_RHO_MIN`, `EMBED_DIM_RHO_MIN`,
+`CCM_WINDOW_ROWS` all untouched). No Run A before/after run under the
+current window (would very likely show catastrophic node loss rather
+than a modest topology shift, given the event-density finding — decided
+not worth running until the window-sizing question is resolved). The fix
+itself stays on `metric-routing-depth-ge1-fix` (not `main`) pending
+direction on the window-sizing question above. **R22's own sequence is
+on hold**, per its own step 4 ("this changes nested selections, so it
+moves the baseline R22's bit-identical test compares against... land this
+fix first, re-establish the Run A baseline, then resume R22") — since the
+fix isn't landed yet, R22 has not resumed.
+
+---
+
+## Open question: is `correlation` the right depth-0 metric? — documentation-pass note only, no code change
+
+**Status:** Recorded for the documentation rewrite pass. No code change
+authorized or made. There is no established optimum here; `correlation`
+is retained at depth 0 as the status quo pending a real-data comparison
+against `mae`, not because it has been validated as correct.
+
+### The pushback, and why it doesn't survive as stated
+
+The reviewer pushback under consideration: since the drivers being fed
+into depth-0's own ranking/E-select are TSLS sawtooths whose only real
+information content is at the spike events, maybe treating this as
+ordinary continuous prediction (`correlation`) is wrong even when the
+*target* is a continuous trace like `head_position`.
+
+**This doesn't survive as stated, because it conflates what's being
+scored with what's driving the prediction.** `_score()` (and every
+metric it dispatches to) scores **predictions of the target** —
+`Observations` vs. `Predictions` of whatever `target` is — never the
+input coordinates' own shape. At depth 0, `target` is `head_position_x`/
+`_y`, a genuine continuous trace; `f1` would decode *both* the observed
+and predicted position series into "reset events" (via
+`infer_near_zero_threshold_from_true_tsls`) and compare event timings —
+but a continuous position trace has no real "reset events" in it at all;
+whatever `f1` finds there are artifacts of running a TSLS-specific
+decoder on a non-TSLS signal, not a feature of the behavior being
+predicted.
+
+**Empirically:** a synthetic prediction offset by a fixed 15 units from
+the true position scores `f1 = 0.97`; a prediction with the same *shape*
+but half the true range scores `f1 = 1.0000` — both obviously
+behaviorally useless (wrong place; wrong range), and both invisible to
+`f1`, because neither perturbation moves the (already-meaningless) event
+timings `f1` is comparing.
+
+**Important distinction the pushback also missed:** the TSLS ramps are
+*not* the same kind of "signal" in both roles. §2.1's own rationale for
+using TSLS as an **input/predictor coordinate** is that the sawtooth
+supplies real local geometry (slope, curvature, recency) for delay
+embedding — that reasoning is about TSLS columns as *predictors*, and it
+holds. It says nothing about TSLS-style decoding being appropriate when
+**scoring a prediction of a continuous target** — a completely different
+role. Neuron *targets* (Stage 1/Stage 2 nodes) still correctly use `f1`,
+because there the *predicted quantity itself* is a TSLS series with real
+events to compare.
+
+### What the pushback got right
+
+`correlation` is a weak discriminator on smooth, autocorrelated position
+traces. Empirically (synthetic tests), `correlation` stayed pinned at
+`1.0000` across noise levels that visibly degraded the prediction —
+shared slow drift dominates and swamps real differences. `correlation`
+is also scale- and offset-invariant by construction, so it **also**
+scores both the fixed-offset and halved-range synthetic cases above at
+`1.0000` — the same blindness `f1` has, for a different structural
+reason. So the current depth-0 metric is not obviously adequate either;
+it is simply not *wrong* in the specific way `f1` would be.
+
+### What is actually untested
+
+`'mae'` is already implemented in `_score()`, and this pipeline's own
+`TARGET_METRIC` docstring already frames the allowed values as
+"correlation/mae, never event-based." `mae` penalizes both offset and
+scale error — exactly what both `correlation` and `f1` were just shown to
+miss. **Nobody has compared `correlation` against `mae` on real depth-0
+data.** That comparison is the concrete next step if this question is
+ever reopened — not implemented here, no default changed.
+
+### A third issue, noted, not resolved
+
+`TARGETS` is a 2D position (`x` and `y`). Any per-axis scalar metric
+(`correlation`, `mae`, or `f1`) scores the two axes completely
+independently and so cannot see trajectory *geometry* at all (e.g., a
+prediction that's rotated 90 degrees around the true path could still
+score identically per-axis). Related to R19's own combined-mode panel-1
+question (the spatial `(x, y)` trajectory plot, added specifically
+because a per-axis time series doesn't show this). Recorded here for the
+documentation pass; no action taken.
+
