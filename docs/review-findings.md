@@ -2850,3 +2850,201 @@ this commit. This is the concrete cost of the combined commit, not just a
 process footnote; recorded here so it's visible to whoever runs a bisect
 later, not only to whoever reads this section first.
 
+---
+
+## Diffusion-map crash and hang in `run_mde_evaluate()` — found running the
+post-window-sizing smoke test, not one of the 22 numbered tasks
+
+**Status:** both failure modes confirmed at real scale; root cause of the
+*crash* isolated precisely; root cause of the *hang* explicitly **not**
+diagnosed (out of scope for this pass, per direct instruction). A
+dedicated `RUN_MDE_EVALUATE` toggle (default `false`) plus an exception
+guard and a wall-clock bound now protect against both symptoms without
+requiring the mechanism to be understood first.
+
+### How this was found
+
+The first real cluster run since the metric-routing/window-sizing/CCM-gate
+fixes and the progress-monitoring log all landed (job 40143104,
+`REGION_CHANNEL_CAP=3/MDE_D=2/NESTED_M=2`) completed Stage 1, Stage 2,
+theta retuning, the final `Generate()` rebuild, `Forecast()`, and R7's own
+two diagnostics cleanly — then crashed with
+`ValueError: Input X contains infinity or a value too large for
+dtype('float64')` inside R19's `run_mde_evaluate()`, specifically at
+`LinearRegression().fit(dmap_lib_proj, target_lib).predict(dmap_pred_proj)`
+— the diffusion-map baseline's own regression step. A second independent
+job (40143067) hit the identical crash at the identical line. The
+progress-monitoring log made the crash site immediately obvious (nothing
+logged after `head_position_x: R19 run_mde_evaluate START`) without needing
+to read the traceback first.
+
+### The crash: root cause isolated
+
+Reproduced in isolation using the real crashed job's own saved
+`data_after_mde_head_position_x.csv` (driver `CA1_0_tsls`, D=1).
+**Crashes identically at 800 rows (the old `CCM_WINDOW_ROWS` scale) in
+1.8s** — this directly refutes a point-count/window-size explanation
+before it could become an accepted hypothesis: scale is not the cause.
+(Structurally, `run_mde_evaluate()`'s own `pool_lib` was never tied to
+`CCM_WINDOW_ROWS` or the per-node window-sizing redesign in the first
+place — it's sliced from `prediction_start`, a fixed,
+`REGION_CHANNEL_CAP`-independent quantity, so "cap=3 vs cap=15" could not
+have been the variable regardless.)
+
+Instrumented `row_sum` directly (monkeypatched pydiffmap's own
+`_left_normalize`, `diffusion_map.py:136-138`): at 800 rows, the
+**training** kernel's `row_sum` has zero zeros (healthy, min=1.324) — the
+failure is entirely in the **transform** step on held-out points, where
+**53% of the 6,718 held-out rows have `row_sum` exactly 0**. Root cause,
+confirmed by comparing value ranges directly: this channel's TSLS values
+run measurably higher in the held-out window than the library window ever
+saw (lib max 27.4 vs. pred max 39.4 at the 800-row split) — **14.2% of
+held-out points exceed the library's own observed range entirely**, so no
+k-nearest-neighbor kernel similarity above float underflow exists for
+them, at any reasonable epsilon (confirmed `bgh_generous` — already the
+*more* generous of pydiffmap's two automatic-epsilon variants — does not
+avoid this; widening epsilon further would only trade underflow-to-zero
+for a bandwidth too large to reflect local structure at all, since the
+failing points are outside the fitted density entirely, not merely
+borderline). Checked all 45 real channels: **9/45 (20%) show this same
+"held-out exceeds library range" pattern** — a real, non-rare property of
+this dataset (channel-level firing-rate non-stationarity across the
+recording), not a one-off unlucky column. Near-duplicate rows are real too
+(75–99% across all 45 channels, regardless of whether that channel
+crashes) but don't correlate with which channels actually fail — a
+distinct, non-causal property of TSLS data, not the crash mechanism
+itself.
+
+### The hang: confirmed, mechanism NOT diagnosed (future task)
+
+Verifying the exception-guard fix (Priority 1 of this investigation)
+against the real crashing data at its own real ~31,000-row scale did not
+crash — it **ran for 74+ minutes of CPU time with no completion, no
+crash, and no output at all**, before being killed manually. This is a
+qualitatively different, more severe symptom than the fast crash: a
+`try/except` only protects against something that actually raises, and
+this never did.
+
+**The mechanism for the hang is explicitly not diagnosed** — out of scope
+for this pass, per direct instruction, and flagged here for whoever picks
+it up: **the duplicate-row structure suspected as a contributing factor is
+inherent to TSLS by construction** (long inter-spike ramps are locally
+near-identical), not an artifact of this specific dataset or
+`REGION_CHANNEL_CAP` — so it could plausibly affect other KD-tree- or
+kernel-based computations elsewhere that operate on real TSLS series,
+not only `pydiffmap`'s own diffusion map. This is a real, open question,
+not a closed one. Whether the 1.8s crash and the 74+-minute hang are one
+underlying pathology surfacing differently depending on exactly where the
+duplicate structure sends the KD-tree/kernel computation, or two distinct
+issues, is itself unresolved.
+
+### R7 audit: the "already fully guarded" premise was wrong
+
+Investigating whether `run_mde_evaluate()` was uniquely unguarded (per
+§11's own framing: every comparable stage — §4.3's per-node exception
+guard, §10.1's log-and-skip on Generate() divergence, R7's own per-target
+skip path — already fails gracefully) found the premise did not fully
+hold: **`run_tp_vs_rho_sweep()`'s own `proper_predict_interval()` call is
+guarded only by `if not cols: skip`**, and **`run_univariate_e_tau_grid()`'s
+own per-cell `proper_simplex()` call is guarded only by `if mde_df is
+None: skip`** — neither has an exception guard around the computation
+itself. A target with selected columns (or a real `mde_df`) whose actual
+call raised for some other reason would still crash the whole function
+today. Reported, not fixed — this was outside the batch actually
+authorized (R19's own baselines specifically), and per Part A a wrong
+premise gets reported rather than silently absorbed into "the same fix."
+
+### Fix: a dedicated toggle, plus a guard, plus a wall-clock bound
+
+**`RUN_MDE_EVALUATE`** (default `false`), deliberately separate from
+`RUN_MDE_DIAGNOSTICS` — R7's own two diagnostics (unaffected by either
+failure mode, confirmed above) keep running under the existing knob
+regardless. `RUN_MDE_EVALUATE` gates only the R19 loop in `main()`.
+Exposed in both sbatch scripts' own `MODIFIABLE PARAMETERS` block, per
+explicit instruction, for naming consistency — but only actually wired
+into `tsls-mde-gmn.py`; `simple-mde-gmn.py`'s own `run_mde_evaluate()` is a
+different implementation (`dx.Evaluate`-based, on 1 Hz raw spike-count
+data, already gated by its own `RUN_MDE_DIAGNOSTICS`) that has not been
+confirmed to share this finding's own suspected mechanism (raw counts
+don't have TSLS's own long-ramp duplicate structure) — its export in
+`simple-mde-gmn.sbatch` is inert until/unless someone wires it in, not
+evidence that pipeline has the same risk.
+
+When off, logged exactly once per run (`print` and the progress-monitoring
+log both), unconditionally: *"R19 run_mde_evaluate SKIPPED by
+configuration..."* — a silent absence is exactly how the §18.6 swallowed
+exception went unnoticed for as long as it did; this doesn't repeat that.
+
+**The exception guard** (independent per baseline, PCA and diffusion-map
+each get their own): a failure is logged with the exception text and the
+target(s) it occurred on, and only that baseline's own numbers/plot panel
+are skipped — MDE's own reconstruction is deliberately left unguarded
+(it's the causal claim itself, per §11's own linknote, not optional
+tooling) and any other baseline continues unaffected.
+
+**The wall-clock bound, `MDE_EVALUATE_BASELINE_TIMEOUT_SECONDS = 300`**:
+each baseline now runs in a genuinely separate `multiprocessing.Process`
+(fork), force-killed (`terminate()`, then `kill()` if needed) if it
+exceeds the bound. **A `try/except` plus a signal-based "soft" timeout
+would not have been enough** — the hang can occur inside compiled
+KD-tree/BLAS calls that don't return control to the Python interpreter for
+a long stretch, which is exactly when a signal fires but its handler can't
+actually run until the call returns on its own. Only an OS-level `SIGKILL`
+of a separate process reclaims control regardless of what the computation
+is doing internally. Cost: one process fork per baseline call (cheap under
+`fork` — no re-import, copy-on-write memory, real overhead is
+milliseconds) plus pickling the modest-sized (D-column) result back
+through a `Queue`; the real cost is that a hard kill on timeout discards
+whatever progress a slow-but-would-eventually-succeed computation had
+made, converting it into a skip — a deliberate trade for a bounded worst
+case over an unbounded one. 300s is not calibrated against a known-good
+completion time (no successful fit has yet been observed to time at real
+~31,000-row scale) — chosen as generous headroom over the 1.8s a genuine
+crash takes to surface, while still bounding the worst case to a
+tolerable, one-time-per-network cost.
+
+### Verified
+
+`tests/test_r19_mde_evaluate.py` (the existing R19 test, calling
+`run_mde_evaluate()` directly, unaffected by the `main()`-level toggle)
+produces **bit-identical output to the pre-change baseline**
+(`PCA CAE=8.85`, `D-Map CAE=14.53`, same correlations) — the subprocess
+refactor preserves correctness exactly on the healthy path, not just
+"doesn't crash." Full test suite, `py_compile`, `bash -n` on both sbatch
+scripts all pass. **Real cluster confirmation: done.** After a brief,
+unrelated `/bucket` outage recurrence on 2026-08-30
+(`docs/bucket-outage-2026-08-30.md`) cleared, job 40385630 (same smoke
+configuration, `RUN_MDE_EVALUATE=false`) ran the full pipeline —
+depth-0 seed, Stage 1, Stage 2, theta retuning for both networks, the
+`RUN_MDE_EVALUATE=false` skip notice logged exactly once as designed —
+and reached `PIPELINE COMPLETE -- 1089.8s total`. This is the first
+confirmed clean end-to-end run since the window-sizing, metric-routing,
+and progress-monitoring changes all landed. See `JOB_LOG.md`'s own
+entry for this job for the full plain-language summary, including one
+incidental finding (the sbatch trap's `sacct` retry-window gap, already
+flagged above, caught live: this job's own final line read
+`SLURM_STATE=RUNNING` for an already-successfully-exited job).
+
+### Flag for the documentation pass
+
+- Both failure modes are now confirmed at real scale: the 1.8s crash at
+  800 rows and the 74+-minute hang at ~31,000 rows — record both, with
+  the reading that they may be one underlying pathology surfacing
+  differently depending on where the duplicate-row structure sends the
+  KD-tree/kernel computation, not necessarily two separate bugs.
+- The mechanism for the *hang* specifically is not diagnosed. TSLS's own
+  duplicate-row structure (long inter-spike ramps, locally near-identical
+  by construction) is suspected but unconfirmed, and — because it's
+  intrinsic to TSLS itself, not to this dataset or `REGION_CHANNEL_CAP` —
+  could plausibly affect other KD-tree- or kernel-based computations on
+  TSLS series elsewhere in this codebase. The toggle prevents the
+  symptom; it does not close the question. Diagnosing it is its own,
+  separate future task.
+- `RUN_MDE_EVALUATE` now defaults to `false`, so §19's "cannot compare
+  MDE's selection against an unsupervised baseline" gap is **wider than
+  it was**, not narrower — R19 existed and worked (on the toy/reference
+  data it was validated against) before this finding; the documentation
+  pass should reflect that this capability now exists in code but is off
+  by default pending the hang's own diagnosis, not that it was never
+  built.
+

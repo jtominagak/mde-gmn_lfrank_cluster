@@ -5,6 +5,942 @@ submissions (see scripts/batch/submit.sh), newest entry first.
 
 <!-- new entries inserted below this line -->
 
+## Job 40385630
+
+Generated: 2026-08-30T23:50:22+09:00
+
+Git commit at submission: `93e7f3e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40385555**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+### Plain-language summary
+
+Attempt 4/48 of the automated `/bucket` outage retry loop (see
+`docs/bucket-outage-2026-08-30.md`) — the outage had cleared by this
+attempt, so this job actually ran instead of failing at the bucket
+`mkdir` step like attempts 1-3. Same smoke configuration as its
+predecessors (`REGION_CHANNEL_CAP=3`/`MDE_D=2`/`NESTED_M=2`,
+`RUN_MDE_EVALUATE=false`), submitted specifically to confirm that
+turning R19's diffusion-map baseline off by default (see
+`docs/review-findings.md`'s "Diffusion-map crash and hang" section)
+lets the pipeline reach a clean finish.
+
+**Result: success.** `progress.log` shows the run reaching every
+previously-fatal step cleanly — depth-0 seed, Stage 1, Stage 2, theta
+retuning for both networks, the `RUN_MDE_EVALUATE=false` skip notice
+logged as designed — and finishing with `PIPELINE COMPLETE -- 1089.8s
+total`. This is the first confirmed clean end-to-end run since the
+window-sizing, metric-routing, and progress-monitoring changes landed.
+One incidental finding: the sbatch trap's own final line reads
+`JOB ENDED: PY_STATUS=0 SLURM_STATE=RUNNING` — `sacct` had not yet
+caught up to the job's real (successful) exit within the trap's
+existing retry window, a live real-world instance of the retry-window
+gap already flagged in the progress-monitoring documentation.
+
+---
+
+
+## Job 40385555
+
+Generated: 2026-08-30T23:35:06+09:00
+
+Git commit at submission: `93e7f3e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40385481**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40385481
+
+Generated: 2026-08-30T23:19:51+09:00
+
+Git commit at submission: `93e7f3e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40385413**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40385413
+
+Generated: 2026-08-30T23:04:36+09:00
+
+Git commit at submission: `93e7f3e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40385408**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40385408
+
+Generated: 2026-08-30T23:03:47+09:00
+
+Git commit at submission: `93e7f3e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40385403**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40385403
+
+Generated: 2026-08-30T23:02:54+09:00
+
+Git commit at submission: `93e7f3e` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40143104**
+
+### Plain-language summary
+
+**Purpose: confirm the smoke configuration reaches "Pipeline complete" with
+`RUN_MDE_EVALUATE=false`**, after job_40143104 crashed inside R19's
+diffusion-map baseline (`run_mde_evaluate()`'s PCA/diffusion-map comparison)
+and a follow-up isolated reproduction found that same baseline can also hang
+indefinitely (74+ CPU-minutes, no completion, at real ~31,000-row scale) --
+see `docs/review-findings.md`'s "Diffusion-map crash and hang in
+`run_mde_evaluate()`" section for the full investigation.
+
+**What's new since job_40143104** (uncommitted, not yet on a named branch):
+a new `RUN_MDE_EVALUATE` toggle (default `false`, exposed in both sbatch
+scripts, wired into `tsls-mde-gmn.py` only) gates R19's own diagnostic
+separately from `RUN_MDE_DIAGNOSTICS` -- R7's own two diagnostics
+(`run_tp_vs_rho_sweep`/`run_univariate_e_tau_grid`) are unaffected and still
+run. `run_mde_evaluate()` itself now runs its PCA/diffusion-map baselines in
+a genuinely separate process each, killed if either exceeds a 300s wall-clock
+bound (`MDE_EVALUATE_BASELINE_TIMEOUT_SECONDS`) -- a subprocess-based bound
+rather than a signal-based "soft" timeout, since the hang can occur inside
+compiled KD-tree/BLAS calls that don't yield control back to Python's
+interpreter for a signal handler to run. With the toggle off, none of this
+new machinery is exercised this run -- R19 is skipped and logged once,
+`main()` should reach every stage after it (R7, "Pipeline complete") for the
+first time at this smoke scale.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_40143104 | job_40385403 |
+|---|---|---|
+| RUN_MDE_EVALUATE | _(unset)_ | false |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_40143104/tsls-mde-gmn.sbatch
++++ job_40385403/tsls-mde-gmn.sbatch
+@@ -279,6 +279,7 @@
+ export TSLS_MDE_GMN_MAX_TP="${MAX_TP}"
+ export TSLS_MDE_GMN_GRID_RHO_THRESHOLD="${GRID_RHO_THRESHOLD}"
+ export TSLS_MDE_GMN_RUN_MDE_DIAGNOSTICS="${RUN_MDE_DIAGNOSTICS}"
++export TSLS_MDE_GMN_RUN_MDE_EVALUATE="${RUN_MDE_EVALUATE}"
+ export TSLS_MDE_GMN_CORES="${SLURM_CPUS_PER_TASK}"
+ export TSLS_MDE_GMN_METRIC="${METRIC}"
+ export TSLS_MDE_GMN_TARGET_METRIC="${TARGET_METRIC}"
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_40143104/tsls-mde-gmn.py
++++ job_40385403/tsls-mde-gmn.py
+@@ -1097,6 +1097,32 @@
+     cfg['MAX_TP'] = int(os.environ.get('TSLS_MDE_GMN_MAX_TP', 20))
+     cfg['GRID_RHO_THRESHOLD'] = float(os.environ.get('TSLS_MDE_GMN_GRID_RHO_THRESHOLD', 0.9))
+     cfg['RUN_MDE_DIAGNOSTICS'] = _env_bool('TSLS_MDE_GMN_RUN_MDE_DIAGNOSTICS', True)
++    # RUN_MDE_EVALUATE: gates ONLY run_mde_evaluate() (R19's PCA/diffusion-
++    # map baseline comparison) -- deliberately separate from
++    # RUN_MDE_DIAGNOSTICS above, which still gates run_tp_vs_rho_sweep()/
++    # run_univariate_e_tau_grid()/plot_3d_mde_projection() (unaffected;
++    # verified under R7, not implicated in the finding below). Default
++    # False: docs/review-findings.md's "diffusion-map crash and hang"
++    # finding confirmed pydiffmap's own diffusion-map fit, on real TSLS
++    # data, can both raise (ValueError: Input X contains infinity...,
++    # reproduced in 1.8s at an 800-row scale) and hang indefinitely
++    # (reproduced past 74 CPU-minutes with no completion, at a real
++    # ~31,000-row scale) -- the mechanism for the hang specifically is NOT
++    # diagnosed (see that finding's own "flag for the documentation pass"
++    # note). run_mde_evaluate() itself still has its own exception guard
++    # AND a wall-clock bound around each baseline independently (see that
++    # function's own docstring) for whoever turns this back on, but the
++    # toggle is what actually protects a run while it's off -- a guard is
++    # only as good as remembering every place that could need one, so
++    # skipping this by default until the mechanism is understood is the
++    # deliberate choice here, not a workaround. R19 is optional tooling,
++    # not part of the causal claim (docs/tsls-mde-gmn-pipeline.tex's own
++    # sec:diagnostics linknote) -- skipping it is a legitimate
++    # configuration. Logged once per run when off, so its absence is
++    # never silent (see docs/review-findings.md's own §18.6 cross-
++    # reference for why a swallowed diagnostic staying invisible is
++    # exactly the failure mode to avoid repeating).
++    cfg['RUN_MDE_EVALUATE'] = _env_bool('TSLS_MDE_GMN_RUN_MDE_EVALUATE', False)
+ 
+     # ---- Parallelism ----------------------------------------------------
+     # NOTE: no TSLS_MDE_GMN_INTERACTION_MATRIX_OUTER_CORES here -- unlike
+@@ -4682,6 +4708,113 @@
+     return float(np.sum(np.abs(np.asarray(x) - np.asarray(y))))
+ 
+ 
++def _score_baseline(target_pred, predicted, targets, combined, target_metric, gamma_delta):
++    '''Shared scoring step for run_mde_evaluate()'s PCA/diffusion-map
++    baselines -- factored out so both baselines' own try/except blocks
++    (see that function's own docstring on why they're independently
++    guarded) call one identical implementation rather than two copies of
++    the combined-vs-single-target branch drifting apart.'''
++    if combined:
++        return float(np.nanmean([
++            tsls._score(target_pred[:, i], predicted[:, i], target_metric, gammaDelta=gamma_delta)
++            for i in range(len(targets))
++        ]))
++    return tsls._score(target_pred, predicted, target_metric, gammaDelta=gamma_delta)
++
++
++# Wall-clock bound for run_mde_evaluate()'s own PCA/diffusion-map baselines
++# (docs/review-findings.md's "diffusion-map crash and hang" finding): a
++# real diffusion-map fit on real TSLS data, at real (~31,000-row) scale,
++# has been observed to run past 74 CPU-minutes with no completion, crash,
++# or any output at all -- a non-raising hang a try/except cannot catch,
++# since there's nothing to except until the call returns control. Not
++# calibrated against a known-good completion time (no successful fit at
++# this scale has yet been observed to time); chosen as generous headroom
++# over the 1.8s a genuine crash takes to surface, while still bounding the
++# worst case to a tolerable, one-time-per-network cost.
++MDE_EVALUATE_BASELINE_TIMEOUT_SECONDS = 300
++
++
++def _pca_baseline_worker(queue, pool_lib, pool_pred, target_lib, D):
++    '''Runs in a genuinely separate process -- see
++    _run_baseline_with_timeout()'s own docstring for why. Catches its own
++    exception and puts it on the queue rather than letting the child
++    process's own traceback (still visible in the job's .err) be the only
++    record -- so the parent can log it in run_mde_evaluate()'s own
++    existing "FAILED for {targets}: {exc!r}" style regardless of which
++    process actually raised it.'''
++    try:
++        pca = PCA(n_components=D)
++        pca.fit(pool_lib)
++        pca_lib_proj, pca_pred_proj = pca.transform(pool_lib), pca.transform(pool_pred)
++        pca_predicted = LinearRegression().fit(pca_lib_proj, target_lib).predict(pca_pred_proj)
++        queue.put(('ok', pca_predicted, pca_pred_proj))
++    except Exception as exc:
++        queue.put(('error', repr(exc), None))
++
++
++def _dmap_baseline_worker(queue, pool_lib, pool_pred, target_lib, D, dmap_k, dmap_epsilon):
++    '''Same contract as _pca_baseline_worker() above.'''
++    try:
++        dmap_model = dmap.DiffusionMap.from_sklearn(
++            n_evecs=D, k=dmap_k, epsilon=dmap_epsilon,
++            neighbor_params={'n_jobs': -1, 'algorithm': 'kd_tree'},
++        )
++        dmap_model.fit(pool_lib)
++        dmap_lib_proj, dmap_pred_proj = dmap_model.transform(pool_lib), dmap_model.transform(pool_pred)
++        dmap_predicted = LinearRegression().fit(dmap_lib_proj, target_lib).predict(dmap_pred_proj)
++        queue.put(('ok', dmap_predicted, dmap_pred_proj))
++    except Exception as exc:
++        queue.put(('error', repr(exc), None))
++
++
++def _run_baseline_with_timeout(worker_fn, args, timeout_seconds=MDE_EVALUATE_BASELINE_TIMEOUT_SECONDS):
++    '''Runs worker_fn(queue, *args) in a genuinely separate process,
++    force-killed if it exceeds timeout_seconds -- the wall-clock bound
++    run_mde_evaluate()'s own PCA/diffusion-map guards need underneath
++    their existing exception handling (docs/review-findings.md's
++    "diffusion-map crash and hang" finding: a try/except plus a
++    signal-based "soft" timeout is not enough here, since pydiffmap's own
++    KD-tree/BLAS calls can run for a long time without ever returning
++    control to the Python interpreter -- a signal fires but its handler
++    can't actually run until the call returns on its own, which is
++    exactly the case that needs covering. Only an OS-level SIGKILL of a
++    genuinely separate process reclaims control regardless of what the
++    computation is doing internally). Cost: one process fork per baseline
++    call (cheap under `fork` -- no re-import, copy-on-write memory, real
++    overhead is milliseconds) plus pickling the (modest-sized, D-column)
++    result back through a Queue; the real cost is that a hard kill on
++    timeout discards whatever progress a slow-but-would-eventually-
++    succeed computation had made, converting it into a skip -- the
++    deliberate trade for a bounded worst case instead of an unbounded one.
++
++    Returns (status, value): ('ok', predicted_and_proj_tuple) on success;
++    ('timeout', None) if force-killed; ('error', repr(exc)) if the worker
++    itself raised (only ever read in the success path below -- the
++    process has already finished and flushed its queue write by the time
++    proc.join() returns non-alive, so there is no kill-mid-write race to
++    guard against).'''
++    ctx = mp.get_context('fork')
++    queue = ctx.Queue()
++    proc = ctx.Process(target=worker_fn, args=(queue, *args))
++    proc.start()
++    proc.join(timeout_seconds)
++    if proc.is_alive():
++        proc.terminate()
++        proc.join(5)
++        if proc.is_alive():
++            proc.kill()
++            proc.join()
++        return 'timeout', None
++    try:
++        status, a, b = queue.get_nowait()
++    except Exception:
++        return 'error', f'child process exited without a result (exitcode={proc.exitcode})'
++    if status == 'ok':
++        return 'ok', (a, b)
++    return 'error', a
++
++
+ def run_mde_evaluate(net_result, prediction_start, prediction_length, results_dir,
+                       target_metric, gamma_delta, exclusion_radius=0,
+                       dmap_k=15, dmap_epsilon='bgh_generous', max_traces_shown=7,
+@@ -4796,38 +4929,63 @@
+         target_lib = target_lib.ravel()
+         target_pred = target_pred.ravel()
+ 
+-    pca = PCA(n_components=D)
+-    pca.fit(pool_lib)
+-    pca_lib_proj, pca_pred_proj = pca.transform(pool_lib), pca.transform(pool_pred)
+-    pca_predicted = LinearRegression().fit(pca_lib_proj, target_lib).predict(pca_pred_proj)
+-
+-    dmap_model = dmap.DiffusionMap.from_sklearn(
+-        n_evecs=D, k=dmap_k, epsilon=dmap_epsilon,
+-        neighbor_params={'n_jobs': -1, 'algorithm': 'kd_tree'},
+-    )
+-    dmap_model.fit(pool_lib)
+-    dmap_lib_proj, dmap_pred_proj = dmap_model.transform(pool_lib), dmap_model.transform(pool_pred)
+-    dmap_predicted = LinearRegression().fit(dmap_lib_proj, target_lib).predict(dmap_pred_proj)
++    # PCA and diffusion-map are optional, unsupervised comparison
++    # baselines, not part of MDE's own causal claim (docs/tsls-mde-gmn-
++    # pipeline.tex sec:diagnostics's own linknote) -- guarded independently
++    # per this codebase's own established "one degenerate item dead-ends
++    # cleanly, it doesn't crash the batch" convention (already applied to
++    # Stage 1/Stage 2's per-node exceptions, sec:stage1-parallelization;
++    # rebuild_at_best_params()'s per-network Generate() divergence,
++    # sec:validation; run_tp_vs_rho_sweep()'s per-target skip,
++    # sec:diagnostics), which run_mde_evaluate() itself had never received.
++    # A failure in either is logged with the exception text and the
++    # target(s) it occurred on, and that baseline's own numbers/plot panel
++    # are skipped -- the run continues to completion and archives per
++    # sec:cluster-storage regardless of which (if either) baseline
++    # actually produced a result.
++    pca_predicted = pca_pred_proj = pca_cae = pca_score = None
++    status, value = _run_baseline_with_timeout(_pca_baseline_worker, (pool_lib, pool_pred, target_lib, D))
++    if status == 'ok':
++        pca_predicted, pca_pred_proj = value
++        pca_cae = _cae(target_pred, pca_predicted)
++        pca_score = _score_baseline(target_pred, pca_predicted, targets, combined,
++                                     target_metric, gamma_delta)
++    elif status == 'timeout':
++        print(f"{net_result['network_id']}: PCA baseline exceeded "
++              f"{MDE_EVALUATE_BASELINE_TIMEOUT_SECONDS}s wall-clock bound for {targets} -- "
++              f"terminated and skipped (MDE and any other baseline continue unaffected)",
++              flush=True)
++    else:
++        print(f"{net_result['network_id']}: PCA baseline FAILED for {targets}: {value} -- "
++              f"skipping this baseline (MDE and any other baseline continue unaffected)",
++              flush=True)
+ 
+-    pca_cae, dmap_cae = _cae(target_pred, pca_predicted), _cae(target_pred, dmap_predicted)
+-    if combined:
+-        pca_score = float(np.nanmean([
+-            tsls._score(target_pred[:, i], pca_predicted[:, i], target_metric, gammaDelta=gamma_delta)
+-            for i in range(len(targets))
+-        ]))
+-        dmap_score = float(np.nanmean([
+-            tsls._score(target_pred[:, i], dmap_predicted[:, i], target_metric, gammaDelta=gamma_delta)
+-            for i in range(len(targets))
+-        ]))
++    dmap_predicted = dmap_pred_proj = dmap_cae = dmap_score = None
++    status, value = _run_baseline_with_timeout(
++        _dmap_baseline_worker, (pool_lib, pool_pred, target_lib, D, dmap_k, dmap_epsilon))
++    if status == 'ok':
++        dmap_predicted, dmap_pred_proj = value
++        dmap_cae = _cae(target_pred, dmap_predicted)
++        dmap_score = _score_baseline(target_pred, dmap_predicted, targets, combined,
++                                      target_metric, gamma_delta)
++    elif status == 'timeout':
++        print(f"{net_result['network_id']}: Diffusion-map baseline exceeded "
++              f"{MDE_EVALUATE_BASELINE_TIMEOUT_SECONDS}s wall-clock bound for {targets} -- "
++              f"terminated and skipped (MDE and any other baseline continue unaffected)",
++              flush=True)
+     else:
+-        pca_score = tsls._score(target_pred, pca_predicted, target_metric, gammaDelta=gamma_delta)
+-        dmap_score = tsls._score(target_pred, dmap_predicted, target_metric, gammaDelta=gamma_delta)
++        print(f"{net_result['network_id']}: Diffusion-map baseline FAILED for {targets}: {value} -- "
++              f"skipping this baseline (MDE and any other baseline continue unaffected)",
++              flush=True)
+ 
++    pca_summary = (f"PCA CAE={pca_cae:.2f} {target_metric}={pca_score:.3f}"
++                   if pca_cae is not None else "PCA FAILED (skipped)")
++    dmap_summary = (f"D-Map CAE={dmap_cae:.2f} {target_metric}={dmap_score:.3f}"
++                    if dmap_cae is not None else "D-Map FAILED (skipped)")
+     print(f"run_mde_evaluate ({net_result['network_id']}, D={D}): "
+           f"MDE CAE={ {t: round(mde_cae[t], 2) for t in targets} } "
+           f"{target_metric}={ {t: round(mde_score[t], 3) for t in targets} } | "
+-          f"PCA CAE={pca_cae:.2f} {target_metric}={pca_score:.3f} | "
+-          f"D-Map CAE={dmap_cae:.2f} {target_metric}={dmap_score:.3f}", flush=True)
++          f"{pca_summary} | {dmap_summary}", flush=True)
+ 
+     # ---- Figure: 4 stacked panels, matching the reference -----------------
+     maxN = min(max_traces_shown, D)
+@@ -4859,16 +5017,20 @@
+         mde_xy = np.column_stack([mde_predicted[tx], mde_predicted[ty]])
+         axs[0].plot(mde_xy[:, 0], mde_xy[:, 1], lw=lw,
+                      label=f'MDE   {mde_cae[tx] + mde_cae[ty]:.2f}')
+-        axs[0].plot(pca_predicted[:, 0], pca_predicted[:, 1], lw=lw, label=f'PCA    {pca_cae:.2f}')
+-        axs[0].plot(dmap_predicted[:, 0], dmap_predicted[:, 1], lw=lw, label=f'D-Map {dmap_cae:.2f}')
++        if pca_predicted is not None:
++            axs[0].plot(pca_predicted[:, 0], pca_predicted[:, 1], lw=lw, label=f'PCA    {pca_cae:.2f}')
++        if dmap_predicted is not None:
++            axs[0].plot(dmap_predicted[:, 0], dmap_predicted[:, 1], lw=lw, label=f'D-Map {dmap_cae:.2f}')
+         axs[0].set_xlabel(tx)
+         axs[0].set_ylabel(ty)
+         axs[0].set_ylabel('Predictions', fontsize=12)
+     else:
+         target = targets[0]
+         axs[0].set_ylabel('Predictions', fontsize=12)
+-        axs[0].plot(x_pred, dmap_predicted, lw=lw, label=f'D-Map {dmap_cae:.2f}')
+-        axs[0].plot(x_pred, pca_predicted, lw=lw, label=f'PCA    {pca_cae:.2f}')
++        if dmap_predicted is not None:
++            axs[0].plot(x_pred, dmap_predicted, lw=lw, label=f'D-Map {dmap_cae:.2f}')
++        if pca_predicted is not None:
++            axs[0].plot(x_pred, pca_predicted, lw=lw, label=f'PCA    {pca_cae:.2f}')
+         axs[0].plot(x_pred, mde_predicted[target], lw=lw, label=f'MDE   {mde_cae[target]:.2f}')
+         axs[0].plot(x_pred, target_pred, color='black', lw=lw, label=target)
+     axs[0].legend(title='CAE', bbox_to_anchor=(1.0, 1.0), loc='upper left')
+@@ -4881,13 +5043,24 @@
+         axs[1].plot(x_pred, data_after_mde[driver].iloc[pred_slice], lw=lw, label=driver)
+     axs[1].legend(title='MDE', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
+ 
+-    for col in range(maxN):
+-        axs[2].plot(x_pred, dmap_pred_proj[:, col], lw=lw, label=str(col))
+-    axs[2].legend(title='Diffusion Map', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
+-
+-    for col in range(maxN):
+-        axs[3].plot(x_pred, pca_pred_proj[:, col], lw=lw, label=str(col))
+-    axs[3].legend(title='PCA', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
++    # Panels 2/3: same skip-not-crash handling as panel 0 above -- a failed
++    # baseline has no projection to plot, so the panel is left empty with
++    # an explicit label rather than raising on a None subscript.
++    if dmap_pred_proj is not None:
++        for col in range(maxN):
++            axs[2].plot(x_pred, dmap_pred_proj[:, col], lw=lw, label=str(col))
++        axs[2].legend(title='Diffusion Map', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
++    else:
++        axs[2].text(0.5, 0.5, 'Diffusion Map baseline FAILED (see log)', ha='center', va='center',
++                    transform=axs[2].transAxes, fontsize=9, color='gray')
++
++    if pca_pred_proj is not None:
++        for col in range(maxN):
++            axs[3].plot(x_pred, pca_pred_proj[:, col], lw=lw, label=str(col))
++        axs[3].legend(title='PCA', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
++    else:
++        axs[3].text(0.5, 0.5, 'PCA baseline FAILED (see log)', ha='center', va='center',
++                    transform=axs[3].transAxes, fontsize=9, color='gray')
+ 
+     fig.tight_layout()
+     fig.subplots_adjust(hspace=0.3 if combined else 0.04)
+@@ -5269,16 +5442,30 @@
+                       f'R7 diagnostics END -- {time.perf_counter() - r7_start:.1f}s')
+         # R19 (docs/review-actions-v1.md): per constructed network -- needs
+         # net_result['network']['Graph'] for D (direct-driver count), which
+-        # mde_results (depth-0-only) doesn't carry.
+-        for network_id, run in gmn_runs.items():
+-            r19_start = time.perf_counter()
+-            _log_progress(progress_log_path, f'{network_id}: R19 run_mde_evaluate START')
+-            run_mde_evaluate(run['net_result'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+-                              cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
+-                              exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
+-            _log_progress(progress_log_path,
+-                          f'{network_id}: R19 run_mde_evaluate END -- '
+-                          f'{time.perf_counter() - r19_start:.1f}s')
++        # mde_results (depth-0-only) doesn't carry. Gated on its own
++        # RUN_MDE_EVALUATE, deliberately separate from RUN_MDE_DIAGNOSTICS
++        # above (see that config's own docstring) -- R7's two diagnostics
++        # just above are unaffected and always run when RUN_MDE_DIAGNOSTICS
++        # is set, regardless of this toggle.
++        if cfg['RUN_MDE_EVALUATE']:
++            for network_id, run in gmn_runs.items():
++                r19_start = time.perf_counter()
++                _log_progress(progress_log_path, f'{network_id}: R19 run_mde_evaluate START')
++                run_mde_evaluate(run['net_result'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
++                                  cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
++                                  exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
++                _log_progress(progress_log_path,
++                              f'{network_id}: R19 run_mde_evaluate END -- '
++                              f'{time.perf_counter() - r19_start:.1f}s')
++        else:
++            # Logged once per run, unconditionally -- a skipped diagnostic
++            # that never appears anywhere is exactly how §18.6's swallowed
++            # exception went unnoticed for so long (docs/review-findings.md).
++            msg = ("R19 run_mde_evaluate SKIPPED by configuration "
++                   "(RUN_MDE_EVALUATE=false) -- see docs/review-findings.md's "
++                   "'diffusion-map crash and hang' finding for why this defaults off")
++            print(msg, flush=True)
++            _log_progress(progress_log_path, msg)
+     else:
+         print(f"MODE={cfg['MODE']!r} / RUN_MDE_DIAGNOSTICS={cfg['RUN_MDE_DIAGNOSTICS']}: "
+               f"skipping MDE-only diagnostics.", flush=True)
+```
+
+---
+
+
+## Job 40143104
+
+Generated: 2026-08-28T22:42:53+09:00
+
+Git commit at submission: `93e7f3e` (clean vs. HEAD)
+
+Compared against: **job_40143067**
+
+### Plain-language summary
+
+**Purpose: exercise the new progress-monitoring log on a real cluster run,
+at the user's explicit request**, after job_40143067 (still running,
+started before this feature landed and so left untouched) confirmed the
+`/bucket` outage from earlier tonight has cleared. Same
+`REGION_CHANNEL_CAP=3/MDE_D=2/NESTED_M=2` smoke config as job_40143067 --
+no parameter changes, per the table below.
+
+**What's new since job_40143067** (see `docs/review-findings.md` for the
+full design): `cfg['RESULTS_DIR']/progress.log`, written continuously by
+the orchestrating process only. Stage 1/Stage 2 BFS -- this pipeline's own
+confirmed historical bottleneck -- get per-node start/end lines with
+duration, a heartbeat every 5 minutes while a wave is still running so a
+long wave no longer goes silent the way job 38976891's own 4+ hour stall
+did, and an ETA weighted by each pending node's own speculatively-resolved
+window size. Every other step (depth-0 seed, GMN construction, theta
+retuning, generate-start sweep, Generate/Forecast rebuild, R7/R19
+diagnostics) gets simple start/end/duration logging. The sbatch script's
+own `cleanup()` trap now appends a final `JOB ENDED: PY_STATUS=...
+SLURM_STATE=...` line to the same log via `sacct`, so a crash/timeout/OOM
+leaves an explicit record instead of the file just going silent.
+
+**What to check in this job's own `progress.log`** (readable on `/flash`
+while the job is still running, at
+`/flash/FukaiU/j-tominaga/pao_rotation_results/job_40143104/progress.log`
+once `$OUT_DIR` is created): a `PIPELINE START` line near the top, per-node
+`stage1`/`stage2` START/END lines with real durations as Stage 1/2 run,
+at least one `HEARTBEAT` line if any wave takes longer than 5 minutes, and
+eventually a `JOB ENDED` line from the sbatch trap once the job finishes
+one way or another.
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_40143067/tsls-mde-gmn.sbatch
++++ job_40143104/tsls-mde-gmn.sbatch
+@@ -126,7 +126,33 @@
+ # archive. Same mechanism as simple-mde-gmn.sbatch's own `cleanup` trap.
+ SLURM_OUT="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.out"
+ SLURM_ERR="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.err"
++# How the job actually ended, appended to the progress-monitoring log
++# (RESULTS_DIR/progress.log -- see tsls-mde-gmn.py's own _log_progress()
++# docstring) so a crash/timeout/OOM has an explicit, unambiguous final
++# line instead of the file just going silent. This is the one piece of
++# that log that CANNOT be written by Python itself: a hard kill means the
++# Python process never gets to write anything of its own. `$?` alone
++# (PY_STATUS below) can't distinguish OOM from a plain crash from a
++# timeout, so this queries sacct -- SLURM's own authoritative record --
++# with a couple of retries since its accounting can lag a few seconds
++# right at job-end. Honest limitation, not hidden: a true instantaneous
++# whole-cgroup SIGKILL (rare) can prevent this trap itself from running --
++# `sacct -j <job_id>` run separately, after the fact, is the authoritative
++# fallback in that case regardless of what this managed to write.
++log_final_outcome() {
++    local progress_log="$OUT_DIR/progress.log"
++    [ -f "$progress_log" ] || return 0
++    local slurm_state=""
++    for _ in 1 2 3; do
++        slurm_state="$(sacct -j "$SLURM_JOB_ID" --format=State -P -n 2>/dev/null | head -1 | tr -d ' ')"
++        [ -n "$slurm_state" ] && break
++        sleep 2
++    done
++    echo "$(date -Iseconds) JOB ENDED: PY_STATUS=${PY_STATUS:-unset} SLURM_STATE=${slurm_state:-unknown (sacct had no record yet -- check \`sacct -j $SLURM_JOB_ID\` manually)}" \
++        >> "$progress_log"
++}
+ cleanup() {
++    log_final_outcome
+     [ -f "$SLURM_OUT" ] && mv -f "$SLURM_OUT" "$OUT_DIR"/
+     [ -f "$SLURM_ERR" ] && mv -f "$SLURM_ERR" "$OUT_DIR"/
+     if [ "${PY_STATUS:-1}" = "0" ] && [ -d "$OUT_DIR" ]; then
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_40143067/tsls-mde-gmn.py
++++ job_40143104/tsls-mde-gmn.py
+@@ -1456,11 +1456,21 @@
+     search, not the full candidate-pool ranking sweep). Returns 0 (not a
+     real window size) if the node turns out unreachable -- an unreachable
+     node fails fast in the real call regardless, so weighting it as
+-    negligible cost for the ETA is reasonable, not misleading.'''
++    negligible cost for the ETA is reasonable, not misleading.
++
++    Behavioral targets short-circuit before touching `full_df` at all:
++    `_resolve_target_ranking_window()`'s own behavioral branch never reads
++    the target's column either (the window is the fixed
++    `target_ranking_window_rows`, capped by available rows) -- mirroring
++    that here avoids requiring `full_df` to even contain this node's own
++    column for a case where the real resolve never looks at it.'''
+     warmup = max((abs(d) for d in delay_set), default=0)
+     usable_end = prediction_start + prediction_length - tp
++    n_usable = usable_end - warmup
++    if is_behavioral_target:
++        return min(target_ranking_window_rows, n_usable)
+     usable_df = full_df[[node]].iloc[warmup:usable_end].reset_index(drop=True)
+-    lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
++    lib_ratio = (prediction_start - warmup) / max(1, n_usable)
+     window_rows, _ = _resolve_target_ranking_window(
+         node, full_df, usable_df, lib_ratio,
+         is_behavioral_target, target_ranking_window_rows, min_pred_events, max_window_rows,
+@@ -3172,6 +3182,8 @@
+                                   results_dir, run_cache_dir)
+     else:  # mode == 'GMN'
+         if cache_hit is None:
++            gmn_construction_start = time.perf_counter()
++            _log_progress(progress_log_path, f'{network_id}: GMN network construction START')
+             e_vals, tau_vals = list(e_range), list(tau_range)
+             # target_E_tau_rho_grid always scores a TARGETS column's own
+             # self-predictability -- always target_metric (continuous),
+@@ -3226,6 +3238,10 @@
+                 outputFile        = str(network_file),
+                 plotNetwork       = False,
+             )
++            _log_progress(
++                progress_log_path,
++                f'{network_id}: GMN network construction END -- '
++                f'{time.perf_counter() - gmn_construction_start:.1f}s total')
+         else:
+             network_file = results_dir / f'Network_E{ccm_E}_tau{ccm_tau}_CCM_{network_id}.pkl'
+ 
+@@ -3991,7 +4007,8 @@
+ 
+ 
+ def retune_theta_for_all_nodes(data_lib, graph, nodes, targets, theta_range, cores,
+-                                metric, target_metric, gamma_delta, min_pred_rows=20):
++                                metric, target_metric, gamma_delta, min_pred_rows=20,
++                                progress_log_path=None):
+     '''Finds each node's own best theta via proper_predict_nonlinear() (R20,
+     docs/review-actions-v1.md) on a 70/30 lib/pred split of that node's own
+     generalized embedding. Previously scored via pyEDM.PredictNonlinear's
+@@ -4008,8 +4025,12 @@
+     whenever there's too little data for the split or the sweep itself
+     fails (unchanged from before).'''
+     best_theta_by_node = {}
++    theta_durations = []
++    _log_progress(progress_log_path, f'theta retuning START -- {len(nodes)} node(s)')
++    theta_stage_start = time.perf_counter()
+ 
+     for node in nodes:
++        node_start = time.perf_counter()
+         spec = _embedding_spec_for(graph, node)
+         embedded, offset = _generalized_embed(data_lib, spec)
+         embedded.insert(0, 'Time', np.arange(len(embedded)))
+@@ -4020,6 +4041,7 @@
+         n_pred = n_emb - split
+         if n_pred < min_pred_rows:
+             best_theta_by_node[node] = 3
++            theta_durations.append(time.perf_counter() - node_start)
+             continue
+ 
+         lib_range = f'1 {split}'
+@@ -4035,7 +4057,16 @@
+             best_theta_by_node[node] = float(pn.loc[pn['score'].idxmax(), 'theta'])
+         except Exception:
+             best_theta_by_node[node] = 3
++        node_duration = time.perf_counter() - node_start
++        theta_durations.append(node_duration)
++        eta = _format_eta(theta_durations, len(nodes) - len(theta_durations))
++        _log_progress(progress_log_path,
++                      f'theta node END -- {node} duration={node_duration:.1f}s '
++                      f'theta={best_theta_by_node[node]}{eta}')
+ 
++    _log_progress(progress_log_path,
++                  f'theta retuning END -- {len(nodes)} node(s), '
++                  f'{time.perf_counter() - theta_stage_start:.1f}s total')
+     return best_theta_by_node
+ 
+ 
+@@ -4087,7 +4118,7 @@
+                       cores, metric, target_metric, gamma_delta,
+                       generate_length=None, reuse_best_params=False, prev_runs_dir=None,
+                       run_cache_dir=None, fingerprints=None, exclusion_radius=0,
+-                      generate_validation_start=None):
++                      generate_validation_start=None, progress_log_path=None):
+     '''Retunes each network's per-node theta once, then scores the result
+     with a single Generate() call -- ported from simple-mde-gmn.py. E and
+     each driver's delay are no longer search parameters at all: for
+@@ -4123,6 +4154,7 @@
+         best_node_theta = retune_theta_for_all_nodes(
+             data_after_mde_lib, graph, all_nodes, net_result['targets'], theta_range, cores,
+             metric, target_metric, gamma_delta,
++            progress_log_path=progress_log_path,
+         )
+ 
+         try:
+@@ -4177,7 +4209,8 @@
+                           results_dir, cores, generate_length, start_offsets,
+                           target_metric, gamma_delta, exclusion_radius=0,
+                           reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+-                          fingerprints=None, generate_validation_start=None):
++                          fingerprints=None, generate_validation_start=None,
++                          progress_log_path=None):
+     '''Finds, per network, which row Generate() should start free-running
+     from to best match the real held-out data -- ported from
+     simple-mde-gmn.py, scored via the same TSLS-aware evaluate_smap_candidate()
+@@ -4254,6 +4287,9 @@
+                 pickle.dump({'start_offsets': start_offsets,
+                              'generate_length': generate_length, 'scores': scores}, f)
+             print(f'{network_id}: start offset {offset:5d} (row {generate_start}) score={score:.4f}', flush=True)
++            _log_progress(progress_log_path,
++                          f'{network_id}: generate-start offset {offset} done '
++                          f'({len(scores)}/{len(start_offsets)}), score={score:.4f}')
+ 
+         valid_offsets = [o for o in start_offsets if not np.isnan(scores.get(o, np.nan))]
+         best_offset = max(valid_offsets, key=lambda o: scores[o]) if valid_offsets else start_offsets[0]
+@@ -4294,7 +4330,8 @@
+ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, prediction_length,
+                             results_dir, cores, metric, target_metric, gamma_delta,
+                             generate_length=None, generate_starts=None,
+-                            exclusion_radius=0, generate_validation_start=None):
++                            exclusion_radius=0, generate_validation_start=None,
++                            progress_log_path=None):
+     '''Reruns Generate() at the winning per-node theta found by
+     run_theta_search(), and the winning start row found by
+     sweep_generate_start(). Ported from simple-mde-gmn.py -- try/except-
+@@ -4320,6 +4357,8 @@
+         node_theta = theta_search_results[network_id]['best_node_theta']
+         generate_start = generate_starts[network_id] if generate_starts else generate_validation_start
+ 
++        generate_rebuild_start = time.perf_counter()
++        _log_progress(progress_log_path, f'{network_id}: FINAL Generate() rebuild START')
+         try:
+             config_file = build_gmn_config(
+                 net_result, prediction_start, prediction_length, results_dir,
+@@ -4332,7 +4371,14 @@
+         except Exception as exc:
+             print(f'{network_id}: FINAL Generate() rebuild FAILED: {exc!r} -- '
+                   f'skipping this network (no plots/fidelity/output for it)', flush=True)
++            _log_progress(
++                progress_log_path,
++                f'{network_id}: FINAL Generate() rebuild END -- FAILED '
++                f'{time.perf_counter() - generate_rebuild_start:.1f}s: {exc!r}')
+             continue
++        _log_progress(progress_log_path,
++                      f'{network_id}: FINAL Generate() rebuild END -- '
++                      f'{time.perf_counter() - generate_rebuild_start:.1f}s')
+ 
+         run['G'] = G
+         run['best_node_theta'] = node_theta
+@@ -4873,6 +4919,17 @@
+ def main():
+     cfg = load_config()
+ 
++    # Progress-monitoring log (see HEARTBEAT_SECONDS/_log_progress()'s own
++    # docstrings): cfg['RESULTS_DIR'] is already on /flash for the whole
++    # run's duration (TSLS_MDE_GMN_RESULTS_DIR -> $OUT_DIR in the sbatch
++    # script, archived to bucket only at job end), so this needs no new
++    # path plumbing. Opened in truncate mode -- each job already gets its
++    # own fresh RESULTS_DIR, so there is no earlier content to preserve.
++    progress_log_path = cfg['RESULTS_DIR'] / 'progress.log'
++    open(progress_log_path, 'w').close()
++    pipeline_start = time.perf_counter()
++    _log_progress(progress_log_path, 'PIPELINE START')
++
+     df_raw = pd.read_csv(cfg['DATA_DIR'] / cfg['DATA_FILE'])
+     print('Raw data shape:', df_raw.shape, flush=True)
+ 
+@@ -4984,6 +5041,8 @@
+             # working completely unchanged.
+             candidate_pool = [c for c in filtered_pools[tuple(cfg['TARGETS'])] if c not in cfg['TARGETS']]
+             effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
++            depth0_start = time.perf_counter()
++            _log_progress(progress_log_path, f"depth0 joint MDE START -- targets={cfg['TARGETS']}")
+             try:
+                 shared_result = run_multi_mde_for_targets(
+                     cfg['TARGETS'], df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+@@ -5010,12 +5069,17 @@
+                 print(f"{cfg['TARGETS']}: joint (multi-target) MDE call FAILED: {exc!r} -- "
+                       f'treating as a dead-end (zero drivers selected for every target)', flush=True)
+                 shared_result = _failed_multi_mde_result(cfg['TARGETS'])
++            _log_progress(progress_log_path,
++                          f'depth0 joint MDE END -- {time.perf_counter() - depth0_start:.1f}s '
++                          f"selected={shared_result['SELECTED_COLUMNS']}")
+             for target in cfg['TARGETS']:
+                 mde_results[target] = {**shared_result, 'target': target}
+         else:
+             for target in cfg['TARGETS']:
+                 candidate_pool = [c for c in filtered_pools[(target,)] if c != target]
+                 effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
++                depth0_start = time.perf_counter()
++                _log_progress(progress_log_path, f'depth0 MDE START -- {target}')
+                 try:
+                     mde_results[target] = run_mde_for_target(
+                         target, df, candidate_pool, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+@@ -5052,6 +5116,9 @@
+                     print(f'{target}: top-level MDE call FAILED: {exc!r} -- treating as a dead-end '
+                           f'(zero drivers selected for this target)', flush=True)
+                     mde_results[target] = _failed_mde_result(target)
++                _log_progress(progress_log_path,
++                              f'depth0 MDE END -- {target} {time.perf_counter() - depth0_start:.1f}s '
++                              f"selected={mde_results[target]['SELECTED_COLUMNS']}")
+ 
+         if cfg['RUN_MDE_DIAGNOSTICS']:
+             plot_mde_rho_vs_dimension(
+@@ -5094,6 +5161,7 @@
+             gmn_mode=cfg['GMN_MODE'], multi_mde_e=cfg['MULTI_MDE_E'],
+             multi_mde_target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
+             external_input_mode=cfg['EXTERNAL_INPUT_MODE'],
++            progress_log_path=progress_log_path,
+         )
+         draw_colored_network(
+             net_result, cfg['TARGET_COLORS'],
+@@ -5121,6 +5189,7 @@
+         run_cache_dir=cfg['RUN_CACHE_DIR'],
+         fingerprints=fingerprints, exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
+         generate_validation_start=cfg['GENERATE_VALIDATION_START'],
++        progress_log_path=progress_log_path,
+     )
+ 
+     generate_starts = sweep_generate_start(
+@@ -5131,6 +5200,7 @@
+         reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
+         run_cache_dir=cfg['RUN_CACHE_DIR'], fingerprints=fingerprints,
+         generate_validation_start=cfg['GENERATE_VALIDATION_START'],
++        progress_log_path=progress_log_path,
+     )
+ 
+     rebuild_at_best_params(
+@@ -5139,6 +5209,7 @@
+         generate_length=cfg['GENERATE_LENGTH'], generate_starts=generate_starts,
+         exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'],
+         generate_validation_start=cfg['GENERATE_VALIDATION_START'],
++        progress_log_path=progress_log_path,
+     )
+ 
+     for network_id, run in gmn_runs.items():
+@@ -5150,6 +5221,8 @@
+                   f'Forecast()/fidelity/output for this network', flush=True)
+             continue
+ 
++        forecast_start = time.perf_counter()
++        _log_progress(progress_log_path, f'{network_id}: Forecast() diagnostic START')
+         Gf, forecast_rho = run_forecast_diagnostic(
+             run['net_result'], run['G'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+             run['best_node_theta'],
+@@ -5161,6 +5234,9 @@
+             plot_range_mode=cfg['FORECAST_PLOT_RANGE'],
+             generate_validation_start=cfg['GENERATE_VALIDATION_START'], total_rows=len(df),
+         )
++        _log_progress(progress_log_path,
++                      f'{network_id}: Forecast() diagnostic END -- '
++                      f'{time.perf_counter() - forecast_start:.1f}s')
+         run['Gf'] = Gf
+         run['forecast_rho'] = forecast_rho
+         if Gf is None:
+@@ -5182,22 +5258,33 @@
+ 
+     # ---- MDE-only diagnostics -------------------------------------------
+     if cfg['MODE'] == 'MDE-GMN' and cfg['RUN_MDE_DIAGNOSTICS']:
++        _log_progress(progress_log_path, 'R7 diagnostics START (tp-vs-rho sweep, E/tau grid)')
++        r7_start = time.perf_counter()
+         run_tp_vs_rho_sweep(mde_results, cfg['TARGETS'], cfg['MAX_TP'], cfg['TARGET_COLORS'],
+                              cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'])
+         run_univariate_e_tau_grid(mde_results, cfg['TARGETS'], cfg['E_RANGE'], cfg['TAU_RANGE'],
+                                    cfg['GRID_RHO_THRESHOLD'], cfg['RESULTS_DIR'],
+                                    cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'])
++        _log_progress(progress_log_path,
++                      f'R7 diagnostics END -- {time.perf_counter() - r7_start:.1f}s')
+         # R19 (docs/review-actions-v1.md): per constructed network -- needs
+         # net_result['network']['Graph'] for D (direct-driver count), which
+         # mde_results (depth-0-only) doesn't carry.
+         for network_id, run in gmn_runs.items():
++            r19_start = time.perf_counter()
++            _log_progress(progress_log_path, f'{network_id}: R19 run_mde_evaluate START')
+             run_mde_evaluate(run['net_result'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+                               cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
+                               exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
++            _log_progress(progress_log_path,
++                          f'{network_id}: R19 run_mde_evaluate END -- '
++                          f'{time.perf_counter() - r19_start:.1f}s')
+     else:
+         print(f"MODE={cfg['MODE']!r} / RUN_MDE_DIAGNOSTICS={cfg['RUN_MDE_DIAGNOSTICS']}: "
+               f"skipping MDE-only diagnostics.", flush=True)
+ 
++    _log_progress(progress_log_path,
++                  f'PIPELINE COMPLETE -- {time.perf_counter() - pipeline_start:.1f}s total')
+     print('Pipeline complete.', flush=True)
+ 
+ 
+```
+
+---
+
+
 ## Job 40143067
 
 Generated: 2026-08-28T22:20:26+09:00

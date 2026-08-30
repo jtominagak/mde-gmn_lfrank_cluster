@@ -443,6 +443,20 @@ TAU_MIN=-15  # lower bound (inclusive) of time-delay tau (in samples) search
 TAU_MAX=0    # upper bound (EXCLUSIVE -- python range()) of tau search; 0 itself is never tried
 TAU_STEP=2   # step between candidate tau values, e.g. -15,-13,...,-1 with the defaults above
 
+# RUN_MDE_EVALUATE: exposed here for consistency with tsls-mde-gmn.sbatch's
+# own knob of the same name, NOT currently wired into simple-mde-gmn.py --
+# this pipeline's own run_mde_evaluate() (line ~4207) is a different
+# implementation (dx.Evaluate-based, on 1 Hz raw spike-count data) already
+# gated by RUN_MDE_DIAGNOSTICS above, and has not been confirmed to share
+# tsls-mde-gmn.py's own "diffusion-map crash and hang" finding
+# (docs/review-findings.md) -- that finding's own suspected mechanism
+# (TSLS's long inter-spike ramps producing heavy near-duplicate structure)
+# doesn't obviously carry over to raw counts. Left False (matching the
+# TSLS-side default) as a placeholder should this pipeline's own
+# run_mde_evaluate() ever need the same protection -- read as inert until
+# someone wires it in, not as evidence this pipeline has the same risk.
+RUN_MDE_EVALUATE=false
+
 # ---- Parallelism -------------------------------------------------------------
 # Kept deliberately small and separate from --cpus-per-task -- see FIXED
 # CAVEAT below for why raising this to match --cpus-per-task backfires
@@ -753,6 +767,7 @@ export MDE_GMN_E_STEP="${E_STEP}"
 export MDE_GMN_TAU_MIN="${TAU_MIN}"
 export MDE_GMN_TAU_MAX="${TAU_MAX}"
 export MDE_GMN_TAU_STEP="${TAU_STEP}"
+export MDE_GMN_RUN_MDE_EVALUATE="${RUN_MDE_EVALUATE}"
 export MDE_GMN_CORES="${SLURM_CPUS_PER_TASK}"
 export MDE_GMN_INTERACTION_MATRIX_OUTER_CORES="${INTERACTION_MATRIX_OUTER_CORES}"
 export MDE_GMN_REUSE_BEST_PARAMS="${REUSE_BEST_PARAMS}"

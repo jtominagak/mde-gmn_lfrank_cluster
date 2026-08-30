@@ -1097,6 +1097,32 @@ def load_config():
     cfg['MAX_TP'] = int(os.environ.get('TSLS_MDE_GMN_MAX_TP', 20))
     cfg['GRID_RHO_THRESHOLD'] = float(os.environ.get('TSLS_MDE_GMN_GRID_RHO_THRESHOLD', 0.9))
     cfg['RUN_MDE_DIAGNOSTICS'] = _env_bool('TSLS_MDE_GMN_RUN_MDE_DIAGNOSTICS', True)
+    # RUN_MDE_EVALUATE: gates ONLY run_mde_evaluate() (R19's PCA/diffusion-
+    # map baseline comparison) -- deliberately separate from
+    # RUN_MDE_DIAGNOSTICS above, which still gates run_tp_vs_rho_sweep()/
+    # run_univariate_e_tau_grid()/plot_3d_mde_projection() (unaffected;
+    # verified under R7, not implicated in the finding below). Default
+    # False: docs/review-findings.md's "diffusion-map crash and hang"
+    # finding confirmed pydiffmap's own diffusion-map fit, on real TSLS
+    # data, can both raise (ValueError: Input X contains infinity...,
+    # reproduced in 1.8s at an 800-row scale) and hang indefinitely
+    # (reproduced past 74 CPU-minutes with no completion, at a real
+    # ~31,000-row scale) -- the mechanism for the hang specifically is NOT
+    # diagnosed (see that finding's own "flag for the documentation pass"
+    # note). run_mde_evaluate() itself still has its own exception guard
+    # AND a wall-clock bound around each baseline independently (see that
+    # function's own docstring) for whoever turns this back on, but the
+    # toggle is what actually protects a run while it's off -- a guard is
+    # only as good as remembering every place that could need one, so
+    # skipping this by default until the mechanism is understood is the
+    # deliberate choice here, not a workaround. R19 is optional tooling,
+    # not part of the causal claim (docs/tsls-mde-gmn-pipeline.tex's own
+    # sec:diagnostics linknote) -- skipping it is a legitimate
+    # configuration. Logged once per run when off, so its absence is
+    # never silent (see docs/review-findings.md's own §18.6 cross-
+    # reference for why a swallowed diagnostic staying invisible is
+    # exactly the failure mode to avoid repeating).
+    cfg['RUN_MDE_EVALUATE'] = _env_bool('TSLS_MDE_GMN_RUN_MDE_EVALUATE', False)
 
     # ---- Parallelism ----------------------------------------------------
     # NOTE: no TSLS_MDE_GMN_INTERACTION_MATRIX_OUTER_CORES here -- unlike
@@ -4682,6 +4708,113 @@ def _cae(x, y):
     return float(np.sum(np.abs(np.asarray(x) - np.asarray(y))))
 
 
+def _score_baseline(target_pred, predicted, targets, combined, target_metric, gamma_delta):
+    '''Shared scoring step for run_mde_evaluate()'s PCA/diffusion-map
+    baselines -- factored out so both baselines' own try/except blocks
+    (see that function's own docstring on why they're independently
+    guarded) call one identical implementation rather than two copies of
+    the combined-vs-single-target branch drifting apart.'''
+    if combined:
+        return float(np.nanmean([
+            tsls._score(target_pred[:, i], predicted[:, i], target_metric, gammaDelta=gamma_delta)
+            for i in range(len(targets))
+        ]))
+    return tsls._score(target_pred, predicted, target_metric, gammaDelta=gamma_delta)
+
+
+# Wall-clock bound for run_mde_evaluate()'s own PCA/diffusion-map baselines
+# (docs/review-findings.md's "diffusion-map crash and hang" finding): a
+# real diffusion-map fit on real TSLS data, at real (~31,000-row) scale,
+# has been observed to run past 74 CPU-minutes with no completion, crash,
+# or any output at all -- a non-raising hang a try/except cannot catch,
+# since there's nothing to except until the call returns control. Not
+# calibrated against a known-good completion time (no successful fit at
+# this scale has yet been observed to time); chosen as generous headroom
+# over the 1.8s a genuine crash takes to surface, while still bounding the
+# worst case to a tolerable, one-time-per-network cost.
+MDE_EVALUATE_BASELINE_TIMEOUT_SECONDS = 300
+
+
+def _pca_baseline_worker(queue, pool_lib, pool_pred, target_lib, D):
+    '''Runs in a genuinely separate process -- see
+    _run_baseline_with_timeout()'s own docstring for why. Catches its own
+    exception and puts it on the queue rather than letting the child
+    process's own traceback (still visible in the job's .err) be the only
+    record -- so the parent can log it in run_mde_evaluate()'s own
+    existing "FAILED for {targets}: {exc!r}" style regardless of which
+    process actually raised it.'''
+    try:
+        pca = PCA(n_components=D)
+        pca.fit(pool_lib)
+        pca_lib_proj, pca_pred_proj = pca.transform(pool_lib), pca.transform(pool_pred)
+        pca_predicted = LinearRegression().fit(pca_lib_proj, target_lib).predict(pca_pred_proj)
+        queue.put(('ok', pca_predicted, pca_pred_proj))
+    except Exception as exc:
+        queue.put(('error', repr(exc), None))
+
+
+def _dmap_baseline_worker(queue, pool_lib, pool_pred, target_lib, D, dmap_k, dmap_epsilon):
+    '''Same contract as _pca_baseline_worker() above.'''
+    try:
+        dmap_model = dmap.DiffusionMap.from_sklearn(
+            n_evecs=D, k=dmap_k, epsilon=dmap_epsilon,
+            neighbor_params={'n_jobs': -1, 'algorithm': 'kd_tree'},
+        )
+        dmap_model.fit(pool_lib)
+        dmap_lib_proj, dmap_pred_proj = dmap_model.transform(pool_lib), dmap_model.transform(pool_pred)
+        dmap_predicted = LinearRegression().fit(dmap_lib_proj, target_lib).predict(dmap_pred_proj)
+        queue.put(('ok', dmap_predicted, dmap_pred_proj))
+    except Exception as exc:
+        queue.put(('error', repr(exc), None))
+
+
+def _run_baseline_with_timeout(worker_fn, args, timeout_seconds=MDE_EVALUATE_BASELINE_TIMEOUT_SECONDS):
+    '''Runs worker_fn(queue, *args) in a genuinely separate process,
+    force-killed if it exceeds timeout_seconds -- the wall-clock bound
+    run_mde_evaluate()'s own PCA/diffusion-map guards need underneath
+    their existing exception handling (docs/review-findings.md's
+    "diffusion-map crash and hang" finding: a try/except plus a
+    signal-based "soft" timeout is not enough here, since pydiffmap's own
+    KD-tree/BLAS calls can run for a long time without ever returning
+    control to the Python interpreter -- a signal fires but its handler
+    can't actually run until the call returns on its own, which is
+    exactly the case that needs covering. Only an OS-level SIGKILL of a
+    genuinely separate process reclaims control regardless of what the
+    computation is doing internally). Cost: one process fork per baseline
+    call (cheap under `fork` -- no re-import, copy-on-write memory, real
+    overhead is milliseconds) plus pickling the (modest-sized, D-column)
+    result back through a Queue; the real cost is that a hard kill on
+    timeout discards whatever progress a slow-but-would-eventually-
+    succeed computation had made, converting it into a skip -- the
+    deliberate trade for a bounded worst case instead of an unbounded one.
+
+    Returns (status, value): ('ok', predicted_and_proj_tuple) on success;
+    ('timeout', None) if force-killed; ('error', repr(exc)) if the worker
+    itself raised (only ever read in the success path below -- the
+    process has already finished and flushed its queue write by the time
+    proc.join() returns non-alive, so there is no kill-mid-write race to
+    guard against).'''
+    ctx = mp.get_context('fork')
+    queue = ctx.Queue()
+    proc = ctx.Process(target=worker_fn, args=(queue, *args))
+    proc.start()
+    proc.join(timeout_seconds)
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join()
+        return 'timeout', None
+    try:
+        status, a, b = queue.get_nowait()
+    except Exception:
+        return 'error', f'child process exited without a result (exitcode={proc.exitcode})'
+    if status == 'ok':
+        return 'ok', (a, b)
+    return 'error', a
+
+
 def run_mde_evaluate(net_result, prediction_start, prediction_length, results_dir,
                       target_metric, gamma_delta, exclusion_radius=0,
                       dmap_k=15, dmap_epsilon='bgh_generous', max_traces_shown=7,
@@ -4796,38 +4929,63 @@ def run_mde_evaluate(net_result, prediction_start, prediction_length, results_di
         target_lib = target_lib.ravel()
         target_pred = target_pred.ravel()
 
-    pca = PCA(n_components=D)
-    pca.fit(pool_lib)
-    pca_lib_proj, pca_pred_proj = pca.transform(pool_lib), pca.transform(pool_pred)
-    pca_predicted = LinearRegression().fit(pca_lib_proj, target_lib).predict(pca_pred_proj)
-
-    dmap_model = dmap.DiffusionMap.from_sklearn(
-        n_evecs=D, k=dmap_k, epsilon=dmap_epsilon,
-        neighbor_params={'n_jobs': -1, 'algorithm': 'kd_tree'},
-    )
-    dmap_model.fit(pool_lib)
-    dmap_lib_proj, dmap_pred_proj = dmap_model.transform(pool_lib), dmap_model.transform(pool_pred)
-    dmap_predicted = LinearRegression().fit(dmap_lib_proj, target_lib).predict(dmap_pred_proj)
-
-    pca_cae, dmap_cae = _cae(target_pred, pca_predicted), _cae(target_pred, dmap_predicted)
-    if combined:
-        pca_score = float(np.nanmean([
-            tsls._score(target_pred[:, i], pca_predicted[:, i], target_metric, gammaDelta=gamma_delta)
-            for i in range(len(targets))
-        ]))
-        dmap_score = float(np.nanmean([
-            tsls._score(target_pred[:, i], dmap_predicted[:, i], target_metric, gammaDelta=gamma_delta)
-            for i in range(len(targets))
-        ]))
+    # PCA and diffusion-map are optional, unsupervised comparison
+    # baselines, not part of MDE's own causal claim (docs/tsls-mde-gmn-
+    # pipeline.tex sec:diagnostics's own linknote) -- guarded independently
+    # per this codebase's own established "one degenerate item dead-ends
+    # cleanly, it doesn't crash the batch" convention (already applied to
+    # Stage 1/Stage 2's per-node exceptions, sec:stage1-parallelization;
+    # rebuild_at_best_params()'s per-network Generate() divergence,
+    # sec:validation; run_tp_vs_rho_sweep()'s per-target skip,
+    # sec:diagnostics), which run_mde_evaluate() itself had never received.
+    # A failure in either is logged with the exception text and the
+    # target(s) it occurred on, and that baseline's own numbers/plot panel
+    # are skipped -- the run continues to completion and archives per
+    # sec:cluster-storage regardless of which (if either) baseline
+    # actually produced a result.
+    pca_predicted = pca_pred_proj = pca_cae = pca_score = None
+    status, value = _run_baseline_with_timeout(_pca_baseline_worker, (pool_lib, pool_pred, target_lib, D))
+    if status == 'ok':
+        pca_predicted, pca_pred_proj = value
+        pca_cae = _cae(target_pred, pca_predicted)
+        pca_score = _score_baseline(target_pred, pca_predicted, targets, combined,
+                                     target_metric, gamma_delta)
+    elif status == 'timeout':
+        print(f"{net_result['network_id']}: PCA baseline exceeded "
+              f"{MDE_EVALUATE_BASELINE_TIMEOUT_SECONDS}s wall-clock bound for {targets} -- "
+              f"terminated and skipped (MDE and any other baseline continue unaffected)",
+              flush=True)
     else:
-        pca_score = tsls._score(target_pred, pca_predicted, target_metric, gammaDelta=gamma_delta)
-        dmap_score = tsls._score(target_pred, dmap_predicted, target_metric, gammaDelta=gamma_delta)
+        print(f"{net_result['network_id']}: PCA baseline FAILED for {targets}: {value} -- "
+              f"skipping this baseline (MDE and any other baseline continue unaffected)",
+              flush=True)
 
+    dmap_predicted = dmap_pred_proj = dmap_cae = dmap_score = None
+    status, value = _run_baseline_with_timeout(
+        _dmap_baseline_worker, (pool_lib, pool_pred, target_lib, D, dmap_k, dmap_epsilon))
+    if status == 'ok':
+        dmap_predicted, dmap_pred_proj = value
+        dmap_cae = _cae(target_pred, dmap_predicted)
+        dmap_score = _score_baseline(target_pred, dmap_predicted, targets, combined,
+                                      target_metric, gamma_delta)
+    elif status == 'timeout':
+        print(f"{net_result['network_id']}: Diffusion-map baseline exceeded "
+              f"{MDE_EVALUATE_BASELINE_TIMEOUT_SECONDS}s wall-clock bound for {targets} -- "
+              f"terminated and skipped (MDE and any other baseline continue unaffected)",
+              flush=True)
+    else:
+        print(f"{net_result['network_id']}: Diffusion-map baseline FAILED for {targets}: {value} -- "
+              f"skipping this baseline (MDE and any other baseline continue unaffected)",
+              flush=True)
+
+    pca_summary = (f"PCA CAE={pca_cae:.2f} {target_metric}={pca_score:.3f}"
+                   if pca_cae is not None else "PCA FAILED (skipped)")
+    dmap_summary = (f"D-Map CAE={dmap_cae:.2f} {target_metric}={dmap_score:.3f}"
+                    if dmap_cae is not None else "D-Map FAILED (skipped)")
     print(f"run_mde_evaluate ({net_result['network_id']}, D={D}): "
           f"MDE CAE={ {t: round(mde_cae[t], 2) for t in targets} } "
           f"{target_metric}={ {t: round(mde_score[t], 3) for t in targets} } | "
-          f"PCA CAE={pca_cae:.2f} {target_metric}={pca_score:.3f} | "
-          f"D-Map CAE={dmap_cae:.2f} {target_metric}={dmap_score:.3f}", flush=True)
+          f"{pca_summary} | {dmap_summary}", flush=True)
 
     # ---- Figure: 4 stacked panels, matching the reference -----------------
     maxN = min(max_traces_shown, D)
@@ -4859,16 +5017,20 @@ def run_mde_evaluate(net_result, prediction_start, prediction_length, results_di
         mde_xy = np.column_stack([mde_predicted[tx], mde_predicted[ty]])
         axs[0].plot(mde_xy[:, 0], mde_xy[:, 1], lw=lw,
                      label=f'MDE   {mde_cae[tx] + mde_cae[ty]:.2f}')
-        axs[0].plot(pca_predicted[:, 0], pca_predicted[:, 1], lw=lw, label=f'PCA    {pca_cae:.2f}')
-        axs[0].plot(dmap_predicted[:, 0], dmap_predicted[:, 1], lw=lw, label=f'D-Map {dmap_cae:.2f}')
+        if pca_predicted is not None:
+            axs[0].plot(pca_predicted[:, 0], pca_predicted[:, 1], lw=lw, label=f'PCA    {pca_cae:.2f}')
+        if dmap_predicted is not None:
+            axs[0].plot(dmap_predicted[:, 0], dmap_predicted[:, 1], lw=lw, label=f'D-Map {dmap_cae:.2f}')
         axs[0].set_xlabel(tx)
         axs[0].set_ylabel(ty)
         axs[0].set_ylabel('Predictions', fontsize=12)
     else:
         target = targets[0]
         axs[0].set_ylabel('Predictions', fontsize=12)
-        axs[0].plot(x_pred, dmap_predicted, lw=lw, label=f'D-Map {dmap_cae:.2f}')
-        axs[0].plot(x_pred, pca_predicted, lw=lw, label=f'PCA    {pca_cae:.2f}')
+        if dmap_predicted is not None:
+            axs[0].plot(x_pred, dmap_predicted, lw=lw, label=f'D-Map {dmap_cae:.2f}')
+        if pca_predicted is not None:
+            axs[0].plot(x_pred, pca_predicted, lw=lw, label=f'PCA    {pca_cae:.2f}')
         axs[0].plot(x_pred, mde_predicted[target], lw=lw, label=f'MDE   {mde_cae[target]:.2f}')
         axs[0].plot(x_pred, target_pred, color='black', lw=lw, label=target)
     axs[0].legend(title='CAE', bbox_to_anchor=(1.0, 1.0), loc='upper left')
@@ -4881,13 +5043,24 @@ def run_mde_evaluate(net_result, prediction_start, prediction_length, results_di
         axs[1].plot(x_pred, data_after_mde[driver].iloc[pred_slice], lw=lw, label=driver)
     axs[1].legend(title='MDE', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
 
-    for col in range(maxN):
-        axs[2].plot(x_pred, dmap_pred_proj[:, col], lw=lw, label=str(col))
-    axs[2].legend(title='Diffusion Map', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
+    # Panels 2/3: same skip-not-crash handling as panel 0 above -- a failed
+    # baseline has no projection to plot, so the panel is left empty with
+    # an explicit label rather than raising on a None subscript.
+    if dmap_pred_proj is not None:
+        for col in range(maxN):
+            axs[2].plot(x_pred, dmap_pred_proj[:, col], lw=lw, label=str(col))
+        axs[2].legend(title='Diffusion Map', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
+    else:
+        axs[2].text(0.5, 0.5, 'Diffusion Map baseline FAILED (see log)', ha='center', va='center',
+                    transform=axs[2].transAxes, fontsize=9, color='gray')
 
-    for col in range(maxN):
-        axs[3].plot(x_pred, pca_pred_proj[:, col], lw=lw, label=str(col))
-    axs[3].legend(title='PCA', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
+    if pca_pred_proj is not None:
+        for col in range(maxN):
+            axs[3].plot(x_pred, pca_pred_proj[:, col], lw=lw, label=str(col))
+        axs[3].legend(title='PCA', ncol=1, bbox_to_anchor=(1.0, 1.0), loc='upper left')
+    else:
+        axs[3].text(0.5, 0.5, 'PCA baseline FAILED (see log)', ha='center', va='center',
+                    transform=axs[3].transAxes, fontsize=9, color='gray')
 
     fig.tight_layout()
     fig.subplots_adjust(hspace=0.3 if combined else 0.04)
@@ -5269,16 +5442,30 @@ def main():
                       f'R7 diagnostics END -- {time.perf_counter() - r7_start:.1f}s')
         # R19 (docs/review-actions-v1.md): per constructed network -- needs
         # net_result['network']['Graph'] for D (direct-driver count), which
-        # mde_results (depth-0-only) doesn't carry.
-        for network_id, run in gmn_runs.items():
-            r19_start = time.perf_counter()
-            _log_progress(progress_log_path, f'{network_id}: R19 run_mde_evaluate START')
-            run_mde_evaluate(run['net_result'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
-                              cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
-                              exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
-            _log_progress(progress_log_path,
-                          f'{network_id}: R19 run_mde_evaluate END -- '
-                          f'{time.perf_counter() - r19_start:.1f}s')
+        # mde_results (depth-0-only) doesn't carry. Gated on its own
+        # RUN_MDE_EVALUATE, deliberately separate from RUN_MDE_DIAGNOSTICS
+        # above (see that config's own docstring) -- R7's two diagnostics
+        # just above are unaffected and always run when RUN_MDE_DIAGNOSTICS
+        # is set, regardless of this toggle.
+        if cfg['RUN_MDE_EVALUATE']:
+            for network_id, run in gmn_runs.items():
+                r19_start = time.perf_counter()
+                _log_progress(progress_log_path, f'{network_id}: R19 run_mde_evaluate START')
+                run_mde_evaluate(run['net_result'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
+                                  cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
+                                  exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
+                _log_progress(progress_log_path,
+                              f'{network_id}: R19 run_mde_evaluate END -- '
+                              f'{time.perf_counter() - r19_start:.1f}s')
+        else:
+            # Logged once per run, unconditionally -- a skipped diagnostic
+            # that never appears anywhere is exactly how §18.6's swallowed
+            # exception went unnoticed for so long (docs/review-findings.md).
+            msg = ("R19 run_mde_evaluate SKIPPED by configuration "
+                   "(RUN_MDE_EVALUATE=false) -- see docs/review-findings.md's "
+                   "'diffusion-map crash and hang' finding for why this defaults off")
+            print(msg, flush=True)
+            _log_progress(progress_log_path, msg)
     else:
         print(f"MODE={cfg['MODE']!r} / RUN_MDE_DIAGNOSTICS={cfg['RUN_MDE_DIAGNOSTICS']}: "
               f"skipping MDE-only diagnostics.", flush=True)

@@ -418,6 +418,21 @@ CCM_LIB_SIZES_ROWS="16,24,40,64,160,400,800"  # absolute row counts for the CCM 
 MAX_TP=20                        # max forecast horizon (steps) for the Tp-vs-rho sweep
 GRID_RHO_THRESHOLD=0.9           # highlight threshold for the univariate E/tau grid figure
 RUN_MDE_DIAGNOSTICS=true         # default: true. Set false to skip the MDE-only diagnostic figures entirely
+# RUN_MDE_EVALUATE: gates ONLY run_mde_evaluate() (R19's PCA/diffusion-map
+# baseline comparison) -- deliberately separate from RUN_MDE_DIAGNOSTICS
+# above, which still gates run_tp_vs_rho_sweep()/run_univariate_e_tau_grid()
+# regardless of this setting. Default false: docs/review-findings.md's
+# "diffusion-map crash and hang" finding -- pydiffmap's own diffusion-map
+# fit, on real TSLS data, has been observed to both raise (a ValueError,
+# reproduced in 1.8s at an 800-row scale) and hang indefinitely (past 74
+# CPU-minutes with no completion, at a real ~31,000-row scale), and the
+# mechanism for the hang specifically is NOT yet diagnosed. Both an
+# exception guard and a wall-clock bound now exist around this call for
+# whoever turns it back on, but the toggle is what actually protects a run
+# while it stays off. R19 is optional tooling, not part of the causal
+# claim -- skipping it is a legitimate configuration, not a workaround, and
+# its absence is logged once per run rather than silent either way.
+RUN_MDE_EVALUATE=false           # default: false. See the finding above before setting true
 
 # ---- Parallelism -------------------------------------------------------------
 # NOTE: no TSLS_MDE_GMN_INTERACTION_MATRIX_OUTER_CORES here -- unlike
@@ -693,6 +708,7 @@ export TSLS_MDE_GMN_THETA_RANGE="${THETA_RANGE}"
 export TSLS_MDE_GMN_MAX_TP="${MAX_TP}"
 export TSLS_MDE_GMN_GRID_RHO_THRESHOLD="${GRID_RHO_THRESHOLD}"
 export TSLS_MDE_GMN_RUN_MDE_DIAGNOSTICS="${RUN_MDE_DIAGNOSTICS}"
+export TSLS_MDE_GMN_RUN_MDE_EVALUATE="${RUN_MDE_EVALUATE}"
 export TSLS_MDE_GMN_CORES="${SLURM_CPUS_PER_TASK}"
 export TSLS_MDE_GMN_METRIC="${METRIC}"
 export TSLS_MDE_GMN_TARGET_METRIC="${TARGET_METRIC}"
