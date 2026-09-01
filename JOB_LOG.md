@@ -5,6 +5,1733 @@ submissions (see scripts/batch/submit.sh), newest entry first.
 
 <!-- new entries inserted below this line -->
 
+## Job 40684253
+
+Generated: 2026-09-01T10:24:42+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40665921**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_40665921 | job_40684253 |
+|---|---|---|
+| GENERATE_LENGTH | 200 | 400 |
+| MDE_D | 4 | 6 |
+| MULTI_MDE_E | 3 | 8 |
+| NESTED_M | 3 | 4 |
+| REGION_CHANNEL_CAP | 15 | 30 |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_40665921/tsls-mde-gmn.sbatch
++++ job_40684253/tsls-mde-gmn.sbatch
+@@ -1,9 +1,9 @@
+ #!/bin/bash
+ #SBATCH --job-name=run_tsls_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=48:00:00
++#SBATCH --time=96:00:00
+ #SBATCH --mem=64G
+-#SBATCH --cpus-per-task=32
++#SBATCH --cpus-per-task=64
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell) runs,
+ # so no shell variable expansion happens here. Pointed directly at
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+### Plain-language summary
+
+Same config as job_40582445 (`REGION_CHANNEL_CAP=30`/`MDE_D=6`/
+`NESTED_M=4`/`MULTI_MDE_E=8`/`GENERATE_LENGTH=400`), resubmitted with
+`--time=24:00:00`->`96:00:00`, `--mem=32G`->`64G`,
+`--cpus-per-task=16`->`64`. job_40582445 is still running at the time of
+this submission -- 10h56m elapsed, stuck at 4/7 Stage 2 nodes done for
+several hours with its own progress log estimating ~13h still remaining
+just for that one wave (its own `--time=24:00:00` budget leaves only
+~13h left, so it is at real risk of hitting the walltime before
+completing). This job runs the same larger-scale config in parallel with
+real headroom, rather than waiting to see if job_40582445 finishes or
+times out first. The `--cpus-per-task` bump (16->64) also directly
+targets Stage 2's own per-node inner-parallelism: this wave has 7 nodes
+(`outer_workers=min(7,cores)`), so at 16 cores each node only got
+`inner_workers≈2`; at 64 cores each node gets `inner_workers≈9`, which
+should meaningfully speed up each node's own ranking-stage/CCM-gate work,
+not just add idle headroom.
+
+---
+
+
+## Job 40665921
+
+Generated: 2026-09-01T08:28:25+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40664609**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40664609
+
+Generated: 2026-09-01T08:13:10+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40664457**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40664457
+
+Generated: 2026-09-01T08:12:18+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40582445**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_40582445 | job_40664457 |
+|---|---|---|
+| GENERATE_LENGTH | 400 | 200 |
+| MDE_D | 6 | 4 |
+| MULTI_MDE_E | 8 | 3 |
+| NESTED_M | 4 | 3 |
+| REGION_CHANNEL_CAP | 30 | 15 |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_40582445/tsls-mde-gmn.sbatch
++++ job_40664457/tsls-mde-gmn.sbatch
+@@ -1,9 +1,9 @@
+ #!/bin/bash
+ #SBATCH --job-name=run_tsls_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=24:00:00
+-#SBATCH --mem=32G
+-#SBATCH --cpus-per-task=16
++#SBATCH --time=48:00:00
++#SBATCH --mem=64G
++#SBATCH --cpus-per-task=32
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell) runs,
+ # so no shell variable expansion happens here. Pointed directly at
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40582445
+
+Generated: 2026-08-31T23:26:51+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40580126**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40580126
+
+Generated: 2026-08-31T23:11:35+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40577533**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40577533
+
+Generated: 2026-08-31T22:56:20+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40577382**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40577382
+
+Generated: 2026-08-31T22:55:24+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40563312**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_40563312 | job_40577382 |
+|---|---|---|
+| GENERATE_LENGTH | 200 | 400 |
+| MDE_D | 4 | 6 |
+| MULTI_MDE_E | 3 | 8 |
+| NESTED_M | 3 | 4 |
+| REGION_CHANNEL_CAP | 15 | 30 |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40563312
+
+Generated: 2026-08-31T21:49:30+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40561813**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._ (this job is the retry that actually got past the /bucket
+outage -- the real code diff carrying the R22 fix, the interactive
+3D-network-plot redesign, and `multi_proper_embed_dimension` lives on
+job 40561419's own entry above, the first submission attempt of this
+same code)
+
+### Result
+
+**Success.** `PIPELINE COMPLETE -- 9467.4s total` (~2.6h). **R22 fix
+confirmed on a real run**, not just the toy regression test: the
+`gmn_generate_forecast_head_position_x_head_position_y` figure now shows
+the Forecast() trace correctly windowed around `generate_start` (~row
+38070) with no stray mislabeled trace near time 0, and `FORECAST_PLOT_RANGE=
+windowed` now actually clips the view as intended.
+
+Same depth-0 outcome as job 40421505: `GMN_MODE=combined`'s joint gate
+selected zero real observables again, so the entire 11-node network came
+from Stage 2's own lagged-driver search.
+
+**Generate() fidelity**: `head_position_y` correlation 0.915 (strong,
+close to job 40421505's own 0.960); `head_position_x` -0.369 (poor,
+anti-correlated -- consistent with job 40421505's -0.363). Driver-node f1
+fidelity: 9/9 drivers score 1.0 for the Generate()-based per-node score.
+
+**Forecast() rho (now meaningful, post-R22)**: `head_position_y` -0.509,
+`head_position_x` 0.350 -- both weak/poor one-step-ahead skill for the
+two targets themselves, while all 9 driver (non-target) nodes score a
+perfect 1.0 f1. Separately, `gmn_fidelity_rho()` (a different, harder
+test -- does a fresh Simplex predict the real series *from* the
+generated series) is much more mixed for those same drivers: `CA1_10_tsls`
+1.0, `CA1_14_tsls` 0.976, `OFC_5_tsls` 0.857, but `CA1_2_tsls`, `mPFC_5_tsls`,
+`mPFC_9_tsls`, `mPFC_4_tsls`, `OFC_1_tsls`, `OFC_7_tsls` all score 0.0 --
+several drivers predict one step ahead well but their own free-running
+Generate() trajectory doesn't reproduce the real dynamics closely enough
+for this stricter cross-check.
+
+`RUN_MDE_EVALUATE=false` skipped cleanly; both targets' Tp-vs-rho sweep
+skipped as designed (zero MDE-selected columns each, since the joint
+depth-0 seed found nothing).
+
+---
+
+
+## Job 40561813
+
+Generated: 2026-08-31T21:34:14+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40561770**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40561770
+
+Generated: 2026-08-31T21:33:12+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40561419**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40561419
+
+Generated: 2026-08-31T21:29:28+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40421505**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_40421505/tsls-mde-gmn.py
++++ job_40561419/tsls-mde-gmn.py
+@@ -438,6 +438,38 @@
+     graph node structurally, with no partition awareness of its own)
+     doesn't crash on an empty embedding spec.
+ 
++    This passthrough is now sliced to Parameters.pred's own row range
++    (found via direct investigation of a real run's diagnostic figure --
++    docs/review-findings.md's R22 for the full trace) rather than
++    returning self.data in full. Network.py sets
++    dataLib_i = range(self.data.shape[0]) in Forecast mode ("all data
++    since lib & pred are specified"), so self.data always holds the ENTIRE
++    dataset here, not a pred-restricted slice -- returning it whole used to
++    make this node's own Forecast() output thousands of rows longer than
++    every SMap node's own short pred-range Predictions Series. Since
++    gmn.GMN.Forecast() (gmn/GMN.py) assembles DataOut via plain per-node
++    column assignment and takes the shared 'Time' column only from
++    Network.TopologicalSorted[0] -- almost always a source/leaf node like
++    this one, since it has no in-edges -- that full-length passthrough
++    silently became DataOut's own row index and its 'Time' column's real
++    values (0..N-1). Every SMap node's own short Predictions Series (a
++    fresh 0-based pandas index, confirmed empirically against a live
++    pyEDM.SMap call: its 'Predictions' column's index is always 0-based
++    regardless of what its own 'Time' column reports) then pandas-aligned
++    onto only the first `pred_end - pred_start + 1` of those row labels --
++    mislabeling genuinely-near-generate_start predictions as though they
++    occurred at the very start of the recording, and forcing every
++    downstream .dropna() (run_forecast_diagnostic()'s own forecast_out)
++    down to just that falsely-early sliver. This corrupted both the
++    Forecast() trace's plotted x-position (the "small trace at the
++    beginning" regardless of FORECAST_PLOT_RANGE) and the Forecast rho/f1
++    scores printed in its title (scored against actual[0:few-hundred] --
++    real data from the start of the recording -- instead of the actual
++    generate_start window the prediction was computed from). Slicing to
++    the same pred range every SMap node uses gives this node's own output
++    the same length and 0-based index as theirs, so gmn's naive assembly
++    aligns everything correctly instead of accidentally.
++
+     (3) `columns=df.columns[1:-1]` used to drop BOTH `time` (first) AND
+     the spec's own last entry -- since spec is self-lags-then-in-edges,
+     that last entry is always the node's last discovered driver whenever
+@@ -462,7 +494,13 @@
+     graph = self.Network.Graph
+     is_external = self.name in graph.graph.get('external_inputs', set())
+     if is_external and graph.graph.get('external_input_mode', 'real_data') == 'real_data':
+-        return (self.data[self.data.columns[0]], self.data[self.name])
++        time_col = self.data.columns[0]
++        pred = self.Parameters.pred
++        if len(pred) and not pred.isspace():
++            pred_start, pred_end = (int(x) for x in pred.split())
++            sliced = self.data.iloc[pred_start - 1:pred_end].reset_index(drop=True)
++            return (sliced[time_col], sliced[self.name])
++        return (self.data[time_col], self.data[self.name])
+ 
+     Parameters = self.Parameters
+     data       = self.data
+@@ -4668,6 +4706,12 @@
+                         color='tab:red', lw=1, label='Generate()')
+             ax.plot(time_idx, forecast_pred, color='tab:purple', lw=1.2, ls=':', label='Forecast()')
+             ax.axvline(generate_start, color='gray', ls='--', lw=0.8)
++            # R22 (docs/review-findings.md): defensive second layer -- clips
++            # the view to the intended window regardless of what any stray
++            # out-of-window data (a future variant of the leaf-passthrough
++            # mislabeling this section's own fix addresses) might otherwise
++            # stretch matplotlib's autoscale to.
++            ax.set_xlim(plot_start, plot_end)
+             ax.set_title(f"{node}   Forecast {node_metric}={rhos[node]:.3f}", fontsize=10)
+             ax.legend(fontsize=7, loc='upper right')
+ 
+```
+
+### Plain-language summary
+
+Same scale/config as job 40421505 (REGION_CHANNEL_CAP=15, MDE_D=4,
+NESTED_M=3, LAG_STEP=4, GMN_MODE=combined, TP=20,
+FORECAST_PLOT_RANGE=windowed) -- no parameter changes. This run re-exercises
+that same configuration purely to pick up code changes made since:
+
+- **R22 fix (the diff shown above)**: `gmn_generate_forecast_*_part*.png`
+  from job 40421505 showed every subplot with a small, mislabeled
+  `Forecast()` trace stuck near the very start of the recording (x≈0), a
+  huge gap, then the real `generate_start`-anchored cluster -- and
+  `FORECAST_PLOT_RANGE="windowed"` looked identical to `"full"` because of
+  it. Root cause (docs/review-findings.md's R22, traced through `gmn`'s own
+  source, not guessed): the `EXTERNAL_INPUT_MODE='real_data'` leaf
+  passthrough in `_generalized_node_forecast()` returned the network's
+  *entire* dataset instead of a `pred`-range slice: since `gmn.GMN.Forecast()`
+  takes its shared `Time` column only from whichever node is first in
+  topological order (almost always a leaf, since leaves have no in-edges),
+  that full-length passthrough silently defined `DataOut`'s own row index --
+  every other node's own short, correctly-computed prediction window then
+  pandas-aligned onto the *first* few hundred of those labels, relabeling
+  data genuinely computed near `generate_start` as though it occurred at
+  time 0. This wasn't just a plotting quirk: the `Forecast f1`/
+  `Forecast correlation` scores printed in each subplot's own title were
+  being scored against real data from the start of the recording instead of
+  the actual `generate_start` window, so every such score from job 40421505
+  onward (until this fix) should be treated as invalid. Fixed by slicing the
+  leaf passthrough to the same `pred` range every other node already uses,
+  plus an explicit `ax.set_xlim(plot_start, plot_end)` added as a defensive
+  second layer. Regression-tested against a real (tiny) `gmn.GMN(...).Forecast()`
+  call, not just inspected in isolation (`tests/test_r22_forecast_window_alignment.py`
+  -- confirmed to genuinely fail without the fix and pass with it, by
+  temporarily reverting and re-testing). Does **not** affect `Generate()`'s
+  own outputs/fidelity scoring (`gmn_fidelity_rho()`) -- that path already
+  used each node's own correctly-computed window, independent of this bug.
+- **Interactive 3D network plot redesign** (`network_3d_{network_id}.png`
+  -> `.html`): `plot_3d_network()` now renders via `plotly` instead of a
+  static matplotlib PNG. Only nodes nested-MDE actually found drivers for
+  (Stage 1/2 network members) sit on the x-y plane; every driver with no
+  drivers of its own (a real-observable leaf, or a lagged copy of an
+  observable -- including a node's own AR self-loop) is lifted onto the
+  z-axis as its own distinct point, with arrows (fanning out to every node
+  it actually feeds, rather than duplicated once per consumer as the old
+  design did) showing the real driver relationships, rotatable/zoomable/
+  hoverable in a browser. `simple-mde-gmn.py`'s own copy of this function is
+  deliberately left as the old static PNG for now (not ported).
+- **`multi_proper_mde` per-candidate auto-embedding-dimension** (already
+  active in this config via `GMN_MODE=combined`): `MULTI_MDE_E` is now a
+  ceiling (ceiling=3 here) for a per-candidate auto-selected E, via the new
+  `multi_proper_embed_dimension()`, rather than one static E applied
+  identically to every candidate in the joint CCM gate -- confirmed against
+  a brute-force independent recomputation that different candidates
+  genuinely resolve to different E values.
+
+None of this changes network topology or Generate() fidelity -- expect this
+run's own selected drivers/generated trajectories to look similar to job
+40421505's, with a correct (not mislabeled) Forecast() diagnostic figure and
+scores, and the new interactive HTML network figure in place of the old PNG.
+
+---
+
+
+## Job 40499372
+
+Generated: 2026-08-31T16:34:53+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_39024423**
+
+### Parameter changes (slurm_script)
+
+| Parameter | job_39024423 | job_40499372 |
+|---|---|---|
+| CCM_LIB_SIZES_ROWS | _(unset)_ | 16,24,40,64,160,400,800 |
+| CCM_LIB_SIZE_PCTS | _(unset)_ | 2,3,5,8,12,20,30,50 |
+| CCM_PREFILTER_E | _(unset)_ | 7 |
+| CCM_PREFILTER_RHO_MIN | _(unset)_ | 0.2 |
+| CCM_SAMPLE | _(unset)_ | 20 |
+| CCM_SLOPE | _(unset)_ | 0.01 |
+| CCM_WINDOW_ROWS | _(unset)_ | 800 |
+| CROSS_MAP_RHO_MIN | 0.1 | 0.2 |
+| DATA_FILE | J1620210605_epoch_8_freq_1_Hz.csv | J1620210605_epoch_8_freq_40_Hz.csv |
+| EMBED_DIM_RHO_MIN | 0.1 | 0.2 |
+| EXCLUSION_RADIUS | auto | 0 |
+| E_MAX | 16 | 13 |
+| E_STEP | 2 | 4 |
+| GAMMA_DELTA | _(unset)_ | 2 |
+| GENERATE_LENGTH | 40 | 200 |
+| GENERATE_START_STEP | 2 | 1 |
+| GMN_MODE | separate | combined |
+| GRID_RHO_THRESHOLD | _(unset)_ | 0.9 |
+| INTERACTION_MATRIX_OUTER_CORES | 4 | _(unset)_ |
+| LAG_STEP | 1 | 4 |
+| LIBSIZE_RATIOS | _(unset)_ | 0.05,0.10,0.20,0.40,0.6,0.8,0.9 |
+| LIB_RATIO | 0.75 | 0.7 |
+| MAX_TP | _(unset)_ | 20 |
+| MAX_WINDOW_ROWS | _(unset)_ | 30000 |
+| MDE_D | 10 | 4 |
+| METRIC | _(unset)_ | f1 |
+| MIN_PRED_EVENTS | _(unset)_ | 20 |
+| MULTI_MDE_E | _(unset)_ | 3 |
+| MULTI_MDE_TARGET_AGGREGATE | _(unset)_ | mean |
+| NESTED_M | 5 | 3 |
+| REGION_CHANNEL_CAP | 30 | 15 |
+| RUN_MDE_DIAGNOSTICS | _(unset)_ | true |
+| RUN_MDE_EVALUATE | _(unset)_ | false |
+| STAGE2_ALLOW_REAL_OBSERVABLES | false | true |
+| TARGET_METRIC | _(unset)_ | correlation |
+| TARGET_RANKING_WINDOW_ROWS | _(unset)_ | 1000 |
+| TAU_MIN | -15 | -9 |
+| TAU_STEP | 2 | 4 |
+| THETA_RANGE | _(unset)_ | 0.01,0.1,0.3,0.5,0.75,1,1.5,2,3,4,5,6,7,8,9 |
+| TP | 10 | 20 |
+
+### Batch script design changes (slurm_script, excludes parameter block above)
+
+```diff
+--- job_39024423/slurm_script
++++ job_40499372/slurm_script
+@@ -1,32 +1,23 @@
+ #!/bin/bash
+-#SBATCH --job-name=run_simple_mde_gmn
++#SBATCH --job-name=run_tsls_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=4-00:00:00
+-#SBATCH --mem=300G
+-#SBATCH --cpus-per-task=64
++#SBATCH --time=24:00:00
++#SBATCH --mem=32G
++#SBATCH --cpus-per-task=16
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+-# parses #SBATCH directives itself before this script (or any shell)
+-# runs, so no shell variable expansion happens here (this is why this
+-# can't just read $FLASH_BASE/pao_rotation_results below, even though
+-# that's the exact same literal value). Pointed directly at
++# parses #SBATCH directives itself before this script (or any shell) runs,
++# so no shell variable expansion happens here. Pointed directly at
+ # /flash/FukaiU/j-tominaga/pao_rotation_results/ (a fixed path that must
+ # already exist -- created once via `mkdir -p`, persists across jobs the
+-# same way $FLASH_BASE itself already does) rather than .../job_%j/
+-# because Slurm opens these files before the job starts, i.e. before
+-# $SLURM_JOB_ID is known and before this script's own `mkdir -p
+-# "$OUT_DIR"` below could create that subdirectory -- a per-job
+-# subdirectory in this path would fail with "couldn't open output file"
+-# since Slurm doesn't create missing directories. The EXIT trap further
+-# down (search SLURM LOG RELOCATION) moves these into $OUT_DIR once it
+-# exists, so they still end up alongside the rest of that job's output.
+-# On /flash, not /home (per explicit direction: home storage is limited,
+-# so every output this pipeline produces -- not just scratch -- now
+-# lands on /flash instead; see OUT_DIR/MDE_GMN_RESULTS_DIR below for the
+-# rest of that change) -- these two files alone can reach tens of MB per
+-# job on their own (job 37939058's .err was ~23MB, almost entirely
+-# pyEDM UserWarning spam from Stage 2's exhaustive per-node candidate
+-# pools), which was a real, measured contributor to the home-quota
+-# problem, not a hypothetical one.
++# same way $FLASH_BASE itself already does) rather than .../job_%j/ because
++# Slurm opens these files before the job starts, i.e. before $SLURM_JOB_ID
++# is known and before this script's own `mkdir -p "$OUT_DIR"` below could
++# create that subdirectory. The EXIT trap further down (search SLURM LOG
++# RELOCATION) moves these into $OUT_DIR once it exists.
++# On /flash, not /home, and shared with simple-mde-gmn.sbatch's own
++# pao_rotation_results/ directory -- same reasoning as that file: home
++# storage is limited, and Slurm logs alone have reached tens of MB per job
++# on the sibling pipeline.
+ #SBATCH --output=/flash/FukaiU/j-tominaga/pao_rotation_results/%x-%j.out
+ #SBATCH --error=/flash/FukaiU/j-tominaga/pao_rotation_results/%x-%j.err
+ #SBATCH --mail-user=j-tominaga@oist.jp
+@@ -40,10 +31,7 @@
+ 
+ module purge
+ # ADJUST: only needed if the cluster doesn't expose Python 3 in PATH by
+-# default on compute nodes. If your uv venv bundles its own Python
+-# interpreter (created with `uv python install` / `uv venv --python ...`)
+-# you may not need this line at all -- try commenting it out if you get
+-# "module not found" errors.
++# default on compute nodes.
+ module load python/3.11
+ 
+ # ADJUST: absolute path to your uv venv directory.
+@@ -51,61 +39,25 @@
+ source "${VENV_DIR}/bin/activate"
+ 
+ export MPLBACKEND=Agg
+-# dimx.MDE / apps.InteractionMatrix / pyEDM's EmbedDimension and
+-# PredictNonlinear already parallelize across SLURM_CPUS_PER_TASK worker
+-# *processes* (passed through as MDE_GMN_CORES below); leaving BLAS/OpenMP
+-# free to also multithread within each worker oversubscribes the node, so
+-# pin those to 1 rather than mirroring SLURM_CPUS_PER_TASK the way a
+-# single-process job would.
++# gmn.GMN / PredictNonlinear already parallelize across SLURM_CPUS_PER_TASK
++# worker *processes* (passed through as TSLS_MDE_GMN_CORES below); leaving
++# BLAS/OpenMP free to also multithread within each worker oversubscribes
++# the node, so pin those to 1 rather than mirroring SLURM_CPUS_PER_TASK the
++# way a single-process job would.
+ export OMP_NUM_THREADS=1
+ export MKL_NUM_THREADS=1
+ export OPENBLAS_NUM_THREADS=1
+ 
+-# FIXED CAVEAT (root-caused after several full jobs each ran ~2 days
+-# regardless of dataset size, MODE, or MDE_D): apps.InteractionMatrix's
+-# own outer worker pool (sized by MDE_GMN_INTERACTION_MATRIX_OUTER_CORES
+-# below) calls pyEDM.CCM() once per channel pair (dimx.MDE similarly once
+-# per candidate column), and CCM() used to spawn its *own* fresh
+-# multiprocessing pool sized to the full visible cpu_count() on every
+-# call, for work that only ever amounts to 4-8 tiny KDTree tasks -- an
+-# 8-core request could produce ~90 live processes, not 8, since the two
+-# pools didn't coordinate (peak processes was outer-cores x cpu_count()).
+-# With REGION_CHANNEL_CAP uncapped (~470 real channels) that's ~100k+
+-# CCM() calls each paying a full spawn-and-reimport cost -- process-spawn
+-# overhead dominating actual compute by orders of magnitude, which is why
+-# cutting DATA_FILE resolution or MDE_D didn't help wall time.
+-# scripts/src/simple-mde-gmn.py now monkeypatches pyEDM.CCM's inner pool
+-# away entirely (`_sequential_ccm_workers`), so this is no longer live --
+-# kept here for provenance. MDE_GMN_INTERACTION_MATRIX_OUTER_CORES
+-# (default 2) is still a separate knob from --cpus-per-task since it's
+-# the one thing sizing real parallelism across column pairs now.
+-#
+-# REMAINING CAVEAT (unfixed, just made avoidable): even with the above
+-# fixed, the per-node theta search in run_theta_search() -- one
+-# GENERATE_LENGTH-step recursive Generate() call across every node -- is
+-# still the single most expensive part of this pipeline. That cost is
+-# unavoidable the *first* time a given network/data combination is
+-# searched, but resubmitting the identical combination used to redo it
+-# every time regardless. REUSE_BEST_PARAMS below skips it on an exact
+-# repeat -- see that parameter's own comment. (This used to also include
+-# a len(E) x len(tau) grid on top of the per-node theta retuning --
+-# removed per explicit direction once E and each driver's delay started
+-# coming from nested-MDE's own network instead of a separate search; see
+-# scripts/backup/simple-mde-gmn_pre-delay-embedding.py for that version.)
+-
+ # ADJUST: project checkout location and lab/group allocation on this cluster.
+ PROJ_DIR="$HOME/pao_rotation"
+ 
+ # ADJUST: <GROUP> to this lab's actual flash allocation. Defined here
+-# (rather than down in the /flash scratch setup section below, where it
+-# used to live) because OUT_DIR now needs it too -- per explicit
+-# direction, ALL of this pipeline's output now lands on /flash, not
+-# /home ($PROJ_DIR/results): home storage is limited, and this isn't
+-# hypothetical -- job 37939058 alone (a tiny smoke test) left a ~23MB
+-# .err file (see the #SBATCH --error comment above). Only JOB_LOG.md and
+-# the small .snapshots/ job-description cache (see JOB DESCRIPTION below)
+-# stay on $PROJ_DIR -- both are small, human/git-facing provenance
+-# records, not pipeline output data.
++# (rather than down in the /flash scratch setup section, where it used to
++# live) because OUT_DIR needs it too -- same reasoning as
++# simple-mde-gmn.sbatch: home storage is limited, so every output this
++# pipeline produces now lands on /flash instead. Only JOB_LOG.md and the
++# small .snapshots/ job-description cache stay on $PROJ_DIR -- both are
++# small, human/git-facing provenance records, not pipeline output data.
+ FLASH_BASE="/flash/FukaiU/${USER}"
+ mkdir -p "${FLASH_BASE}"
+ chmod 2755 "${FLASH_BASE}"
+@@ -113,50 +65,42 @@
+ # Live for the run's whole duration (not the ephemeral per-job tempdir
+ # further below, which is deleted on every exit including a timeout) --
+ # matches $FLASH_BASE/pao_rotation_results, the literal path the #SBATCH
+-# --output/--error directives above are hardcoded to, so this job's
+-# Slurm logs and its actual pipeline output end up side by side the same
+-# way they always have on /home. Only persistent past this job's own
+-# lifetime on a crash/timeout, though, not on a clean exit -- see the
+-# `cleanup` EXIT trap in the SLURM LOG RELOCATION + OUTPUT ARCHIVING
+-# section below and OUTPUT_ARCHIVE_DIR's own comment for the full
+-# archive-then-clear behavior on success. /flash is scratch again for
+-# this pipeline's purposes; the durable copy is OUTPUT_ARCHIVE_DIR
+-# (bucket).
++# --output/--error directives above are hardcoded to. Only persistent past
++# this job's own lifetime on a crash/timeout, though, not on a clean exit
++# -- see the `cleanup` EXIT trap below and OUTPUT_ARCHIVE_DIR's own comment
++# for the full archive-then-clear behavior on success.
+ OUT_DIR="$FLASH_BASE/pao_rotation_results/job_${SLURM_JOB_ID}"
+ mkdir -p "$OUT_DIR"
+ 
+ # ADJUST: durable cross-job cache pool for expensive, fingerprint-reusable
+-# pipeline stages (MDE forward-selection, nested-MDE/CCM network
+-# construction, theta search, generate-start sweep -- see the module
+-# docstring's SEARCH REUSE section and each stage's own docstring).
+-# Deliberately NOT under $OUT_DIR (/flash) or $PROJ_DIR (/home) -- this
+-# is a growing pool of machine-only cache artifacts across every run ever
+-# submitted, not this project's own human-facing per-job output; bucket
+-# storage has the headroom (and durability -- unlike /flash, not subject
+-# to the same scratch-cleanup expectations) for that instead. CACHE_ROOT
+-# is the read side (searched recursively, across every past job's
+-# subdirectory, by find_cached_best_params()-style lookups); RUN_CACHE_DIR
+-# is this job's own write side -- each cacheable stage syncs its result
+-# here *immediately* upon completing (not just at job end like $OUT_DIR),
+-# so it survives even if this job later crashes or times out.
+-CACHE_ROOT="/bucket/FukaiU/tominaga/pao_rotation/mde_gmn_cache"
++# pipeline stages (MDE forward-selection, network construction, theta
++# search, generate-start sweep -- see tsls-mde-gmn.py's own module
++# docstring's SEARCH REUSE section). Deliberately NOT under $OUT_DIR
++# (/flash) or $PROJ_DIR (/home) -- a growing pool of machine-only cache
++# artifacts across every run ever submitted, not this project's own
++# human-facing per-job output; bucket storage has the headroom (and
++# durability -- unlike /flash, not subject to the same scratch-cleanup
++# expectations) for that instead. Separate cache pool from
++# simple-mde-gmn.sbatch's own CACHE_ROOT -- these two pipelines' cache
++# artifacts must never collide, even by coincidence of network_id/node
++# naming, since they're fingerprinted against genuinely different code and
++# data.
++CACHE_ROOT="/bucket/FukaiU/tominaga/pao_rotation/tsls_mde_gmn_cache"
+ RUN_CACHE_DIR="$CACHE_ROOT/job_${SLURM_JOB_ID}"
+ mkdir -p "$RUN_CACHE_DIR"
+ 
+ # Separate from CACHE_ROOT/RUN_CACHE_DIR above -- that pool holds only the
+-# fingerprinted, cross-job-reusable *cache* artifacts (per-node MDE
+-# selection pickles, best_params/generate_start_sweep json), not this
+-# run's actual deliverables (network edge CSVs, every diagnostic PNG,
+-# Generate() output CSVs, fidelity plots -- everything else OUT_DIR
+-# collects). This is the full-output durable archive instead: on a
+-# successful exit, the SLURM LOG RELOCATION section's `cleanup` trap below
+-# copies everything under $OUT_DIR here, then deletes the /flash copy --
+-# per explicit direction, /flash should go back to being genuine scratch
+-# (not permanent storage) now that bucket has the headroom, while still
+-# staying in place on /flash (not archived, not deleted) if the job
+-# crashes/times out/gets cancelled, so a failed run's partial output is
+-# still there to inspect.
+-OUTPUT_ARCHIVE_ROOT="/bucket/FukaiU/tominaga/pao_rotation/mde_gmn_outputs"
++# fingerprinted, cross-job-reusable *cache* artifacts, not this run's
++# actual deliverables (network edge CSVs, every diagnostic PNG, Generate()
++# output CSVs, fidelity plots -- everything else OUT_DIR collects). This is
++# the full-output durable archive instead: on a successful exit, the
++# `cleanup` trap below copies everything under $OUT_DIR here, then deletes
++# the /flash copy -- /flash is scratch, not permanent storage, now that
++# bucket has the headroom, while still staying in place on /flash (not
++# archived, not deleted) if the job crashes/times out/gets cancelled, so a
++# failed run's partial output is still there to inspect. Same architecture
++# as simple-mde-gmn.sbatch's own OUTPUT_ARCHIVE_DIR, separate pool.
++OUTPUT_ARCHIVE_ROOT="/bucket/FukaiU/tominaga/pao_rotation/tsls_mde_gmn_outputs"
+ OUTPUT_ARCHIVE_DIR="$OUTPUT_ARCHIVE_ROOT/job_${SLURM_JOB_ID}"
+ mkdir -p "$OUTPUT_ARCHIVE_DIR"
+ 
+@@ -165,30 +109,50 @@
+ # ==============================================================================
+ # The #SBATCH --output/--error above write to $FLASH_BASE/
+ # pao_rotation_results/ (flat, not $OUT_DIR -- see the ADJUST comment on
+-# those directives for why). Move them into $OUT_DIR once it exists, via
+-# a single combined EXIT trap (merged with the /flash tempdir cleanup
+-# trap below, since bash only honors the most recently registered EXIT
+-# trap -- a second `trap ... EXIT` later in this script would silently
+-# replace this one rather than stacking). Runs on every exit path,
+-# including failure/timeout/cancel, which is exactly when you most want
+-# the log sitting next to the rest of that run's output instead of loose
+-# in pao_rotation_results/.
++# those directives for why). Move them into $OUT_DIR once it exists, via a
++# single combined EXIT trap (merged with the /flash tempdir cleanup trap
++# below, since bash only honors the most recently registered EXIT trap).
++# Runs on every exit path, including failure/timeout/cancel.
+ #
+ # Also decides $OUT_DIR's own fate, based on PY_STATUS (set around the
+-# `python3 -u simple-mde-gmn.py` call below -- unset/non-"0" here means
++# `python3 -u tsls-mde-gmn.py` call below -- unset/non-"0" here means
+ # either the pipeline itself failed, or this trap fired before that line
+-# ever ran, e.g. an earlier setup failure): "0" means the pipeline
+-# completed cleanly, so this run's full output is copied to the durable
+-# OUTPUT_ARCHIVE_DIR (bucket -- see that variable's own comment) and the
+-# /flash copy is then removed, since /flash is meant to be scratch again
+-# now that bucket holds the real copy; anything else leaves $OUT_DIR
+-# exactly where it is on /flash, untouched, for post-mortem inspection --
+-# per explicit direction, crashes/OOMs/timeouts are exactly the case
+-# where you want that data still sitting on fast, directly-browsable
+-# storage rather than needing to dig it out of the archive.
++# ever ran): "0" means the pipeline completed cleanly, so this run's full
++# output is copied to the durable OUTPUT_ARCHIVE_DIR (bucket) and the
++# /flash copy is then removed; anything else leaves $OUT_DIR exactly where
++# it is on /flash, untouched, for post-mortem inspection -- crashes/OOMs/
++# timeouts are exactly the case where you want that data still sitting on
++# fast, directly-browsable storage rather than needing to dig it out of the
++# archive. Same mechanism as simple-mde-gmn.sbatch's own `cleanup` trap.
+ SLURM_OUT="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.out"
+ SLURM_ERR="$FLASH_BASE/pao_rotation_results/${SLURM_JOB_NAME}-${SLURM_JOB_ID}.err"
++# How the job actually ended, appended to the progress-monitoring log
++# (RESULTS_DIR/progress.log -- see tsls-mde-gmn.py's own _log_progress()
++# docstring) so a crash/timeout/OOM has an explicit, unambiguous final
++# line instead of the file just going silent. This is the one piece of
++# that log that CANNOT be written by Python itself: a hard kill means the
++# Python process never gets to write anything of its own. `$?` alone
++# (PY_STATUS below) can't distinguish OOM from a plain crash from a
++# timeout, so this queries sacct -- SLURM's own authoritative record --
++# with a couple of retries since its accounting can lag a few seconds
++# right at job-end. Honest limitation, not hidden: a true instantaneous
++# whole-cgroup SIGKILL (rare) can prevent this trap itself from running --
++# `sacct -j <job_id>` run separately, after the fact, is the authoritative
++# fallback in that case regardless of what this managed to write.
++log_final_outcome() {
++    local progress_log="$OUT_DIR/progress.log"
++    [ -f "$progress_log" ] || return 0
++    local slurm_state=""
++    for _ in 1 2 3; do
++        slurm_state="$(sacct -j "$SLURM_JOB_ID" --format=State -P -n 2>/dev/null | head -1 | tr -d ' ')"
++        [ -n "$slurm_state" ] && break
++        sleep 2
++    done
++    echo "$(date -Iseconds) JOB ENDED: PY_STATUS=${PY_STATUS:-unset} SLURM_STATE=${slurm_state:-unknown (sacct had no record yet -- check \`sacct -j $SLURM_JOB_ID\` manually)}" \
++        >> "$progress_log"
++}
+ cleanup() {
++    log_final_outcome
+     [ -f "$SLURM_OUT" ] && mv -f "$SLURM_OUT" "$OUT_DIR"/
+     [ -f "$SLURM_ERR" ] && mv -f "$SLURM_ERR" "$OUT_DIR"/
+     if [ "${PY_STATUS:-1}" = "0" ] && [ -d "$OUT_DIR" ]; then
+@@ -206,33 +170,26 @@
+ # ==============================================================================
+ # JOB DESCRIPTION
+ # ==============================================================================
+-# Diffs this run's simple-mde-gmn.py + simple-mde-gmn.sbatch against the
+-# rolling snapshot cache of the last simple-mde-gmn submission
+-# ($PROJ_DIR/results/.snapshots/ on /home, deliberately small and not a
+-# per-job copy -- see generate_job_description.sh's own module docstring
+-# for why),
+-# inserting a new entry into $PROJ_DIR/JOB_LOG.md (parameter-block changes
+-# as a table, everything else as unified diffs), then updates that cache
+-# to this run's files. Runs before the pipeline itself so the entry is
+-# written even if the run later fails or times out. In the common case
+-# (submitted via submit.sh) this call is a no-op -- submit.sh already
+-# wrote this job's JOB_LOG.md entry at submission time, and this script
+-# checks for that first (see generate_job_description.sh's own
+-# idempotency comment) -- but still runs here so a job started via bare
+-# `sbatch` (skipping submit.sh) still gets logged.
++# Diffs this run's tsls-mde-gmn.py + tsls-mde-gmn.sbatch against the
++# rolling snapshot cache of the last tsls-mde-gmn submission
++# ($PROJ_DIR/results/.snapshots/ -- keyed by filename, so this never gets
++# compared against a simple-mde-gmn job by mistake), inserting a new entry
++# into $PROJ_DIR/JOB_LOG.md, then updates that cache to this run's files.
++# Runs before the pipeline itself so the entry is written even if the run
++# later fails or times out. In the common case (submitted via submit.sh)
++# this call is a no-op -- submit.sh already wrote this job's JOB_LOG.md
++# entry at submission time -- but still runs here so a job started via
++# bare `sbatch` still gets logged.
+ #
+-# sbatch_src is "$0", not a hardcoded path to this canonical file: sbatch
++# sbatch_src is "$0", not a hardcoded path to this canonical file -- sbatch
+ # copies whatever file it's given verbatim into the running job, and $0
+-# reflects that actual submitted path (confirmed via `scontrol show job`'s
+-# Command= field) -- this matters if the live canonical file at
+-# scripts/batch/simple-mde-gmn.sbatch gets edited again while this job
+-# sits queued. A hardcoded canonical path here would silently diff
+-# whatever that file happens to contain *right now* instead of what this
+-# job actually launched with.
++# reflects that actual submitted path, which matters if the live canonical
++# file at scripts/batch/tsls-mde-gmn.sbatch gets edited again while this
++# job sits queued.
+ "$PROJ_DIR/scripts/batch/generate_job_description.sh" \
+     "$PROJ_DIR" "$SLURM_JOB_ID" \
+     "$0" \
+-    "$PROJ_DIR/scripts/src/simple-mde-gmn.py"
++    "$PROJ_DIR/scripts/src/tsls-mde-gmn.py"
+ 
+ # ==============================================================================
+ # /flash scratch setup
+@@ -240,26 +197,25 @@
+ 
+ umask 002
+ 
+-# FLASH_BASE itself is defined earlier now (OUT_DIR needs it too -- see
+-# that section's own comment); only the ephemeral per-job tempdir is set
+-# up here.
+-tempdir="$(mktemp -d "${FLASH_BASE}/run_simple_mde_gmn.${SLURM_JOB_ID}.XXXXXX")"
++# FLASH_BASE itself is defined earlier now (OUT_DIR needs it too); only the
++# ephemeral per-job tempdir is set up here. Only ever holds the staged
++# source/helper-module/data copy below -- actual pipeline output no longer
++# passes through here at all (see TSLS_MDE_GMN_RESULTS_DIR below), so this
++# directory being wiped on every exit, including a timeout, is not a
++# data-loss concern.
++tempdir="$(mktemp -d "${FLASH_BASE}/run_tsls_mde_gmn.${SLURM_JOB_ID}.XXXXXX")"
+ # Cleanup on exit (including this tempdir) is handled by the combined
+-# `cleanup` EXIT trap registered in the SLURM LOG RELOCATION section
+-# above -- deliberately not a second `trap ... EXIT` here, which would
+-# silently replace that one instead of stacking. Only ever holds the
+-# staged source/data copy below (COPY SOURCE FILE + INPUT DATA) -- actual
+-# pipeline output no longer passes through here at all (see
+-# MDE_GMN_RESULTS_DIR below), so this directory being wiped on every
+-# exit, including a timeout, is no longer a data-loss concern the way it
+-# used to be.
++# `cleanup` EXIT trap registered in the SLURM LOG RELOCATION + OUTPUT
++# ARCHIVING section above -- deliberately not a second `trap ... EXIT`
++# here, which would silently replace that one instead of stacking.
+ 
+ # ==============================================================================
+-# COPY SOURCE FILE + INPUT DATA
++# COPY SOURCE FILE + HELPER MODULE + INPUT DATA
+ # ==============================================================================
+ 
+ cp -av \
+-    "$PROJ_DIR/scripts/src/simple-mde-gmn.py" \
++    "$PROJ_DIR/scripts/src/tsls-mde-gmn.py" \
++    "$PROJ_DIR/scripts/src/cleaned_helper_functions.py" \
+     "$tempdir"/
+ 
+ mkdir -p "$tempdir/data"
+@@ -273,58 +229,76 @@
+ # RUN
+ # ==============================================================================
+ 
+-export MDE_GMN_DATA_DIR="$tempdir/data"
+-export MDE_GMN_DATA_FILE="${DATA_FILE}"
++export TSLS_MDE_GMN_DATA_DIR="$tempdir/data"
++export TSLS_MDE_GMN_DATA_FILE="${DATA_FILE}"
+ # Points directly at OUT_DIR (not a subdirectory of the ephemeral
+-# $tempdir) -- see the /flash scratch setup section's own comment: every
+-# pipeline output, including the theta search's/generate-start sweep's
+-# own intra-job checkpoint files, now survives a timeout/crash rather
+-# than being deleted with $tempdir before ever reaching $OUT_DIR. What
+-# happens to OUT_DIR itself after the run -- archived to bucket and
+-# cleared from /flash on success, left alone on /flash on a
+-# crash/timeout -- is the `cleanup` EXIT trap's job (see OUTPUT_ARCHIVE_DIR
+-# above); nothing here needs to change based on that.
+-export MDE_GMN_RESULTS_DIR="$OUT_DIR"
+-export MDE_GMN_MODE="${MODE}"
+-export MDE_GMN_GMN_MODE="${GMN_MODE}"
+-export MDE_GMN_TARGETS="${TARGETS}"
+-export MDE_GMN_D="${MDE_D}"
+-export MDE_GMN_TP="${TP}"
+-export MDE_GMN_EMBED_DIM_RHO_MIN="${EMBED_DIM_RHO_MIN}"
+-export MDE_GMN_CROSS_MAP_RHO_MIN="${CROSS_MAP_RHO_MIN}"
+-export MDE_GMN_EXCLUSION_RADIUS="${EXCLUSION_RADIUS}"
+-export MDE_GMN_NESTED_M="${NESTED_M}"
+-export MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES="${STAGE2_ALLOW_REAL_OBSERVABLES}"
+-export MDE_GMN_REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP}"
+-export MDE_GMN_DELAY_SOURCE="${DELAY_SOURCE}"
+-export MDE_GMN_LAG_MODE="${LAG_MODE}"
+-export MDE_GMN_LAG_DENSITY="${LAG_DENSITY}"
+-export MDE_GMN_LAG_STEP="${LAG_STEP}"
+-export MDE_GMN_DELAY_SET="${DELAY_SET}"
+-export MDE_GMN_LIB_RATIO="${LIB_RATIO}"
+-export MDE_GMN_MDE_VALIDATION_RATIO="${MDE_VALIDATION_RATIO}"
+-export MDE_GMN_GENERATE_LENGTH="${GENERATE_LENGTH}"
++# $tempdir) -- every pipeline output, including the theta search's/
++# generate-start sweep's own intra-job checkpoint files, survives a
++# timeout/crash rather than being deleted with $tempdir before ever
++# reaching $OUT_DIR. What happens to OUT_DIR itself after the run --
++# archived to bucket and cleared from /flash on success, left alone on
++# /flash on a crash/timeout -- is the `cleanup` EXIT trap's job (see
++# OUTPUT_ARCHIVE_DIR above); nothing here needs to change based on that.
++export TSLS_MDE_GMN_RESULTS_DIR="$OUT_DIR"
++export TSLS_MDE_GMN_MODE="${MODE}"
++export TSLS_MDE_GMN_GMN_MODE="${GMN_MODE}"
++export TSLS_MDE_GMN_TARGETS="${TARGETS}"
++export TSLS_MDE_GMN_D="${MDE_D}"
++export TSLS_MDE_GMN_TP="${TP}"
++export TSLS_MDE_GMN_EMBED_DIM_RHO_MIN="${EMBED_DIM_RHO_MIN}"
++export TSLS_MDE_GMN_CROSS_MAP_RHO_MIN="${CROSS_MAP_RHO_MIN}"
++export TSLS_MDE_GMN_CCM_PREFILTER_RHO_MIN="${CCM_PREFILTER_RHO_MIN}"
++export TSLS_MDE_GMN_CCM_PREFILTER_E="${CCM_PREFILTER_E}"
++export TSLS_MDE_GMN_LIBSIZE_RATIOS="${LIBSIZE_RATIOS}"
++export TSLS_MDE_GMN_MULTI_MDE_E="${MULTI_MDE_E}"
++export TSLS_MDE_GMN_MULTI_MDE_TARGET_AGGREGATE="${MULTI_MDE_TARGET_AGGREGATE}"
++export TSLS_MDE_GMN_EXCLUSION_RADIUS="${EXCLUSION_RADIUS}"
++export TSLS_MDE_GMN_NESTED_M="${NESTED_M}"
++export TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES="${STAGE2_ALLOW_REAL_OBSERVABLES}"
++export TSLS_MDE_GMN_REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP}"
++export TSLS_MDE_GMN_DELAY_SOURCE="${DELAY_SOURCE}"
++export TSLS_MDE_GMN_LAG_MODE="${LAG_MODE}"
++export TSLS_MDE_GMN_LAG_DENSITY="${LAG_DENSITY}"
++export TSLS_MDE_GMN_LAG_STEP="${LAG_STEP}"
++export TSLS_MDE_GMN_DELAY_SET="${DELAY_SET}"
++export TSLS_MDE_GMN_LIB_RATIO="${LIB_RATIO}"
++export TSLS_MDE_GMN_MDE_VALIDATION_RATIO="${MDE_VALIDATION_RATIO}"
++export TSLS_MDE_GMN_GENERATE_LENGTH="${GENERATE_LENGTH}"
+ export GMN_EXCLUSION_RADIUS="${GMN_EXCLUSION_RADIUS}"
+-export MDE_GMN_FORECAST_PLOT_RANGE="${FORECAST_PLOT_RANGE}"
+-export MDE_GMN_GENERATE_START_MIN_OFFSET="${GENERATE_START_MIN_OFFSET}"
+-export MDE_GMN_GENERATE_START_MAX_OFFSET="${GENERATE_START_MAX_OFFSET}"
+-export MDE_GMN_GENERATE_START_STEP="${GENERATE_START_STEP}"
+-export MDE_GMN_E_MIN="${E_MIN}"
+-export MDE_GMN_E_MAX="${E_MAX}"
+-export MDE_GMN_E_STEP="${E_STEP}"
+-export MDE_GMN_TAU_MIN="${TAU_MIN}"
+-export MDE_GMN_TAU_MAX="${TAU_MAX}"
+-export MDE_GMN_TAU_STEP="${TAU_STEP}"
+-export MDE_GMN_CORES="${SLURM_CPUS_PER_TASK}"
+-export MDE_GMN_INTERACTION_MATRIX_OUTER_CORES="${INTERACTION_MATRIX_OUTER_CORES}"
+-export MDE_GMN_REUSE_BEST_PARAMS="${REUSE_BEST_PARAMS}"
+-# Separate from MDE_GMN_RESULTS_DIR (also persistent now, but per-job and
+-# on /flash -- see that export's own comment) -- these point at the
+-# durable *cross-job* bucket cache pool set up above so a later job can
+-# actually find a past run's cached results to reuse, not just this run's
+-# own (see CACHE_ROOT/RUN_CACHE_DIR's own comment).
+-export MDE_GMN_PREV_RUNS_DIR="$CACHE_ROOT"
+-export MDE_GMN_RUN_CACHE_DIR="$RUN_CACHE_DIR"
++export TSLS_MDE_GMN_FORECAST_PLOT_RANGE="${FORECAST_PLOT_RANGE}"
++export TSLS_MDE_GMN_GENERATE_START_MIN_OFFSET="${GENERATE_START_MIN_OFFSET}"
++export TSLS_MDE_GMN_GENERATE_START_MAX_OFFSET="${GENERATE_START_MAX_OFFSET}"
++export TSLS_MDE_GMN_GENERATE_START_STEP="${GENERATE_START_STEP}"
++export TSLS_MDE_GMN_E_MIN="${E_MIN}"
++export TSLS_MDE_GMN_E_MAX="${E_MAX}"
++export TSLS_MDE_GMN_E_STEP="${E_STEP}"
++export TSLS_MDE_GMN_TAU_MIN="${TAU_MIN}"
++export TSLS_MDE_GMN_TAU_MAX="${TAU_MAX}"
++export TSLS_MDE_GMN_TAU_STEP="${TAU_STEP}"
++export TSLS_MDE_GMN_THETA_RANGE="${THETA_RANGE}"
++export TSLS_MDE_GMN_MAX_TP="${MAX_TP}"
++export TSLS_MDE_GMN_GRID_RHO_THRESHOLD="${GRID_RHO_THRESHOLD}"
++export TSLS_MDE_GMN_RUN_MDE_DIAGNOSTICS="${RUN_MDE_DIAGNOSTICS}"
++export TSLS_MDE_GMN_RUN_MDE_EVALUATE="${RUN_MDE_EVALUATE}"
++export TSLS_MDE_GMN_CORES="${SLURM_CPUS_PER_TASK}"
++export TSLS_MDE_GMN_METRIC="${METRIC}"
++export TSLS_MDE_GMN_TARGET_METRIC="${TARGET_METRIC}"
++export TSLS_MDE_GMN_GAMMA_DELTA="${GAMMA_DELTA}"
++export TSLS_MDE_GMN_CCM_WINDOW_ROWS="${CCM_WINDOW_ROWS}"
++export TSLS_MDE_GMN_CCM_LIB_SIZE_PCTS="${CCM_LIB_SIZE_PCTS}"
++export TSLS_MDE_GMN_CCM_SAMPLE="${CCM_SAMPLE}"
++export TSLS_MDE_GMN_CCM_SLOPE="${CCM_SLOPE}"
++export TSLS_MDE_GMN_TARGET_RANKING_WINDOW_ROWS="${TARGET_RANKING_WINDOW_ROWS}"
++export TSLS_MDE_GMN_MIN_PRED_EVENTS="${MIN_PRED_EVENTS}"
++export TSLS_MDE_GMN_MAX_WINDOW_ROWS="${MAX_WINDOW_ROWS}"
++export TSLS_MDE_GMN_CCM_LIB_SIZES_ROWS="${CCM_LIB_SIZES_ROWS}"
++export TSLS_MDE_GMN_REUSE_BEST_PARAMS="${REUSE_BEST_PARAMS}"
++# Separate from TSLS_MDE_GMN_RESULTS_DIR (also persistent now, but per-job
++# and on /flash) -- these point at the durable *cross-job* bucket cache
++# pool set up above so a later job can actually find a past run's cached
++# results to reuse, not just this run's own.
++export TSLS_MDE_GMN_PREV_RUNS_DIR="$CACHE_ROOT"
++export TSLS_MDE_GMN_RUN_CACHE_DIR="$RUN_CACHE_DIR"
+ 
+ python3 -V
+ 
+@@ -334,26 +308,23 @@
+ # on /flash; under plain `set -e`, a nonzero exit here would jump straight
+ # to the trap without ever reaching the capture line below.
+ set +e
+-python3 -u simple-mde-gmn.py
++python3 -u tsls-mde-gmn.py
+ PY_STATUS=$?
+ set -e
+ 
+ if [ "$PY_STATUS" -ne 0 ]; then
+-    echo "simple-mde-gmn.py exited with status ${PY_STATUS} -- leaving output on /flash at ${OUT_DIR} for inspection (not archived to bucket)." >&2
++    echo "tsls-mde-gmn.py exited with status ${PY_STATUS} -- leaving output on /flash at ${OUT_DIR} for inspection (not archived to bucket)." >&2
+     exit "$PY_STATUS"
+ fi
+ 
+ # ==============================================================================
+ # SAVE OUTPUTS
+ # ==============================================================================
+-# No cp step needed here anymore -- MDE_GMN_RESULTS_DIR points directly
+-# at $OUT_DIR now (see that export's own comment), so the pipeline has
+-# already been writing straight to /flash throughout the run. What
+-# happens next -- archived to bucket and removed from /flash, since
+-# PY_STATUS=0 here means the run completed cleanly -- is handled by the
+-# `cleanup` EXIT trap above (see that section's own comment for why it's
+-# there rather than here: it has to run on every exit path, not just this
+-# clean one).
++# No cp step needed here anymore -- TSLS_MDE_GMN_RESULTS_DIR points
++# directly at $OUT_DIR now, so the pipeline has already been writing
++# straight to /flash throughout the run. What happens next -- archived to
++# bucket and removed from /flash, since PY_STATUS=0 here means the run
++# completed cleanly -- is handled by the `cleanup` EXIT trap above.
+ 
+ echo "========================================================"
+ echo "Job ${SLURM_JOB_ID} complete. Archiving outputs to bucket and clearing the /flash copy:"
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_39024423/tsls-mde-gmn.py
++++ job_40499372/tsls-mde-gmn.py
+@@ -948,14 +948,24 @@
+     # cleaned_helper_functions.multi_proper_mde -- forward-selecting drivers
+     # that jointly predict every TARGETS column at once -- instead of the
+     # GMN_MODE='separate' behaviour of one independent
+-    # cleaned_helper_functions.proper_mde call per target. multi_proper_mde
+-    # has no per-candidate EmbedDimension auto-select path (that's a
+-    # single-target, Pearson-rho-only pyEDM routine), so it requires a
+-    # static, explicit E > 0 -- MULTI_MDE_E supplies it. MULTI_MDE_TARGET_
+-    # AGGREGATE picks how per-target scores are combined at both the ranking
+-    # and CCM-gate stages ('mean': avoid penalizing a driver that's strong
+-    # for one target and weak for another; 'min': only accept drivers that
+-    # are simultaneously good for every target).
++    # cleaned_helper_functions.proper_mde call per target.
++    #
++    # UPDATED: multi_proper_mde now DOES have a per-candidate auto-select
++    # path (multi_proper_embed_dimension() -- a joint rho-vs-E sweep scored
++    # via _simplex_multi_metric, the same per-target-then-aggregate
++    # primitive the ranking stage already used), mirroring single-target
++    # proper_mde's own E<=0 sentinel convention. main()'s own depth-0 seed
++    # call always passes E=0 (auto-select unconditionally -- same
++    # "hardcoded at the one call site" precedent as the single-target path,
++    # see run_mde_for_target()'s own max_e docstring) and reuses
++    # MULTI_MDE_E as the sweep's own ceiling (max_e) rather than a fixed
++    # value -- the same "reuse an already-exposed budget rather than
++    # introduce a second one" convention MDE_D already established for the
++    # single-target path. MULTI_MDE_TARGET_AGGREGATE picks how per-target
++    # scores are combined at all three stages now (ranking, the E-select
++    # sweep, and the CCM gate): 'mean' avoids penalizing a driver that's
++    # strong for one target and weak for another; 'min' only accepts
++    # drivers that are simultaneously good for every target.
+     cfg['MULTI_MDE_E'] = int(os.environ.get('TSLS_MDE_GMN_MULTI_MDE_E', 3))
+     cfg['MULTI_MDE_TARGET_AGGREGATE'] = os.environ.get('TSLS_MDE_GMN_MULTI_MDE_TARGET_AGGREGATE', 'mean')
+     if cfg['MULTI_MDE_TARGET_AGGREGATE'] not in ('mean', 'min'):
+@@ -1962,16 +1972,18 @@
+                                ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
+                                reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
+                                data_file=None, data_file_sha256=None, code_fingerprint=None,
+-                               cache_stage='stage1', E=3, target_aggregate='mean'):
++                               cache_stage='stage1', E=3, max_e=10, target_aggregate='mean'):
+     '''Multi-target counterpart of run_mde_for_target() -- GMN_MODE='combined'
+     only (see load_config()'s MULTI_MDE_E docstring and main()'s own MDE
+     block). Runs cleaned_helper_functions.multi_proper_mde's forward
+     selection ONCE for the whole `targets` group, picking drivers that
+     jointly predict every target at once, instead of one independent
+     proper_mde call per target. Every other argument has the identical
+-    meaning to run_mde_for_target()'s own; `E` (static, required -- see
+-    multi_proper_mde's own docstring for why no auto-select path exists)
+-    and `target_aggregate` are the two genuinely new knobs.
++    meaning to run_mde_for_target()'s own; `E`/`max_e` (E<=0 auto-selects
++    per candidate via multi_proper_embed_dimension(), bounded by max_e --
++    see multi_proper_mde's own docstring; E>0 is still the static,
++    every-candidate-identical original behavior) and `target_aggregate`
++    are the genuinely new knobs.
+ 
+     Returns the same dict shape as run_mde_for_target() except keyed by
+     `'targets'` (list) instead of a single `'target'` -- main() builds one
+@@ -2041,7 +2053,7 @@
+     result = tsls.multi_proper_mde(
+         ccm_df, targets=list(targets), columns=observable_columns, D=mde_d,
+         lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)],
+-        Tp=tp, E=E, exclusionRadius=exclusion_radius,
++        Tp=tp, E=E, maxE=max_e, exclusionRadius=exclusion_radius,
+         libSizes=ccm_lib_sizes_rows, sample=ccm_sample, ccmSlope=ccm_slope,
+         crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
+         metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
+@@ -3372,74 +3384,215 @@
+ 
+ 
+ def plot_3d_network(net_result, target_colors, save_path):
+-    '''R14 (docs/review-actions-v1.md): the explicit 3D representation its
+-    "leaf nodes become external inputs" decision requires -- MODE='MDE-GMN'
+-    only (needs the per-edge delay data and interior/external partition
+-    only that mode's MultiDiGraph has, both absent from MODE='GMN''s plain
+-    DiGraph). x-y plane: a standard graph layout of the real-observable
+-    (delay=0) backbone from Stages 1 and 2 -- the same structural skeleton
+-    draw_colored_network() draws in 2D. z axis: for every node, one vertical
+-    stick per delay!=0 driver nested-MDE discovered for it, rising from
+-    z=0 to z=|delay| at that node's own (x, y) -- literally "the delayed
+-    observables that further drive each node," stacked above it rather than
+-    laid out in the plane, since a lagged driver is a copy of an existing
+-    real observable at a different point in time, not a new spatial
+-    position. External inputs (partition_network()'s own classification,
+-    read from graph.graph -- not re-derived here) are drawn as a distinct
+-    marker shape (triangle vs. circle) from interior nodes, per the task's
+-    own explicit requirement, independent of target coloring.'''
+-    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 -- registers the 3d projection
++    '''Interactive HTML redesign of the 3D network figure (superseding the
++    earlier static-PNG version this docstring used to describe). MODE=
++    'MDE-GMN' only (needs the per-edge delay data and interior/external
++    partition only that mode's MultiDiGraph has, both absent from MODE=
++    'GMN''s plain DiGraph).
++
++    x-y plane (z=0): only the INTERIOR nodes (>=1 discovered driver --
++    genuine Stage 1/2 network members, partition_network()'s own
++    classification read from graph.graph, not re-derived here), laid out
++    via a spring layout of the real-observable (delay=0) edges between two
++    interior nodes -- the same structural skeleton draw_colored_network()
++    draws in 2D, just restricted to interior nodes since external inputs
++    are handled entirely separately below.
++
++    Everything that drives an interior node but has no drivers of its own
++    is lifted onto the z-axis as its own distinct "entity" -- never stacked
++    directly above whichever node it happens to feed (the old design's
++    approach, which duplicated a driver once per consumer). One entity per
++    distinct (driver, delay!=0) pair (a lagged copy of an observable -- this
++    covers both a genuine external input's lagged edge and an interior
++    node's own AR self-loop, since a lagged copy is conceptually distinct
++    from that observable's own real-time position either way), labeled
++    f"{driver}_delay_{delay}"; plus one entity per external-input driver
++    whose edge has delay==0 (a real-observable leaf), labeled with its own
++    plain name. Each entity gets a single (x, y) position solved by a second
++    spring-layout pass with the interior positions held fixed (see
++    _entity_layout()), so a single driver feeding several nodes appears once
++    with arrows fanning out to each of them, rather than duplicated per
++    consumer. z = |delay| for a lagged-copy entity, or a small fixed
++    elevation for a delay==0 leaf entity (enough to read as "off the plane"
++    without implying a false delay magnitude).
++
++    Every graph edge becomes one directed arrow (a plotly Cone trace,
++    plotly's own 3D substitute for a directed arrowhead -- there is no 3D
++    analog of draw_networkx_edges()'s 2D arrows) between its resolved
++    driver position and its driven node's plane position, colored by delay
++    using the same viridis mapping draw_colored_network() uses so the two
++    figures read consistently. Nodes are drawn as three marker shapes --
++    circle (interior), diamond (real-observable leaf entity), square
++    (lagged-copy entity, colored by delay rather than by target) -- the
++    same 3-way distinction the old design drew via circle/triangle/square
++    (plotly's 3D markers have no triangle symbol; diamond substitutes).
++    Rendered via plotly rather than matplotlib specifically for the
++    interactivity (rotate/zoom/hover) a static image can't offer.'''
++    import plotly.graph_objects as go
++    import matplotlib.colors as mcolors
++
++    def _color(c):
++        '''Normalizes any color target_colors/our own fallbacks/viridis's
++        cmap() might hand us -- a matplotlib named string ('tab:red'), a raw
++        RGBA float tuple (what cfg['TARGET_COLORS'] actually contains in
++        production, via plt.get_cmap('tab10')(i % 10)), or an already-hex
++        string -- into a plotly-safe '#rrggbb' hex string. Plotly's color
++        validators reject bare RGBA tuples (mistaken for numeric colorscale
++        data) and non-CSS names like 'tab:red'.'''
++        return mcolors.to_hex(mcolors.to_rgba(c))
+ 
+     graph = net_result['network']['Graph']
+     interior_nodes = graph.graph.get('interior_nodes', set())
+-    external_inputs = graph.graph.get('external_inputs', set())
+ 
+-    real_edges = [(u, v) for u, v, d in graph.edges(data=True) if d['delay'] == 0]
++    all_delays = sorted({d['delay'] for _, _, d in graph.edges(data=True)})
++    cmap = plt.get_cmap('viridis')
++    delay_color = {
++        d: _color(cmap(i / max(1, len(all_delays) - 1)))
++        for i, d in enumerate(all_delays)
++    }
++    nonzero_abs_delays = sorted({abs(d) for d in all_delays if d != 0})
++    leaf_z = nonzero_abs_delays[0] * 0.5 if nonzero_abs_delays else 1.0
++
++    # ---- pass 1: interior-only real-observable backbone layout (z=0) ----
++    interior_real_edges = [
++        (u, v) for u, v, d in graph.edges(data=True)
++        if d['delay'] == 0 and u in interior_nodes and v in interior_nodes
++    ]
+     backbone = nx.DiGraph()
+-    backbone.add_nodes_from(graph.nodes)
+-    backbone.add_edges_from(real_edges)
+-    pos = nx.spring_layout(backbone, seed=0)
++    backbone.add_nodes_from(interior_nodes)
++    backbone.add_edges_from(interior_real_edges)
++    interior_pos = nx.spring_layout(backbone, seed=0) if interior_nodes else {}
++
++    # ---- classify every edge into "already on the plane" (interior ->
++    # interior, delay==0) or "driven by an elevated entity" ----
++    entity_meta = {}     # label -> {'driver':.., 'delay':.., 'kind': 'leaf'|'delay_copy'}
++    entity_out_edges = []  # (label, driven_node) -- for the pass-2 layout graph
++    for u, v, data in graph.edges(data=True):
++        delay = data['delay']
++        if delay == 0 and u in interior_nodes:
++            continue  # part of the pass-1 backbone
++        if delay == 0:
++            # u is necessarily an external input here -- external inputs
++            # have in_degree 0 by partition_network()'s own definition, so
++            # they can never be a driven node v, and any interior u with
++            # delay==0 was already excluded just above.
++            label, kind = u, 'leaf'
++        else:
++            label, kind = f'{u}_delay_{delay}', 'delay_copy'
++        entity_meta[label] = {'driver': u, 'delay': delay, 'kind': kind}
++        entity_out_edges.append((label, v))
++
++    # ---- pass 2: constrained layout -- interior positions held fixed,
++    # solve (x, y) only for the new elevated entities. spring_layout
++    # auto-seeds any node present in `combined` but absent from `pos=` at a
++    # random position scaled to the *given* positions' own magnitude, so no
++    # manual initial guess is needed for the new entity nodes. ----
++    combined = nx.DiGraph()
++    combined.add_nodes_from(interior_nodes)
++    combined.add_edges_from(entity_out_edges)
++    if interior_nodes:
++        solved_pos = nx.spring_layout(
++            combined, pos=dict(interior_pos), fixed=list(interior_nodes), seed=0,
++        )
++    else:
++        solved_pos = nx.spring_layout(combined, seed=0) if combined.nodes else {}
+ 
+-    fig = plt.figure(figsize=(12, 10))
+-    ax = fig.add_subplot(111, projection='3d')
++    pos2d = dict(interior_pos)
++    for label in entity_meta:
++        pos2d[label] = solved_pos.get(label, (0.0, 0.0))
++
++    def _xyz(name):
++        x, y = pos2d[name]
++        if name in entity_meta:
++            m = entity_meta[name]
++            z = abs(m['delay']) if m['kind'] == 'delay_copy' else leaf_z
++        else:
++            z = 0.0
++        return float(x), float(y), float(z)
+ 
+-    for u, v in real_edges:
+-        xu, yu = pos[u]
+-        xv, yv = pos[v]
+-        ax.plot([xu, xv], [yu, yv], [0, 0], color='gray', linewidth=1, alpha=0.6, zorder=1)
++    def _src_label(u, delay):
++        if delay == 0 and u in interior_nodes:
++            return u
++        if delay == 0:
++            return u
++        return f'{u}_delay_{delay}'
+ 
++    # ---- edge traces, grouped by delay (line + arrowhead cone per group) ----
++    edges_by_delay = defaultdict(list)
+     for u, v, data in graph.edges(data=True):
+-        if data['delay'] == 0:
+-            continue
+-        x, y = pos[v]
+-        z = abs(data['delay'])
+-        ax.plot([x, x], [y, y], [0, z], color='steelblue', linewidth=1, alpha=0.5, zorder=2)
+-        ax.scatter([x], [y], [z], color='steelblue', marker='s', s=15, zorder=6)
+-        ax.text(x, y, z, u, fontsize=5, color='steelblue')
++        delay = data['delay']
++        edges_by_delay[delay].append((_xyz(_src_label(u, delay)), _xyz(v)))
+ 
+-    for node in graph.nodes:
+-        x, y = pos[node]
+-        is_external = node in external_inputs
+-        color = target_colors.get(node, 'tab:orange' if is_external else 'tab:blue')
+-        marker = '^' if is_external else 'o'
+-        ax.scatter([x], [y], [0], color=color, marker=marker, s=100,
+-                   edgecolors='black', linewidths=0.8, zorder=5)
+-        ax.text(x, y, 0, node, fontsize=7, fontweight='bold')
++    fig = go.Figure()
++    for delay, segs in sorted(edges_by_delay.items()):
++        color = delay_color[delay]
++        xs, ys, zs = [], [], []
++        for (x0, y0, z0), (x1, y1, z1) in segs:
++            xs += [x0, x1, None]
++            ys += [y0, y1, None]
++            zs += [z0, z1, None]
++        fig.add_trace(go.Scatter3d(
++            x=xs, y=ys, z=zs, mode='lines',
++            line=dict(color=color, width=3),
++            name=f'delay={delay}', legendgroup=f'delay_{delay}',
++            hoverinfo='none', opacity=0.7,
++        ))
++
++        cx, cy, cz, cu, cv, cw = [], [], [], [], [], []
++        for (x0, y0, z0), (x1, y1, z1) in segs:
++            tx, ty, tz = x1 - x0, y1 - y0, z1 - z0
++            cx.append(x0 + 0.88 * tx); cy.append(y0 + 0.88 * ty); cz.append(z0 + 0.88 * tz)
++            cu.append(tx); cv.append(ty); cw.append(tz)
++        fig.add_trace(go.Cone(
++            x=cx, y=cy, z=cz, u=cu, v=cv, w=cw,
++            anchor='tail', sizemode='absolute', sizeref=0.15,
++            colorscale=[[0, color], [1, color]], showscale=False,
++            legendgroup=f'delay_{delay}', showlegend=False, hoverinfo='none',
++        ))
++
++    # ---- node traces: interior (circle), leaf (diamond), delay-copy (square) ----
++    def _node_trace(names, symbol, colors, size, label):
++        if not names:
++            return None
++        xs, ys, zs = zip(*(_xyz(n) for n in names))
++        return go.Scatter3d(
++            x=xs, y=ys, z=zs, mode='markers+text', text=list(names),
++            textposition='top center', textfont=dict(size=9),
++            marker=dict(symbol=symbol, size=size, color=list(colors),
++                        line=dict(color='black', width=1)),
++            name=label,
++        )
+ 
+-    node_handles = [
+-        plt.Line2D([0], [0], marker='o', color='w', markersize=10,
+-                   markerfacecolor='tab:blue', markeredgecolor='black', label='interior'),
+-        plt.Line2D([0], [0], marker='^', color='w', markersize=10,
+-                   markerfacecolor='tab:orange', markeredgecolor='black', label='external input'),
+-    ]
+-    ax.legend(handles=node_handles, loc='upper left', bbox_to_anchor=(1.0, 1.0),
+-              title=f"n_interior={len(interior_nodes)}, n_external={len(external_inputs)}")
+-    ax.set_xlabel('X (real-observable network layout)')
+-    ax.set_ylabel('Y (real-observable network layout)')
+-    ax.set_zlabel('|delay| (lagged driver depth)')
+-    ax.set_title(f"3D network projection ({net_result['network_id']})")
+-    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+-    plt.close(fig)
++    interior_list = sorted(interior_nodes)
++    leaf_list = sorted(n for n, m in entity_meta.items() if m['kind'] == 'leaf')
++    delay_copy_list = sorted(n for n, m in entity_meta.items() if m['kind'] == 'delay_copy')
++
++    for t in (
++        _node_trace(interior_list, 'circle',
++                    [_color(target_colors.get(n, 'tab:blue')) for n in interior_list],
++                    8, f'interior (n={len(interior_list)})'),
++        _node_trace(leaf_list, 'diamond',
++                    [_color(target_colors.get(entity_meta[n]['driver'], 'tab:orange'))
++                     for n in leaf_list],
++                    7, f'external input, real-time (n={len(leaf_list)})'),
++        _node_trace(delay_copy_list, 'square',
++                    [delay_color[entity_meta[n]['delay']] for n in delay_copy_list],
++                    6, f'lagged driver copy (n={len(delay_copy_list)})'),
++    ):
++        if t is not None:
++            fig.add_trace(t)
++
++    fig.update_layout(
++        scene=dict(
++            xaxis_title='X (interior network layout)',
++            yaxis_title='Y (interior network layout)',
++            zaxis_title='|delay| (0 = real-time leaf elevation)',
++        ),
++        title=f"3D network projection ({net_result['network_id']})",
++        legend_title=f"n_interior={len(interior_list)}, "
++                     f"n_external_leaf={len(leaf_list)}, n_lagged_copy={len(delay_copy_list)}",
++    )
++    fig.write_html(save_path)
+ 
+ 
+ # =============================================================================
+@@ -5242,7 +5395,7 @@
+                     run_cache_dir=cfg['RUN_CACHE_DIR'],
+                     data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
+                     code_fingerprint=code_fingerprint,
+-                    E=cfg['MULTI_MDE_E'], target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
++                    E=0, max_e=cfg['MULTI_MDE_E'], target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
+                 )
+             except Exception as exc:
+                 # Same failure mode _failed_mde_result() guards against below
+@@ -5354,7 +5507,7 @@
+         if cfg['MODE'] == 'MDE-GMN':
+             plot_3d_network(
+                 net_result, cfg['TARGET_COLORS'],
+-                cfg['RESULTS_DIR'] / f"network_3d_{net_result['network_id']}.png",
++                cfg['RESULTS_DIR'] / f"network_3d_{net_result['network_id']}.html",
+             )
+         gmn_runs[net_result['network_id']] = {'group': group, 'net_result': net_result}
+ 
+```
+
+---
+
+
+## Job 40421505
+
+Generated: 2026-08-31T08:19:18+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40420963**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+### Plain-language summary
+
+Same mid-scale calibration config as job 40386309, but with `LAG_STEP`
+dropped from 1 to 4 (`GMN_MODE=combined`, `TP=20`, `GENERATE_LENGTH=200`,
+`NESTED_M=3` also carried over from the hand-tuning between those two
+jobs) -- submitted specifically to test whether a coarser Stage 2 lag
+stride fixes the runaway Stage 2 cost diagnosed on job 40386309 (a single
+node's forward-selection loop consuming 100+ dimensions to select many
+different delays of only a handful of distinct real observables, each
+dimension re-ranking almost the entire candidate pool -- confirmed via a
+live `py-spy` stack dump; see `docs/review-findings.md`).
+
+**Result: success, and the fix is confirmed.** `PIPELINE COMPLETE --
+10443.9s total` (~2.9h) -- the first mid-scale (`REGION_CHANNEL_CAP=15`)
+run to reach a clean finish. Direct before/after against job 40386309's
+own per-node Stage 2 timings: `head_position_y` 25731.3s -> 2645.9s
+(~9.7x), a zero-selection node 26536.2s -> 35.4s (~750x), whole Stage 2
+wave 26536.4s -> 2681.4s (~9.9x). `RUN_MDE_EVALUATE=false` skipped
+cleanly as designed.
+
+**Real (mixed) fidelity results, reported honestly:** `head_position_y`
+Generate() fidelity correlation 0.960 (strong); `head_position_x`
+-0.363 (poor -- actually anti-correlated with the real trajectory).
+Driver-node f1 fidelity: 7/9 drivers score 1.0; `CA1_2_tsls` and
+`mPFC_4_tsls` both score 0.0. Both targets' depth-0 joint seed
+(`multi_proper_mde` under `GMN_MODE=combined`) found zero real
+observables directly -- the entire 11-node, 62-edge network came from
+Stage 2's own lagged-pool search instead, which always runs on every
+node regardless of Stage 1's own outcome there.
+
+---
+
+
+## Job 40420963
+
+Generated: 2026-08-31T08:04:02+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40419017**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+```diff
+--- job_40419017/tsls-mde-gmn.py
++++ job_40420963/tsls-mde-gmn.py
+@@ -1896,6 +1896,16 @@
+         {c: observable_and_delay(c, raw_columns)[1] for c in observable_columns}
+         if raw_columns is not None else None
+     )
++    # Diagnostic only (found while investigating a real, very slow Stage 2
++    # call, docs/review-findings.md) -- same raw_columns-gated pattern as
++    # column_delay above, just the observable half of observable_and_delay()'s
++    # own return value instead of the delay half. Lets proper_mde's own
++    # verbose log show how many *distinct* real observables a long run has
++    # actually found, alongside how many dimensions it took to find them.
++    column_observable = (
++        {c: observable_and_delay(c, raw_columns)[0] for c in observable_columns}
++        if raw_columns is not None else None
++    )
+ 
+     with inner_pool_ctx as inner_pool:
+         result = tsls.proper_mde(
+@@ -1906,6 +1916,7 @@
+             crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
+             metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
+             verbose=True, pool=inner_pool, column_delay=column_delay,
++            column_observable=column_observable,
+         )
+ 
+     mde_out = pd.DataFrame({'rho': result['MDErho']})
+```
+
+---
+
+
+## Job 40419017
+
+Generated: 2026-08-31T07:48:47+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40418907**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40418907
+
+Generated: 2026-08-31T07:48:09+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40386309**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_40386309 | job_40418907 |
+|---|---|---|
+| FORECAST_PLOT_RANGE | full | windowed |
+| GENERATE_LENGTH | 100 | 200 |
+| GENERATE_START_MAX_OFFSET | 1 | 20 |
+| GENERATE_START_STEP | 50 | 1 |
+| GMN_MODE | separate | combined |
+| LAG_STEP | 1 | 4 |
+| NESTED_M | 1 | 3 |
+| STAGE2_ALLOW_REAL_OBSERVABLES | false | true |
+| TP | 10 | 20 |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40386309
+
+Generated: 2026-08-31T00:28:13+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40386298**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 40386298
+
+Generated: 2026-08-31T00:26:03+09:00
+
+Git commit at submission: `d0a5b1b` (uncommitted local changes vs. HEAD)
+
+Compared against: **job_40385630**
+
+### Parameter changes (tsls-mde-gmn.sbatch)
+
+| Parameter | job_40385630 | job_40386298 |
+|---|---|---|
+| GENERATE_LENGTH | 40 | 100 |
+| MDE_D | 2 | 4 |
+| NESTED_M | 2 | 1 |
+| REGION_CHANNEL_CAP | 3 | 15 |
+
+### Batch script design changes (tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_40385630/tsls-mde-gmn.sbatch
++++ job_40386298/tsls-mde-gmn.sbatch
+@@ -1,9 +1,9 @@
+ #!/bin/bash
+ #SBATCH --job-name=run_tsls_mde_gmn
+ #SBATCH --partition=compute
+-#SBATCH --time=2:00:00
+-#SBATCH --mem=16G
+-#SBATCH --cpus-per-task=8
++#SBATCH --time=24:00:00
++#SBATCH --mem=32G
++#SBATCH --cpus-per-task=16
+ # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
+ # parses #SBATCH directives itself before this script (or any shell) runs,
+ # so no shell variable expansion happens here. Pointed directly at
+```
+
+### Python pipeline changes (tsls-mde-gmn.py)
+
+_No changes._
+
+### Plain-language summary
+
+The first mid-scale run of this pipeline since the metric-routing,
+window-sizing, progress-monitoring, and R19 toggle/guard/timeout changes
+all landed (committed as `3d925f9`/`d0a5b1b` just before this
+submission). Steps up from job 40385630's smoke-test config
+(`REGION_CHANNEL_CAP=3`/`MDE_D=2`/`NESTED_M=2`/`GENERATE_LENGTH=40`,
+confirmed reaching `"Pipeline complete"` in 1089.8s) to
+`REGION_CHANNEL_CAP=15`/`MDE_D=4`/`NESTED_M=1`/`GENERATE_LENGTH=100` --
+deliberately reproducing job 38976891's own historical configuration,
+which timed out after 4+ hours on a single depth-1 wave under the old
+(fixed-800-row-window, metric-routing-bug-affected) code.
+
+Resources also stepped up (`--time=2:00:00`→`24:00:00`,
+`--mem=16G`→`32G`, `--cpus-per-task=8`→`16`) -- reasoned, not copied from
+the old 4-day/128G/64-core VALIDATION tier: 24h is 6x job 38976891's own
+budget that this identical configuration already exhausted once, sized
+generously because the window-sizing redesign is a genuine
+cost-increasing change at this scale (a slow-firing neuron can now
+resolve a ranking window up to 30,000 rows, vs. the old fixed 800) that
+has never been measured here, not because this run is expected to be
+slow. `RUN_MDE_EVALUATE` stays `false` -- the diffusion-map hang is still
+undiagnosed, and this is the wrong run to first exercise it at scale.
+
+**What this run is actually for:** both a real calibration-scale data
+point for the pipeline's own "isolate Stage 1's real cost driver at
+REGION_CHANNEL_CAP=15" open question (docs/tsls-mde-gmn-pipeline.pdf,
+Future Directions), and the next concrete step the same document's own
+Capabilities section calls for. A timeout here is itself a useful,
+informative result, not a sizing failure -- see the sbatch script's own
+extended resource-reasoning comment for the full argument.
+
+---
+
+
 ## Job 40385630
 
 Generated: 2026-08-30T23:50:22+09:00

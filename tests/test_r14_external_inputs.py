@@ -160,11 +160,32 @@ def _check_self_simulate_mode(module, name, results_dir):
     print(f"{name}: EXTERNAL_INPUT_MODE='self_simulate' PASS (A self-simulated: {generated_a})")
 
 
-def _check_partition_report_and_3d_figure(module, name, results_dir):
+def _toy_graph_with_lag_and_ar():
+    '''T <- A (delay 0, external leaf) and T <- T (delay -5, AR self-loop --
+    exercises the delay_copy code path for an interior node's own lagged
+    copy) and T <- A (delay -3, exercises the delay_copy path for an
+    external input's OWN lagged edge, a distinct entity from A's plain
+    delay=0 leaf). Only used against tsls-mde-gmn.py's interactive 3D
+    redesign -- _toy_graph() alone never creates a delay_copy entity.'''
+    graph = nx.MultiDiGraph()
+    graph.add_node('T')
+    graph.add_node('A')
+    graph.add_edge('A', 'T', delay=0, weight=0.5)
+    graph.add_edge('T', 'T', delay=-5, weight=0.3)
+    graph.add_edge('A', 'T', delay=-3, weight=0.2)
+    return graph
+
+
+def _check_partition_report_and_3d_figure(module, name, results_dir,
+                                           expected_suffix='.png', check_elevated_entities=False):
     '''R14's other two explicit deliverables: the partition report (run log
     + CSV in results_dir) and the 3D network figure, both required "on a
     normal run" -- exercised here directly against the toy graph, real
-    matplotlib/networkx calls, no mocking.'''
+    matplotlib/networkx (or plotly, for tsls-mde-gmn.py's interactive HTML
+    redesign) calls, no mocking. `check_elevated_entities` additionally
+    exercises the delay_copy/leaf entity code path introduced by that
+    redesign -- only meaningful (and only passed) for tsls-mde-gmn.py,
+    since simple-mde-gmn.py keeps the old static-PNG version.'''
     graph = _toy_graph()
     module.partition_network(graph, ['T'], 'real_data')
     module.report_partition(graph, 'toy_report', results_dir)
@@ -178,15 +199,30 @@ def _check_partition_report_and_3d_figure(module, name, results_dir):
     )
 
     net_result = {'network': {'Graph': graph}, 'targets': ['T'], 'network_id': 'toy_3d'}
-    figure_path = results_dir / 'network_3d_toy.png'
+    figure_path = results_dir / f'network_3d_toy{expected_suffix}'
     module.plot_3d_network(net_result, {'T': 'tab:red'}, figure_path)
     assert figure_path.exists() and figure_path.stat().st_size > 0, (
         f'{name}: plot_3d_network() did not write a non-empty figure to {figure_path}'
     )
     print(f'{name}: report_partition + plot_3d_network PASS ({figure_path})')
 
+    if not check_elevated_entities:
+        return
 
-def _run_for_module(filename, module_name, name):
+    lag_graph = _toy_graph_with_lag_and_ar()
+    module.partition_network(lag_graph, ['T'], 'real_data')
+    lag_net_result = {'network': {'Graph': lag_graph}, 'targets': ['T'], 'network_id': 'toy_3d_lag'}
+    lag_figure_path = results_dir / 'network_3d_toy_lag.html'
+    module.plot_3d_network(lag_net_result, {'T': 'tab:red'}, lag_figure_path)
+    html = lag_figure_path.read_text()
+    assert 'A' in html, f'{name}: leaf entity "A" missing from {lag_figure_path}'
+    assert 'T_delay_-5' in html, f'{name}: AR self-loop entity "T_delay_-5" missing from {lag_figure_path}'
+    assert 'A_delay_-3' in html, f'{name}: lagged-leaf entity "A_delay_-3" missing from {lag_figure_path}'
+    assert '"cone"' in html, f'{name}: no Cone (arrowhead) trace found in {lag_figure_path}'
+    print(f'{name}: plot_3d_network elevated-entity check PASS ({lag_figure_path})')
+
+
+def _run_for_module(filename, module_name, name, expected_suffix='.png', check_elevated_entities=False):
     module = load_pipeline_module(filename, module_name)
     results_dir = SCRATCH / module_name
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -194,11 +230,15 @@ def _run_for_module(filename, module_name, name):
     _check_partition(module, name)
     _check_real_data_mode(module, name, results_dir)
     _check_self_simulate_mode(module, name, results_dir)
-    _check_partition_report_and_3d_figure(module, name, results_dir)
+    _check_partition_report_and_3d_figure(
+        module, name, results_dir,
+        expected_suffix=expected_suffix, check_elevated_entities=check_elevated_entities,
+    )
 
 
 def test_tsls():
-    _run_for_module('tsls-mde-gmn.py', '_test_tsls_mde_gmn_r14', 'tsls-mde-gmn.py')
+    _run_for_module('tsls-mde-gmn.py', '_test_tsls_mde_gmn_r14', 'tsls-mde-gmn.py',
+                     expected_suffix='.html', check_elevated_entities=True)
 
 
 def test_simple():

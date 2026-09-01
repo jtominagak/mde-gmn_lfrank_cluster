@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=run_tsls_mde_gmn
 #SBATCH --partition=compute
-#SBATCH --time=2:00:00
-#SBATCH --mem=16G
-#SBATCH --cpus-per-task=8
+#SBATCH --time=96:00:00
+#SBATCH --mem=64G
+#SBATCH --cpus-per-task=64
 # ADJUST: must be a literal absolute path, not a shell variable -- Slurm
 # parses #SBATCH directives itself before this script (or any shell) runs,
 # so no shell variable expansion happens here. Pointed directly at
@@ -57,61 +57,77 @@ set -euo pipefail
 # Generate()/Forecast() core count (cores=) and PredictNonlinear's
 # numProcess= (theta retuning).
 #
-# --cpus-per-task=8 / --mem=16G / --time=2:00:00 below are a deliberate
-# SHRINK from this file's own prior VALIDATION RUN scale
-# (REGION_CHANNEL_CAP=30/MDE_D=10/NESTED_M=5, 64 cpus/128G/4 days) down to
-# a SMOKE TEST (REGION_CHANNEL_CAP=3/MDE_D=2/NESTED_M=2 below) -- the first
-# end-to-end run since the depth>=1 metric-routing fix, per-node window
-# resolution (MIN_PRED_EVENTS/MAX_WINDOW_ROWS), and the CCM gate's absolute
-# library sizes (CCM_LIB_SIZES_ROWS) all landed (docs/review-findings.md).
-# Cost at this exact combination is genuinely unknown -- none of those
-# changes has run end-to-end at cluster scale yet -- so these numbers are
-# an estimate, not a measurement, reasoned from what evidence exists:
-#   - This pipeline has a real history of surprising cost at even modest
-#     scale under the OLD (fixed 800-row window) design: job 38976891
-#     (REGION_CHANNEL_CAP=15/MDE_D=4/NESTED_M=1/TP=1) timed out after 4+
-#     hours on a single depth-1 wave of just 3 nodes, confirmed still doing
-#     real work throughout (not hung). REGION_CHANNEL_CAP=3/MDE_D=2/
-#     NESTED_M=2 here is far smaller on every one of those axes, but that
-#     history is why this isn't treated as trivially fast by assumption.
+# --cpus-per-task=16 / --mem=32G / --time=24:00:00 below are a deliberate
+# STEP UP from the REGION_CHANNEL_CAP=3 SMOKE TEST this file was most
+# recently sized for, to a MID-SCALE CALIBRATION RUN
+# (REGION_CHANNEL_CAP=15/MDE_D=4/NESTED_M=1/GENERATE_LENGTH=100 below) --
+# deliberately reproducing job 38976891's own historical configuration, but
+# now against the current code, after the smoke test (job 40385630)
+# confirmed a clean "Pipeline complete" at REGION_CHANNEL_CAP=3 with every
+# fix in docs/review-findings.md landed (metric-routing, per-node window
+# resolution, CCM-gate absolute library sizes, the RUN_MDE_EVALUATE
+# toggle/guard/timeout, and the progress-monitoring log). This is the first
+# time this exact scale has run under any of that code -- these numbers are
+# still an estimate, not a measurement, reasoned from what evidence exists:
+#   - job 38976891 itself, at this identical REGION_CHANNEL_CAP=15/MDE_D=4/
+#     NESTED_M=1 configuration, timed out after 4+ hours on a single
+#     depth-1 wave of just 3 nodes under the OLD (fixed 800-row window,
+#     Pearson-correlation-scored-even-for-neurons) design -- confirmed
+#     still doing real work throughout, not hung. That history is the
+#     floor this sizing has to respect, not a number this run is assumed
+#     to beat.
+#   - Both directions of change since then are real, and point opposite
+#     ways on cost, so neither is treated as dominant by assumption:
+#     R1's 186x compute_time_since_previous_spike speedup, the inner
+#     ThreadPoolExecutor per node, and the CCM pre-filter shrinking the
+#     candidate pool before any MDE call all cut cost; but the window-
+#     sizing redesign lets a single slow-firing neuron node resolve a
+#     ranking window up to MAX_WINDOW_ROWS=30000 rows (vs. the old fixed
+#     800) specifically so f1-scoring has enough real events to be
+#     meaningful (docs/tsls-mde-gmn-pipeline.pdf's own per-node
+#     ranking-window-sizing section) -- more real, necessary compute per
+#     node, not less, and this scale has never been measured under it.
 #   - Direct single-node timing this session (verify_window_fix_real.py,
-#     scratchpad, not committed): one full run_mde_for_target() call at
-#     REGION_CHANNEL_CAP=15's own 44-candidate pool and a 3,971-row
-#     resolved window took 25.5s wall-clock (ranking stage only -- every
-#     candidate failed crossMapRhoMin before reaching the more expensive
-#     CCM gate). This smoke test's own candidate pool is ~5x smaller (9
-#     real channels total at REGION_CHANNEL_CAP=3), but a slow-firing
-#     target node could still resolve a window up to MAX_WINDOW_ROWS=
-#     30000 (~7.5x that 3,971-row measurement) -- a cost axis that measurement
-#     doesn't fully cover, and the reason for real margin rather than
-#     scaling that number down linearly by pool size alone.
-#   - cpus-per-task=8: --cpus-per-task sizes BOTH layers (outer per-wave
-#     ProcessPoolExecutor parallelism AND, through inner_workers, each
-#     node's own proper_mde() ranking loop / CCM gate -- see UPDATED note
-#     above). At REGION_CHANNEL_CAP=3 the whole real-observable candidate
-#     pool is 9 channels, so BFS waves will be narrow (likely 1-3 nodes) --
-#     8 gives real inner-pool headroom per node without requesting cluster
-#     allocation a wave this narrow can't plausibly use.
-#   - mem=16G: this scale's own TSLS-converted DataFrame (same ~45k-row
-#     recording, far fewer columns than REGION_CHANNEL_CAP=15/30) is at
-#     most tens of MB; 16G is generous headroom, not a tight fit.
-#   - time=2:00:00: below the "not the full 4-hour calibration budget"
-#     ceiling this smoke test was scoped to, above the 25.5s single-node
-#     measurement by roughly two orders of magnitude to cover an unknown
-#     node count (Stage 1 + Stage 2 across depth 0-2, plus the depth-0
-#     joint MDE seed, Generate/Forecast, and the R7/R19/R20/R21
-#     diagnostics -- all of which also run) and the possibility of at
-#     least one node resolving a window near the 30,000-row ceiling.
+#     scratchpad, not committed) used this exact REGION_CHANNEL_CAP=15
+#     candidate pool (44 real channels) and measured 25.5s wall-clock for
+#     one full run_mde_for_target() call at a 3,971-row resolved window --
+#     but every candidate failed crossMapRhoMin before reaching the more
+#     expensive CCM gate in that measurement, and a slower-firing node here
+#     could resolve a window up to ~7.5x larger (30,000 rows) with real
+#     candidates actually reaching the CCM gate's own KD-tree cost -- so
+#     that 25.5s figure is a floor on per-node cost at this scale, not a
+#     representative average.
+#   - cpus-per-task=16 (up from the smoke test's 8): --cpus-per-task sizes
+#     BOTH layers (outer per-wave ProcessPoolExecutor parallelism AND,
+#     through inner_workers, each node's own proper_mde() ranking loop /
+#     CCM gate -- see UPDATED note above). REGION_CHANNEL_CAP=15's own
+#     45-channel pool produced 3-node waves historically (job 38976891) --
+#     16 gives real headroom for a somewhat wider wave than that without
+#     requesting far more than this scale can plausibly use.
+#   - mem=32G (up from 16G): still generous headroom, not a tight fit --
+#     this scale's own TSLS-converted DataFrame is still at most tens of
+#     MB -- but per-node working data (expanded delay columns, a resolved
+#     window up to 30,000 rows) is real enough now to warrant doubling the
+#     smoke test's own margin rather than assuming it's unaffected.
+#   - time=24:00:00 (up from 2 hours): six times job 38976891's own 4-hour
+#     budget that this identical configuration already exhausted once,
+#     under the OLD design -- generous enough to survive the window-sizing
+#     redesign genuinely costing more per node at this scale (the
+#     opposite-direction possibility above), without committing to the
+#     full 4-day VALIDATION-tier budget this file used before the smoke-test
+#     shrink. If this run also times out, that is itself the concrete
+#     "isolate Stage 1's real cost driver at REGION_CHANNEL_CAP=15" data
+#     point docs/tsls-mde-gmn-pipeline.pdf's own Future Directions already
+#     calls for -- not a sizing failure to silently resubmit past.
 #
-# GENERATE_LENGTH remains explicitly set (40, unchanged from the prior
-# VALIDATION RUN scale) rather than left at its own 0 sentinel -- confirmed
-# still necessary, not just carried forward by habit: LAG_MODE=
-# generation_length_adjusted derives Stage 2's lag-candidate bound directly
-# from it (derive_lag_set()), and 0 resolves in main() to the FULL held-out
-# window (thousands of rows at this dataset's scale) before that happens --
-# unrelated to, and not implied by, shrinking REGION_CHANNEL_CAP/MDE_D
+# GENERATE_LENGTH is set to 100 (job 38976891's own historical value, up
+# from the smoke test's 40) rather than left at its own 0 sentinel --
+# LAG_MODE=generation_length_adjusted derives Stage 2's lag-candidate bound
+# directly from it (derive_lag_set()), and 0 resolves in main() to the FULL
+# held-out window (thousands of rows at this dataset's scale) before that
+# happens -- unrelated to, and not implied by, REGION_CHANNEL_CAP/MDE_D
 # below. Leaving it at 0 here would silently make Stage 2 search thousands
-# of lag columns even at this otherwise-tiny smoke scale.
+# of lag columns at this scale.
 
 # ---- Data ----------------------------------------------------------------
 DATA_FILE="J1620210605_epoch_8_freq_40_Hz.csv"   # default: the 40 Hz (25ms-bin) spike-train file
@@ -146,7 +162,7 @@ MODE="MDE-GMN"             # default: MDE-GMN. Other value: GMN
 #   independent proper_mde call per target. GMN_MODE="separate": one
 #   independent network AND one independent per-target proper_mde call per
 #   TARGETS entry, exactly as before multi_proper_mde was wired in.
-GMN_MODE="separate"           # default: combined. Other value: separate
+GMN_MODE="combined"           # default: combined. Other value: separate
 TARGETS="head_position_x,head_position_y"   # comma-separated target column names (never TSLS-converted)
 
 # ---- MDE (variable selection; unused when MODE=GMN) ------------------------
@@ -161,11 +177,11 @@ TARGETS="head_position_x,head_position_y"   # comma-separated target column name
 # CCM causality gate -- no separate maxE knob is exposed here, per
 # explicit direction to reuse this already-exposed budget rather than
 # introduce a second one.
-MDE_D=2                        # SMOKE TEST (see NOTE above) -- default: 20
+MDE_D=6                        # MID-SCALE CALIBRATION RUN (see NOTE above) -- default: 20
 # Prediction interval every proper_mde forward-selection call ranks/
 # validates every candidate driver against -- ported from
 # simple-mde-gmn.py's own TP parameter (ranking, not just final scoring).
-TP=10                          # default: 1 (proper_mde's own default)
+TP=20                          # default: 1 (proper_mde's own default)
 EMBED_DIM_RHO_MIN=0.2         # default: 0.2, embedding-dimension skill gate
 CROSS_MAP_RHO_MIN=0.2         # default: 0.2, cross-map skill gate
 # CCM pre-filter: a cheap CCM(observable -> target) skill check run once
@@ -203,28 +219,38 @@ CCM_PREFILTER_E=7             # default: 7 -- deliberately different from simple
 # floored at 10 rows) once the window is known -- see
 # ccm_prefilter_observables()'s own docstring.
 LIBSIZE_RATIOS="0.05,0.10,0.20,0.40,0.6,0.8,0.9"
-# Only consulted when GMN_MODE=combined (see GMN_MODE's own comment above):
-# multi_proper_mde has no per-candidate EmbedDimension auto-select path
-# (that's a single-target, Pearson-rho-only pyEDM routine), so it requires a
-# static, explicit embedding dimension E > 0 for its own CCM causality gate.
-MULTI_MDE_E=3                 # default: 3. Static E for multi_proper_mde's CCM gate (GMN_MODE=combined only)
+# Only consulted when GMN_MODE=combined (see GMN_MODE's own comment above).
+# UPDATED: multi_proper_mde now auto-selects E per candidate (a joint
+# rho-vs-E sweep via multi_proper_embed_dimension(), mirroring
+# single-target proper_mde's own auto-select convention) -- main()'s own
+# depth-0 seed call always requests auto-select, and this value is reused
+# as that sweep's own ceiling (max_e), not a fixed E, the same "reuse an
+# already-exposed budget" convention MDE_D already established for the
+# single-target path.
+MULTI_MDE_E=8                 # default: 3. Ceiling for multi_proper_mde's per-candidate auto-selected E (GMN_MODE=combined only)
 # How multi_proper_mde combines each candidate's per-target scores at both
 # the ranking and CCM-gate stages. 'mean': don't penalize a driver that's
 # strong for one target and weak for another. 'min': only accept drivers
 # that are simultaneously good for every target.
 MULTI_MDE_TARGET_AGGREGATE="mean"   # default: mean. Other value: min (GMN_MODE=combined only)
-# Theiler-window / neighbor-exclusion radius for every proper_mde/
+# Theiler-window / neighbor-exclusion radius FLOOR for every proper_mde/
 # proper_ccm/proper_simplex/proper_embed_dimension call this pipeline makes
 # for MDE forward-selection. UNLIKE simple-mde-gmn.py's own
-# MDE_GMN_EXCLUSION_RADIUS, this is a PLAIN STATIC INTEGER ONLY -- no
-# 'auto' dynamic mode. proper_mde and friends are each a single opaque call
-# taking one exclusionRadius value for their own whole internal search,
-# unlike dimx.Run's own staged sequence of internal CrossMapColumns/
-# EmbedDimension/CCM calls that simple-mde-gmn.py's 'auto' mode
-# intercepts -- there's no equivalent staged structure here to hook a
-# dynamic recomputation into. See tsls-mde-gmn.py's own module docstring
-# for the full explanation.
-EXCLUSION_RADIUS=0            # default: 0. Plain integer only -- no 'auto' option
+# MDE_GMN_EXCLUSION_RADIUS, this is a PLAIN STATIC INTEGER, no 'auto'
+# STRING option -- proper_mde has no equivalent to dimx.Run's own staged
+# sequence of internal CrossMapColumns/EmbedDimension/CCM calls that
+# simple-mde-gmn.py's 'auto' mode intercepts to recompute a radius between
+# stages. This does NOT mean the radius is never recomputed here, though
+# (R21, docs/review-actions-v1.md): proper_mde grows the *effective*
+# radius per forward-selection dimension on top of this floor --
+# exclusionRadius_d = max(EXCLUSION_RADIUS, deepest |delay| among columns
+# already selected earlier in that same call) -- via its own new
+# column_delay parameter, not by hooking into staged calls the way the
+# sibling's 'auto' mode does. So EXCLUSION_RADIUS=0 sets the FLOOR to 0;
+# it does not mean no dynamic adjustment ever happens. See
+# cleaned_helper_functions.proper_mde()'s own column_delay docstring and
+# docs/tsls-mde-gmn-pipeline.pdf's own R21 section for the full mechanism.
+EXCLUSION_RADIUS=0            # default: 0. Static floor; proper_mde grows the effective per-dimension radius on top of it (R21) -- see NOTE above
 # Nested-MDE network depth (MODE=MDE-GMN only -- ignored for MODE=GMN).
 # MDE_D above doubles as N (the per-node driver cap) at every nesting
 # level. NESTED_M is the number of *additional* nested-MDE rounds beyond
@@ -235,12 +261,12 @@ EXCLUSION_RADIUS=0            # default: 0. Plain integer only -- no 'auto' opti
 # of rounds. Combinatorially expensive -- see simple-mde-gmn.sbatch's own
 # NESTED_M comment for the full rationale (identical here); keep both
 # MDE_D and NESTED_M small for a first test run.
-NESTED_M=2                    # SMOKE TEST (see NOTE above) -- default: 1, additional nested-MDE rounds beyond each target's own selection. 0 = uncapped
+NESTED_M=4                    # MID-SCALE CALIBRATION RUN (see NOTE above) -- default: 1, additional nested-MDE rounds beyond each target's own selection. 0 = uncapped
 # First N *raw* channels per region (CA1_/mPFC_/OFC_), TSLS-converted and
 # offered as MDE candidates (or, when MODE=GMN, used directly as the
 # interaction-matrix's full node set). 999 is effectively uncapped (matches
 # notebooks/tsls-mde-gmn.ipynb's own full-channel-set decision).
-REGION_CHANNEL_CAP=3          # SMOKE TEST (see NOTE above) -- default: 999
+REGION_CHANNEL_CAP=30         # MID-SCALE CALIBRATION RUN (see NOTE above) -- default: 999
 
 # Stage 2's (and every node's self_delay_set's) nonzero-delay list (in
 # rows, always negative) -- MODE=MDE-GMN only. Each real observable is
@@ -270,14 +296,14 @@ LAG_DENSITY="strided"         # default: strided. Other value: dense
 # (every consecutive row is its own candidate delay). Cost is real and
 # load-bearing on --cpus-per-task/--mem/--time above -- see
 # simple-mde-gmn.sbatch's own LAG_STEP comment for the full rationale.
-LAG_STEP=1                    # default: 5, only used when LAG_DENSITY=strided
+LAG_STEP=4                    # default: 5, only used when LAG_DENSITY=strided
 # Explicit delay list -- only used when DELAY_SOURCE=explicit above.
 DELAY_SET="0,-1,-3,-5,-10"
 # Whether Stage 2's own candidate pool also includes delay=0 (real-
 # observable) columns, in addition to lagged ones -- see
 # simple-mde-gmn.sbatch's own STAGE2_ALLOW_REAL_OBSERVABLES comment for the
 # full rationale (identical here, ported unchanged).
-STAGE2_ALLOW_REAL_OBSERVABLES=false   # default: false. Other value: true
+STAGE2_ALLOW_REAL_OBSERVABLES=true   # default: false. Other value: true
 
 # ---- Lib/pred split ----------------------------------------------------------
 # Three-way split of the full (TSLS-converted, burn-in-trimmed) dataset --
@@ -300,7 +326,7 @@ MDE_VALIDATION_RATIO=0.5        # default: 0.5
 # the LIB_RATIO/MDE_VALIDATION_RATIO-derived held-out window -- see
 # simple-mde-gmn.sbatch's own GENERATE_LENGTH comment for the full
 # rationale (identical here). 0 means "use the entire held-out window".
-GENERATE_LENGTH=40             # SMOKE TEST -- explicitly capped, see NOTE above -- default: 0 (= full held-out window)
+GENERATE_LENGTH=400             # MID-SCALE CALIBRATION RUN -- job 38976891's own value, see NOTE above -- default: 0 (= full held-out window)
 
 # Theiler-window / neighbor-exclusion radius for GMN's own recursive
 # Generate()/Forecast() SMap nearest-neighbor search -- a PLAIN STATIC
@@ -317,7 +343,7 @@ GMN_EXCLUSION_RADIUS=0            # default: 0. Deliberately not TSLS_MDE_GMN_-p
 # diagnostic figure(s) -- see simple-mde-gmn.sbatch's own
 # FORECAST_PLOT_RANGE comment for the full behavior of each option
 # (identical here, ported unchanged).
-FORECAST_PLOT_RANGE="full"        # default: full. Other value: windowed
+FORECAST_PLOT_RANGE="windowed"        # default: full. Other value: windowed
 
 # ---- Generate()/Forecast() start-point sweep --------------------------------
 # Tries starting Generate() (and, to match it, Forecast()) at several rows
@@ -328,8 +354,8 @@ FORECAST_PLOT_RANGE="full"        # default: full. Other value: windowed
 # doesn't exist in this pipeline's own previous architecture at all).
 # Defaults to MIN=0, MAX=1 -- only offset 0. Widen MAX to actually sweep.
 GENERATE_START_MIN_OFFSET=0
-GENERATE_START_MAX_OFFSET=1
-GENERATE_START_STEP=50
+GENERATE_START_MAX_OFFSET=20
+GENERATE_START_STEP=1
 
 # ---- E/tau search (MODE=GMN only) --------------------------------------------
 # Used exclusively by that mode's own interaction-matrix construction

@@ -438,6 +438,38 @@ def _generalized_node_forecast(self):
     graph node structurally, with no partition awareness of its own)
     doesn't crash on an empty embedding spec.
 
+    This passthrough is now sliced to Parameters.pred's own row range
+    (found via direct investigation of a real run's diagnostic figure --
+    docs/review-findings.md's R22 for the full trace) rather than
+    returning self.data in full. Network.py sets
+    dataLib_i = range(self.data.shape[0]) in Forecast mode ("all data
+    since lib & pred are specified"), so self.data always holds the ENTIRE
+    dataset here, not a pred-restricted slice -- returning it whole used to
+    make this node's own Forecast() output thousands of rows longer than
+    every SMap node's own short pred-range Predictions Series. Since
+    gmn.GMN.Forecast() (gmn/GMN.py) assembles DataOut via plain per-node
+    column assignment and takes the shared 'Time' column only from
+    Network.TopologicalSorted[0] -- almost always a source/leaf node like
+    this one, since it has no in-edges -- that full-length passthrough
+    silently became DataOut's own row index and its 'Time' column's real
+    values (0..N-1). Every SMap node's own short Predictions Series (a
+    fresh 0-based pandas index, confirmed empirically against a live
+    pyEDM.SMap call: its 'Predictions' column's index is always 0-based
+    regardless of what its own 'Time' column reports) then pandas-aligned
+    onto only the first `pred_end - pred_start + 1` of those row labels --
+    mislabeling genuinely-near-generate_start predictions as though they
+    occurred at the very start of the recording, and forcing every
+    downstream .dropna() (run_forecast_diagnostic()'s own forecast_out)
+    down to just that falsely-early sliver. This corrupted both the
+    Forecast() trace's plotted x-position (the "small trace at the
+    beginning" regardless of FORECAST_PLOT_RANGE) and the Forecast rho/f1
+    scores printed in its title (scored against actual[0:few-hundred] --
+    real data from the start of the recording -- instead of the actual
+    generate_start window the prediction was computed from). Slicing to
+    the same pred range every SMap node uses gives this node's own output
+    the same length and 0-based index as theirs, so gmn's naive assembly
+    aligns everything correctly instead of accidentally.
+
     (3) `columns=df.columns[1:-1]` used to drop BOTH `time` (first) AND
     the spec's own last entry -- since spec is self-lags-then-in-edges,
     that last entry is always the node's last discovered driver whenever
@@ -462,7 +494,13 @@ def _generalized_node_forecast(self):
     graph = self.Network.Graph
     is_external = self.name in graph.graph.get('external_inputs', set())
     if is_external and graph.graph.get('external_input_mode', 'real_data') == 'real_data':
-        return (self.data[self.data.columns[0]], self.data[self.name])
+        time_col = self.data.columns[0]
+        pred = self.Parameters.pred
+        if len(pred) and not pred.isspace():
+            pred_start, pred_end = (int(x) for x in pred.split())
+            sliced = self.data.iloc[pred_start - 1:pred_end].reset_index(drop=True)
+            return (sliced[time_col], sliced[self.name])
+        return (self.data[time_col], self.data[self.name])
 
     Parameters = self.Parameters
     data       = self.data
@@ -948,14 +986,24 @@ def load_config():
     # cleaned_helper_functions.multi_proper_mde -- forward-selecting drivers
     # that jointly predict every TARGETS column at once -- instead of the
     # GMN_MODE='separate' behaviour of one independent
-    # cleaned_helper_functions.proper_mde call per target. multi_proper_mde
-    # has no per-candidate EmbedDimension auto-select path (that's a
-    # single-target, Pearson-rho-only pyEDM routine), so it requires a
-    # static, explicit E > 0 -- MULTI_MDE_E supplies it. MULTI_MDE_TARGET_
-    # AGGREGATE picks how per-target scores are combined at both the ranking
-    # and CCM-gate stages ('mean': avoid penalizing a driver that's strong
-    # for one target and weak for another; 'min': only accept drivers that
-    # are simultaneously good for every target).
+    # cleaned_helper_functions.proper_mde call per target.
+    #
+    # UPDATED: multi_proper_mde now DOES have a per-candidate auto-select
+    # path (multi_proper_embed_dimension() -- a joint rho-vs-E sweep scored
+    # via _simplex_multi_metric, the same per-target-then-aggregate
+    # primitive the ranking stage already used), mirroring single-target
+    # proper_mde's own E<=0 sentinel convention. main()'s own depth-0 seed
+    # call always passes E=0 (auto-select unconditionally -- same
+    # "hardcoded at the one call site" precedent as the single-target path,
+    # see run_mde_for_target()'s own max_e docstring) and reuses
+    # MULTI_MDE_E as the sweep's own ceiling (max_e) rather than a fixed
+    # value -- the same "reuse an already-exposed budget rather than
+    # introduce a second one" convention MDE_D already established for the
+    # single-target path. MULTI_MDE_TARGET_AGGREGATE picks how per-target
+    # scores are combined at all three stages now (ranking, the E-select
+    # sweep, and the CCM gate): 'mean' avoids penalizing a driver that's
+    # strong for one target and weak for another; 'min' only accepts
+    # drivers that are simultaneously good for every target.
     cfg['MULTI_MDE_E'] = int(os.environ.get('TSLS_MDE_GMN_MULTI_MDE_E', 3))
     cfg['MULTI_MDE_TARGET_AGGREGATE'] = os.environ.get('TSLS_MDE_GMN_MULTI_MDE_TARGET_AGGREGATE', 'mean')
     if cfg['MULTI_MDE_TARGET_AGGREGATE'] not in ('mean', 'min'):
@@ -1896,6 +1944,16 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
         {c: observable_and_delay(c, raw_columns)[1] for c in observable_columns}
         if raw_columns is not None else None
     )
+    # Diagnostic only (found while investigating a real, very slow Stage 2
+    # call, docs/review-findings.md) -- same raw_columns-gated pattern as
+    # column_delay above, just the observable half of observable_and_delay()'s
+    # own return value instead of the delay half. Lets proper_mde's own
+    # verbose log show how many *distinct* real observables a long run has
+    # actually found, alongside how many dimensions it took to find them.
+    column_observable = (
+        {c: observable_and_delay(c, raw_columns)[0] for c in observable_columns}
+        if raw_columns is not None else None
+    )
 
     with inner_pool_ctx as inner_pool:
         result = tsls.proper_mde(
@@ -1906,6 +1964,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
             crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
             metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
             verbose=True, pool=inner_pool, column_delay=column_delay,
+            column_observable=column_observable,
         )
 
     mde_out = pd.DataFrame({'rho': result['MDErho']})
@@ -1951,16 +2010,18 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
                                ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
                                reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                                data_file=None, data_file_sha256=None, code_fingerprint=None,
-                               cache_stage='stage1', E=3, target_aggregate='mean'):
+                               cache_stage='stage1', E=3, max_e=10, target_aggregate='mean'):
     '''Multi-target counterpart of run_mde_for_target() -- GMN_MODE='combined'
     only (see load_config()'s MULTI_MDE_E docstring and main()'s own MDE
     block). Runs cleaned_helper_functions.multi_proper_mde's forward
     selection ONCE for the whole `targets` group, picking drivers that
     jointly predict every target at once, instead of one independent
     proper_mde call per target. Every other argument has the identical
-    meaning to run_mde_for_target()'s own; `E` (static, required -- see
-    multi_proper_mde's own docstring for why no auto-select path exists)
-    and `target_aggregate` are the two genuinely new knobs.
+    meaning to run_mde_for_target()'s own; `E`/`max_e` (E<=0 auto-selects
+    per candidate via multi_proper_embed_dimension(), bounded by max_e --
+    see multi_proper_mde's own docstring; E>0 is still the static,
+    every-candidate-identical original behavior) and `target_aggregate`
+    are the genuinely new knobs.
 
     Returns the same dict shape as run_mde_for_target() except keyed by
     `'targets'` (list) instead of a single `'target'` -- main() builds one
@@ -2030,7 +2091,7 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
     result = tsls.multi_proper_mde(
         ccm_df, targets=list(targets), columns=observable_columns, D=mde_d,
         lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)],
-        Tp=tp, E=E, exclusionRadius=exclusion_radius,
+        Tp=tp, E=E, maxE=max_e, exclusionRadius=exclusion_radius,
         libSizes=ccm_lib_sizes_rows, sample=ccm_sample, ccmSlope=ccm_slope,
         crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
         metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
@@ -3361,74 +3422,215 @@ def draw_colored_network(net_result, target_colors, save_path):
 
 
 def plot_3d_network(net_result, target_colors, save_path):
-    '''R14 (docs/review-actions-v1.md): the explicit 3D representation its
-    "leaf nodes become external inputs" decision requires -- MODE='MDE-GMN'
-    only (needs the per-edge delay data and interior/external partition
-    only that mode's MultiDiGraph has, both absent from MODE='GMN''s plain
-    DiGraph). x-y plane: a standard graph layout of the real-observable
-    (delay=0) backbone from Stages 1 and 2 -- the same structural skeleton
-    draw_colored_network() draws in 2D. z axis: for every node, one vertical
-    stick per delay!=0 driver nested-MDE discovered for it, rising from
-    z=0 to z=|delay| at that node's own (x, y) -- literally "the delayed
-    observables that further drive each node," stacked above it rather than
-    laid out in the plane, since a lagged driver is a copy of an existing
-    real observable at a different point in time, not a new spatial
-    position. External inputs (partition_network()'s own classification,
-    read from graph.graph -- not re-derived here) are drawn as a distinct
-    marker shape (triangle vs. circle) from interior nodes, per the task's
-    own explicit requirement, independent of target coloring.'''
-    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 -- registers the 3d projection
+    '''Interactive HTML redesign of the 3D network figure (superseding the
+    earlier static-PNG version this docstring used to describe). MODE=
+    'MDE-GMN' only (needs the per-edge delay data and interior/external
+    partition only that mode's MultiDiGraph has, both absent from MODE=
+    'GMN''s plain DiGraph).
+
+    x-y plane (z=0): only the INTERIOR nodes (>=1 discovered driver --
+    genuine Stage 1/2 network members, partition_network()'s own
+    classification read from graph.graph, not re-derived here), laid out
+    via a spring layout of the real-observable (delay=0) edges between two
+    interior nodes -- the same structural skeleton draw_colored_network()
+    draws in 2D, just restricted to interior nodes since external inputs
+    are handled entirely separately below.
+
+    Everything that drives an interior node but has no drivers of its own
+    is lifted onto the z-axis as its own distinct "entity" -- never stacked
+    directly above whichever node it happens to feed (the old design's
+    approach, which duplicated a driver once per consumer). One entity per
+    distinct (driver, delay!=0) pair (a lagged copy of an observable -- this
+    covers both a genuine external input's lagged edge and an interior
+    node's own AR self-loop, since a lagged copy is conceptually distinct
+    from that observable's own real-time position either way), labeled
+    f"{driver}_delay_{delay}"; plus one entity per external-input driver
+    whose edge has delay==0 (a real-observable leaf), labeled with its own
+    plain name. Each entity gets a single (x, y) position solved by a second
+    spring-layout pass with the interior positions held fixed (see
+    _entity_layout()), so a single driver feeding several nodes appears once
+    with arrows fanning out to each of them, rather than duplicated per
+    consumer. z = |delay| for a lagged-copy entity, or a small fixed
+    elevation for a delay==0 leaf entity (enough to read as "off the plane"
+    without implying a false delay magnitude).
+
+    Every graph edge becomes one directed arrow (a plotly Cone trace,
+    plotly's own 3D substitute for a directed arrowhead -- there is no 3D
+    analog of draw_networkx_edges()'s 2D arrows) between its resolved
+    driver position and its driven node's plane position, colored by delay
+    using the same viridis mapping draw_colored_network() uses so the two
+    figures read consistently. Nodes are drawn as three marker shapes --
+    circle (interior), diamond (real-observable leaf entity), square
+    (lagged-copy entity, colored by delay rather than by target) -- the
+    same 3-way distinction the old design drew via circle/triangle/square
+    (plotly's 3D markers have no triangle symbol; diamond substitutes).
+    Rendered via plotly rather than matplotlib specifically for the
+    interactivity (rotate/zoom/hover) a static image can't offer.'''
+    import plotly.graph_objects as go
+    import matplotlib.colors as mcolors
+
+    def _color(c):
+        '''Normalizes any color target_colors/our own fallbacks/viridis's
+        cmap() might hand us -- a matplotlib named string ('tab:red'), a raw
+        RGBA float tuple (what cfg['TARGET_COLORS'] actually contains in
+        production, via plt.get_cmap('tab10')(i % 10)), or an already-hex
+        string -- into a plotly-safe '#rrggbb' hex string. Plotly's color
+        validators reject bare RGBA tuples (mistaken for numeric colorscale
+        data) and non-CSS names like 'tab:red'.'''
+        return mcolors.to_hex(mcolors.to_rgba(c))
 
     graph = net_result['network']['Graph']
     interior_nodes = graph.graph.get('interior_nodes', set())
-    external_inputs = graph.graph.get('external_inputs', set())
 
-    real_edges = [(u, v) for u, v, d in graph.edges(data=True) if d['delay'] == 0]
-    backbone = nx.DiGraph()
-    backbone.add_nodes_from(graph.nodes)
-    backbone.add_edges_from(real_edges)
-    pos = nx.spring_layout(backbone, seed=0)
+    all_delays = sorted({d['delay'] for _, _, d in graph.edges(data=True)})
+    cmap = plt.get_cmap('viridis')
+    delay_color = {
+        d: _color(cmap(i / max(1, len(all_delays) - 1)))
+        for i, d in enumerate(all_delays)
+    }
+    nonzero_abs_delays = sorted({abs(d) for d in all_delays if d != 0})
+    leaf_z = nonzero_abs_delays[0] * 0.5 if nonzero_abs_delays else 1.0
 
-    fig = plt.figure(figsize=(12, 10))
-    ax = fig.add_subplot(111, projection='3d')
-
-    for u, v in real_edges:
-        xu, yu = pos[u]
-        xv, yv = pos[v]
-        ax.plot([xu, xv], [yu, yv], [0, 0], color='gray', linewidth=1, alpha=0.6, zorder=1)
-
-    for u, v, data in graph.edges(data=True):
-        if data['delay'] == 0:
-            continue
-        x, y = pos[v]
-        z = abs(data['delay'])
-        ax.plot([x, x], [y, y], [0, z], color='steelblue', linewidth=1, alpha=0.5, zorder=2)
-        ax.scatter([x], [y], [z], color='steelblue', marker='s', s=15, zorder=6)
-        ax.text(x, y, z, u, fontsize=5, color='steelblue')
-
-    for node in graph.nodes:
-        x, y = pos[node]
-        is_external = node in external_inputs
-        color = target_colors.get(node, 'tab:orange' if is_external else 'tab:blue')
-        marker = '^' if is_external else 'o'
-        ax.scatter([x], [y], [0], color=color, marker=marker, s=100,
-                   edgecolors='black', linewidths=0.8, zorder=5)
-        ax.text(x, y, 0, node, fontsize=7, fontweight='bold')
-
-    node_handles = [
-        plt.Line2D([0], [0], marker='o', color='w', markersize=10,
-                   markerfacecolor='tab:blue', markeredgecolor='black', label='interior'),
-        plt.Line2D([0], [0], marker='^', color='w', markersize=10,
-                   markerfacecolor='tab:orange', markeredgecolor='black', label='external input'),
+    # ---- pass 1: interior-only real-observable backbone layout (z=0) ----
+    interior_real_edges = [
+        (u, v) for u, v, d in graph.edges(data=True)
+        if d['delay'] == 0 and u in interior_nodes and v in interior_nodes
     ]
-    ax.legend(handles=node_handles, loc='upper left', bbox_to_anchor=(1.0, 1.0),
-              title=f"n_interior={len(interior_nodes)}, n_external={len(external_inputs)}")
-    ax.set_xlabel('X (real-observable network layout)')
-    ax.set_ylabel('Y (real-observable network layout)')
-    ax.set_zlabel('|delay| (lagged driver depth)')
-    ax.set_title(f"3D network projection ({net_result['network_id']})")
-    fig.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close(fig)
+    backbone = nx.DiGraph()
+    backbone.add_nodes_from(interior_nodes)
+    backbone.add_edges_from(interior_real_edges)
+    interior_pos = nx.spring_layout(backbone, seed=0) if interior_nodes else {}
+
+    # ---- classify every edge into "already on the plane" (interior ->
+    # interior, delay==0) or "driven by an elevated entity" ----
+    entity_meta = {}     # label -> {'driver':.., 'delay':.., 'kind': 'leaf'|'delay_copy'}
+    entity_out_edges = []  # (label, driven_node) -- for the pass-2 layout graph
+    for u, v, data in graph.edges(data=True):
+        delay = data['delay']
+        if delay == 0 and u in interior_nodes:
+            continue  # part of the pass-1 backbone
+        if delay == 0:
+            # u is necessarily an external input here -- external inputs
+            # have in_degree 0 by partition_network()'s own definition, so
+            # they can never be a driven node v, and any interior u with
+            # delay==0 was already excluded just above.
+            label, kind = u, 'leaf'
+        else:
+            label, kind = f'{u}_delay_{delay}', 'delay_copy'
+        entity_meta[label] = {'driver': u, 'delay': delay, 'kind': kind}
+        entity_out_edges.append((label, v))
+
+    # ---- pass 2: constrained layout -- interior positions held fixed,
+    # solve (x, y) only for the new elevated entities. spring_layout
+    # auto-seeds any node present in `combined` but absent from `pos=` at a
+    # random position scaled to the *given* positions' own magnitude, so no
+    # manual initial guess is needed for the new entity nodes. ----
+    combined = nx.DiGraph()
+    combined.add_nodes_from(interior_nodes)
+    combined.add_edges_from(entity_out_edges)
+    if interior_nodes:
+        solved_pos = nx.spring_layout(
+            combined, pos=dict(interior_pos), fixed=list(interior_nodes), seed=0,
+        )
+    else:
+        solved_pos = nx.spring_layout(combined, seed=0) if combined.nodes else {}
+
+    pos2d = dict(interior_pos)
+    for label in entity_meta:
+        pos2d[label] = solved_pos.get(label, (0.0, 0.0))
+
+    def _xyz(name):
+        x, y = pos2d[name]
+        if name in entity_meta:
+            m = entity_meta[name]
+            z = abs(m['delay']) if m['kind'] == 'delay_copy' else leaf_z
+        else:
+            z = 0.0
+        return float(x), float(y), float(z)
+
+    def _src_label(u, delay):
+        if delay == 0 and u in interior_nodes:
+            return u
+        if delay == 0:
+            return u
+        return f'{u}_delay_{delay}'
+
+    # ---- edge traces, grouped by delay (line + arrowhead cone per group) ----
+    edges_by_delay = defaultdict(list)
+    for u, v, data in graph.edges(data=True):
+        delay = data['delay']
+        edges_by_delay[delay].append((_xyz(_src_label(u, delay)), _xyz(v)))
+
+    fig = go.Figure()
+    for delay, segs in sorted(edges_by_delay.items()):
+        color = delay_color[delay]
+        xs, ys, zs = [], [], []
+        for (x0, y0, z0), (x1, y1, z1) in segs:
+            xs += [x0, x1, None]
+            ys += [y0, y1, None]
+            zs += [z0, z1, None]
+        fig.add_trace(go.Scatter3d(
+            x=xs, y=ys, z=zs, mode='lines',
+            line=dict(color=color, width=3),
+            name=f'delay={delay}', legendgroup=f'delay_{delay}',
+            hoverinfo='none', opacity=0.7,
+        ))
+
+        cx, cy, cz, cu, cv, cw = [], [], [], [], [], []
+        for (x0, y0, z0), (x1, y1, z1) in segs:
+            tx, ty, tz = x1 - x0, y1 - y0, z1 - z0
+            cx.append(x0 + 0.88 * tx); cy.append(y0 + 0.88 * ty); cz.append(z0 + 0.88 * tz)
+            cu.append(tx); cv.append(ty); cw.append(tz)
+        fig.add_trace(go.Cone(
+            x=cx, y=cy, z=cz, u=cu, v=cv, w=cw,
+            anchor='tail', sizemode='absolute', sizeref=0.15,
+            colorscale=[[0, color], [1, color]], showscale=False,
+            legendgroup=f'delay_{delay}', showlegend=False, hoverinfo='none',
+        ))
+
+    # ---- node traces: interior (circle), leaf (diamond), delay-copy (square) ----
+    def _node_trace(names, symbol, colors, size, label):
+        if not names:
+            return None
+        xs, ys, zs = zip(*(_xyz(n) for n in names))
+        return go.Scatter3d(
+            x=xs, y=ys, z=zs, mode='markers+text', text=list(names),
+            textposition='top center', textfont=dict(size=9),
+            marker=dict(symbol=symbol, size=size, color=list(colors),
+                        line=dict(color='black', width=1)),
+            name=label,
+        )
+
+    interior_list = sorted(interior_nodes)
+    leaf_list = sorted(n for n, m in entity_meta.items() if m['kind'] == 'leaf')
+    delay_copy_list = sorted(n for n, m in entity_meta.items() if m['kind'] == 'delay_copy')
+
+    for t in (
+        _node_trace(interior_list, 'circle',
+                    [_color(target_colors.get(n, 'tab:blue')) for n in interior_list],
+                    8, f'interior (n={len(interior_list)})'),
+        _node_trace(leaf_list, 'diamond',
+                    [_color(target_colors.get(entity_meta[n]['driver'], 'tab:orange'))
+                     for n in leaf_list],
+                    7, f'external input, real-time (n={len(leaf_list)})'),
+        _node_trace(delay_copy_list, 'square',
+                    [delay_color[entity_meta[n]['delay']] for n in delay_copy_list],
+                    6, f'lagged driver copy (n={len(delay_copy_list)})'),
+    ):
+        if t is not None:
+            fig.add_trace(t)
+
+    fig.update_layout(
+        scene=dict(
+            xaxis_title='X (interior network layout)',
+            yaxis_title='Y (interior network layout)',
+            zaxis_title='|delay| (0 = real-time leaf elevation)',
+        ),
+        title=f"3D network projection ({net_result['network_id']})",
+        legend_title=f"n_interior={len(interior_list)}, "
+                     f"n_external_leaf={len(leaf_list)}, n_lagged_copy={len(delay_copy_list)}",
+    )
+    fig.write_html(save_path)
 
 
 # =============================================================================
@@ -4504,6 +4706,12 @@ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
                         color='tab:red', lw=1, label='Generate()')
             ax.plot(time_idx, forecast_pred, color='tab:purple', lw=1.2, ls=':', label='Forecast()')
             ax.axvline(generate_start, color='gray', ls='--', lw=0.8)
+            # R22 (docs/review-findings.md): defensive second layer -- clips
+            # the view to the intended window regardless of what any stray
+            # out-of-window data (a future variant of the leaf-passthrough
+            # mislabeling this section's own fix addresses) might otherwise
+            # stretch matplotlib's autoscale to.
+            ax.set_xlim(plot_start, plot_end)
             ax.set_title(f"{node}   Forecast {node_metric}={rhos[node]:.3f}", fontsize=10)
             ax.legend(fontsize=7, loc='upper right')
 
@@ -5231,7 +5439,7 @@ def main():
                     run_cache_dir=cfg['RUN_CACHE_DIR'],
                     data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
                     code_fingerprint=code_fingerprint,
-                    E=cfg['MULTI_MDE_E'], target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
+                    E=0, max_e=cfg['MULTI_MDE_E'], target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
                 )
             except Exception as exc:
                 # Same failure mode _failed_mde_result() guards against below
@@ -5343,7 +5551,7 @@ def main():
         if cfg['MODE'] == 'MDE-GMN':
             plot_3d_network(
                 net_result, cfg['TARGET_COLORS'],
-                cfg['RESULTS_DIR'] / f"network_3d_{net_result['network_id']}.png",
+                cfg['RESULTS_DIR'] / f"network_3d_{net_result['network_id']}.html",
             )
         gmn_runs[net_result['network_id']] = {'group': group, 'net_result': net_result}
 

@@ -1164,6 +1164,7 @@ def proper_mde(
     verbose=False,
     pool=None,
     column_delay=None,
+    column_observable=None,
 ):
     """Forward-stepwise Manifold Dimensional Expansion.
 
@@ -1303,6 +1304,32 @@ def proper_mde(
         stage (step 2 above), which has never taken an ``exclusionRadius``
         argument at all (a separate, pre-existing limitation this task
         does not address -- see docs/review-findings.md's R21 section).
+    column_observable : dict[str, str] or None
+        Diagnostic only -- found while investigating a real, very slow
+        Stage 2 call (docs/review-findings.md): this function's own
+        stopping rule is "keep going until dimension D is reached, or one
+        whole dimension's ranked/thresholded candidates all fail the CCM
+        gate" -- there is no rule that stops once some number of
+        *distinct* real observables have been selected, so with a large,
+        finely-strided lag set (many delay-suffixed candidates per real
+        observable), a single call can legitimately spend hundreds of
+        dimensions selecting many different delays of only a handful of
+        real observables, each dimension re-ranking nearly the entire
+        remaining candidate pool. Exactly like ``column_delay`` above,
+        this function has no built-in notion of which raw observable a
+        delay-suffixed candidate name refers to -- callers whose own
+        naming convention encodes that (e.g. tsls-mde-gmn.py's
+        ``observable_and_delay()``) can pass a ``{column_name:
+        raw_observable_name}`` lookup here. When given, every accepted
+        dimension logs (``verbose=True``) ``len(MDEcolumns)`` (dimensions
+        consumed) alongside the count of *distinct* raw observables those
+        columns actually represent, e.g. ``103 dimensions consumed, 5
+        distinct real observables`` -- making a real-observable-starved,
+        many-dimensions-on-one-column runaway visible in the log directly,
+        without needing to attach a debugger to a live process. ``None``
+        (default): no such line is printed; behavior is otherwise
+        identical either way -- this parameter changes no selection
+        criterion, only what gets logged.
 
     Returns
     -------
@@ -1388,6 +1415,15 @@ def proper_mde(
     EDim       = {}
     rhoD_log   = {}
 
+    def _log_observable_progress():
+        # Diagnostic only -- see this function's own column_observable
+        # docstring for why this exists. No-op unless both verbose and
+        # column_observable were actually supplied.
+        if verbose and column_observable:
+            distinct = len({column_observable.get(c, c) for c in MDEcolumns})
+            print(f'  {len(MDEcolumns)} dimension(s) consumed, '
+                  f'{distinct} distinct real observable(s) so far')
+
     for d in range(1, D + 1):
         # ---- Step 1: candidate column lists [candidate] + MDEcolumns
         # Each candidate is tried as the NEW leading column, prepended to
@@ -1461,6 +1497,7 @@ def proper_mde(
             if verbose:
                 print(f'  {d}-D added {newColumn!r} (noCCM, '
                       f'{metric}={s_top:.4f})')
+            _log_observable_progress()
             continue
 
         # ---- Step 4: CCM convergence gate
@@ -1601,6 +1638,7 @@ def proper_mde(
             if verbose:
                 print(f'  {d}-D added {newColumn!r}  '
                       f'({metric}={s_chosen:.4f})')
+            _log_observable_progress()
         else:
             if verbose:
                 print(f'  {d}-D CCM failed to find columns.')
@@ -1960,6 +1998,85 @@ def _simplex_multi_metric(
     raise ValueError(f'aggregate must be mean/min, got {aggregate!r}')
 
 
+def multi_proper_embed_dimension(
+    dataFrame, columns, targets,
+    maxE=10,
+    lib=None, pred=None,
+    Tp=1, tau=-1,
+    metric='correlation', gammaDelta=2,
+    noTime=True,
+    target_aggregate='mean',
+    pool=None,
+):
+    """Estimate optimal embedding dimension E in [1, maxE] for a candidate
+    that must jointly predict several targets at once -- multi_proper_mde's
+    own counterpart to proper_embed_dimension, closing the "no per-candidate
+    auto-select exists for the joint case" gap that used to require a
+    static, explicit E (docs/review-actions-v1.md).
+
+    Same brute-force sweep-and-argmax shape as proper_embed_dimension: one
+    scoring call per E in [1, maxE]. The only real difference is what gets
+    called at each E -- proper_embed_dimension scores one Simplex(target |
+    columns) call; this scores every target separately via the same
+    _simplex_multi_metric() primitive multi_proper_mde's own ranking stage
+    already relies on (one Simplex call per target, folded into one number
+    via `target_aggregate` -- 'mean'/'min', the same convention used
+    everywhere else in the multi-target path), so a candidate's own E is
+    chosen for how well it predicts the *joint* group, not any one target
+    alone.
+
+    Parameters
+    ----------
+    dataFrame : pd.DataFrame
+    columns : str
+        Candidate source variable.
+    targets : list[str]
+        Target variables to jointly predict.
+    maxE : int
+        Maximum embedding dimension to test (default 10).
+    lib, pred : list[int] or None
+        1-offset ``[start, stop]`` inclusive. Defaults: ``[1, N//2]``,
+        ``[N//2+1, N]``.
+    metric : str
+        Single metric to score with (unlike proper_embed_dimension, no
+        list[str] support -- multi_proper_mde's own CCM-gate call site
+        only ever needs one column to argmax over).
+    target_aggregate : {'mean', 'min'}
+        Same meaning as multi_proper_mde's own parameter -- how per-target
+        scores at each E are combined into one number.
+    pool : concurrent.futures.Executor or None
+        Optional already-open worker pool, same convention as
+        proper_embed_dimension's own `pool` -- each E is independent, so
+        the sweep is dispatched across it when given.
+
+    Returns
+    -------
+    pd.DataFrame with columns 'E' and `metric` -- mirrors
+    proper_embed_dimension's own return shape (single-metric case), so the
+    same ``df.loc[df[metric].idxmax(), 'E']`` idiom applies at the call
+    site.
+    """
+    if isinstance(targets, str):
+        targets = [targets]
+
+    N = dataFrame.shape[0]
+    if lib  is None: lib  = [1, N // 2]
+    if pred is None: pred = [N // 2 + 1, N]
+
+    def _score_one(E):
+        s = _simplex_multi_metric(
+            dataFrame, columns, targets, lib, pred,
+            tau=tau, Tp=Tp, E=E, embedded=False,
+            metric=metric, gammaDelta=gammaDelta,
+            noTime=noTime, aggregate=target_aggregate,
+        )
+        return {'E': E, metric: s}
+
+    mapper = pool.map if pool is not None else map
+    rows = list(mapper(_score_one, range(1, maxE + 1)))
+    return pd.DataFrame(rows)
+
+
 def multi_proper_mde(
     dataFrame, targets, D=3,
     *,
@@ -1975,6 +2092,7 @@ def multi_proper_mde(
     ccmSlope=0.01,
     ccmSeed=None,
     E=3,
+    maxE=10,
     crossMapRhoMin=0.5,
     embedDimRhoMin=0.5,
     metric='correlation',
@@ -1985,6 +2103,7 @@ def multi_proper_mde(
     target_select_E=None,
     noTime=True,
     verbose=False,
+    pool=None,
 ):
     """Multi-target MDE: forward-stepwise selection of neurons that
     jointly predict (and causally drive) all variables in ``targets``.
@@ -2001,21 +2120,38 @@ def multi_proper_mde(
       manifold cross-mapped to neuron), which is the right test for
       "neuron causally drives the joint behavior".
 
-    ``EmbedDimension`` is skipped (it's a single-target rho-only
-    pyEDM routine); pass an explicit ``E > 0``. Defaults to ``E=3``.
+    ``E > 0``: static embedding dimension, identical for every candidate
+    (the original, and still default, behavior -- ``E=3``). ``E <= 0``:
+    auto-select per candidate via ``multi_proper_embed_dimension()``'s own
+    joint rho-vs-E sweep (``maxE`` bounds it), the multi-target
+    counterpart to single-target ``proper_mde``'s own ``E<=0`` auto-select
+    convention -- closes the gap this function's own docstring used to
+    describe as a hard limitation ("no per-candidate EmbedDimension
+    auto-search here").
 
     Parameters
     ----------
     targets : list[str]
         Target variables to jointly predict.
+    maxE : int
+        Ceiling for the auto-select sweep when ``E <= 0`` (default 10);
+        unused when ``E > 0``.
     target_aggregate : {'mean', 'min'}
-        How to combine per-target scores at both stages.
+        How to combine per-target scores at both stages (ranking, and the
+        auto-select sweep when ``E <= 0``).
     target_pool_depth : int or None
-        Forwarded to ``multi_proper_ccm``; defaults to ``E``.
+        Forwarded to ``multi_proper_ccm``; defaults to whichever E a given
+        candidate actually used -- the static ``E`` when ``E > 0``, or
+        that candidate's own auto-selected E otherwise.
     target_select_E : int or None
         Forwarded to ``multi_proper_ccm``. ``None`` (default) ⇒ use
         the full joint target pool deterministically (recommended).
         An int opts into the lag-0 + random delayed draws rule.
+    pool : concurrent.futures.Executor or None
+        Optional already-open worker pool, forwarded to
+        ``multi_proper_embed_dimension()``'s own sweep when ``E <= 0``
+        (each E in that sweep is independent -- same convention as
+        ``proper_mde``'s own ``pool``). Unused when ``E > 0``.
     Other parameters: same meaning as in ``proper_mde``.
 
     INTUITION (plain-language)
@@ -2032,8 +2168,9 @@ def multi_proper_mde(
     >>> out = multi_proper_mde(df, targets=['head_position_x', 'head_position_y'],
     ...                         D=3, E=3, tau=-1, Tp=1, metric='correlation')
     >>> out['MDEcolumns']
-    Requires an explicit ``E > 0`` (no per-candidate EmbedDimension
-    auto-search here, unlike single-target `proper_mde` with ``E=0``).
+    >>> out2 = multi_proper_mde(df, targets=['head_position_x', 'head_position_y'],
+    ...                          D=3, E=0, maxE=10, tau=-1, Tp=1, metric='correlation')
+    ... # E<=0 -> auto-selected per candidate instead of a fixed E=3
     """
     from sklearn.linear_model import LinearRegression
 
@@ -2047,15 +2184,14 @@ def multi_proper_mde(
     if lib  is None: lib  = [1, N // 2]
     if pred is None: pred = [N // 2 + 1, N]
 
-    if E <= 0:
-        raise ValueError(
-            "multi_proper_mde requires an explicit E > 0 "
-            "(EmbedDimension is single-target rho-only)."
-        )
     if ccmMetric is None:
         ccmMetric = metric
 
-    if target_pool_depth is None: target_pool_depth = E
+    # target_pool_depth's own "defaults to E" resolution is now per-candidate
+    # (see the CCM-gate loop below), not resolved once here -- E may be a
+    # <= 0 auto-select sentinel, and a global `target_pool_depth = E` would
+    # silently pass an invalid depth (0 or negative) to multi_proper_ccm.
+    #
     # target_select_E=None  ->  multi_proper_ccm uses the full joint
     # pool deterministically (recommended). Pass an int to opt into
     # the lag-0 + random delayed draws rule.
@@ -2078,6 +2214,7 @@ def multi_proper_mde(
 
     MDEcolumns = []
     MDErho     = []
+    EDim       = {}
     rhoD_log   = {}
 
     for d in range(1, D + 1):
@@ -2137,19 +2274,51 @@ def multi_proper_mde(
         for col_i, (s_rank, cl) in enumerate(L_rhoD):
             newColumn = cl[0]
 
-            if not sign_better(s_rank, embedDimRhoMin):
+            # (a) embedding dimension: either the caller-supplied static E,
+            # or auto-picked per-candidate via multi_proper_embed_dimension's
+            # own joint rho-vs-E sweep -- mirrors proper_mde's own E<=0
+            # auto-select branch exactly, scored with the same `metric` the
+            # ranking stage above used, aggregated across `targets` the same
+            # way (`target_aggregate`).
+            if E > 0:
+                maxEDim    = E
+                maxRhoEDim = s_rank
+            else:
+                EDimDF = multi_proper_embed_dimension(
+                    dataFrame, columns=newColumn, targets=targets,
+                    maxE=maxE, lib=lib, pred=pred,
+                    Tp=Tp, tau=tau, metric=metric, gammaDelta=gammaDelta,
+                    noTime=noTime, target_aggregate=target_aggregate, pool=pool,
+                )
+                edim_scores = EDimDF[metric].round(4).to_numpy()
+                iMax = int(np.nanargmax(direction * edim_scores))
+                maxRhoEDim = float(edim_scores[iMax])
+                maxEDim    = int(EDimDF['E'].iloc[iMax])
+                if verbose:
+                    print(f'    EDim {newColumn} E={maxEDim} rho={maxRhoEDim:.4f}')
+
+            if not sign_better(maxRhoEDim, embedDimRhoMin):
                 continue
+
+            # target_pool_depth's own "defaults to E" convention (see this
+            # function's docstring) now means "defaults to whichever E this
+            # candidate actually got, static or auto-selected" -- resolved
+            # per-candidate rather than once globally, since maxEDim can
+            # vary candidate-to-candidate once auto-select is in play.
+            resolved_target_pool_depth = (
+                target_pool_depth if target_pool_depth is not None else maxEDim
+            )
 
             try:
                 _, t2c, _ = multi_proper_ccm(
                     dataFrame,
                     libSizes=libSizes, sample=sample,
-                    tau=tau, Tp=Tp, E=E,
+                    tau=tau, Tp=Tp, E=maxEDim,
                     targets=targets, columns=newColumn,
                     target_measurement=ccmMetric,
                     columns_measurement=ccmMetric,
                     target_aggregate=target_aggregate,
-                    target_pool_depth=target_pool_depth,
+                    target_pool_depth=resolved_target_pool_depth,
                     target_select_E=target_select_E,
                     exclusionRadius=exclusionRadius,
                     seed=ccmSeed,
@@ -2190,6 +2359,7 @@ def multi_proper_mde(
             newColumn = cl_chosen[0]
             MDEcolumns.append(newColumn)
             MDErho.append(s_chosen)
+            EDim[f'{newColumn}:{",".join(targets)}'] = maxEDim
             if verbose:
                 print(f'  {d}-D added {newColumn!r}  '
                       f'({metric}={s_chosen:.4f})')
@@ -2201,6 +2371,7 @@ def multi_proper_mde(
     return {
         'MDEcolumns': MDEcolumns,
         'MDErho':     np.array(MDErho),
+        'EDim':       EDim,
         'rhoD':       rhoD_log,
         'libSizes':   libSizes,
         'targets':    list(targets),

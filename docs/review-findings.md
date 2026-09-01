@@ -3048,3 +3048,194 @@ flagged above, caught live: this job's own final line read
   by default pending the hang's own diagnosis, not that it was never
   built.
 
+## R22 — Forecast() diagnostic: real-data leaf passthrough silently mislabels every node's own prediction window
+
+Found investigating a user report against job 40421505's own archived
+`gmn_generate_forecast_head_position_x_head_position_y_part01.png`:
+`FORECAST_PLOT_RANGE="windowed"` looked identical to `"full"`, and every
+subplot showed a small, isolated `Forecast()` trace near `x=0` with a large
+gap before the real `generate_start`-anchored cluster. Both symptoms trace
+to one bug, and it is a real correctness bug, not a cosmetic one — it also
+corrupts the `Forecast rho`/`Forecast f1` scores printed in each subplot's
+own title.
+
+### Mechanism (traced through `gmn`'s own source, not guessed)
+
+1. `gmn/Network.py`'s `Network.__init__`: in Forecast mode, `dataLib_i =
+   range(self.data.shape[0])` ("Forecast mode: all data since lib & pred
+   are specified") — every node's `self.data` is the *entire* dataset,
+   never restricted to a lib/pred window.
+2. R14's `EXTERNAL_INPUT_MODE='real_data'` short-circuit in
+   `_generalized_node_forecast()` (`tsls-mde-gmn.py`) returned
+   `(self.data[timeCol], self.data[name])` for every external-input leaf —
+   the *entire*, unrestricted dataset, ignoring `Parameters.pred`
+   completely. Every other (SMap) node instead returns only its own short
+   `pred`-range slice, with a fresh 0-based pandas index (confirmed
+   empirically: a standalone `pyEDM.SMap()` call's `S['predictions']`
+   always carries a 0-based `RangeIndex`, independent of what its own
+   `'Time'` column reports).
+3. `gmn/GMN.py`'s `GMN.Forecast()` assembles `DataOut` via plain per-node
+   column assignment (`self.DataOut[nodeName] = node.Forecast()[1]`), and
+   takes the shared `'Time'` column *only* from
+   `Network.TopologicalSorted[0]` — a source/leaf node (no in-edges) is
+   essentially always first in topological order. Since that leaf's own
+   output is now the full dataset (point 2), `DataOut`'s own row index and
+   `'Time'` column get established from it (0..N-1), while every SMap
+   node's short ~`forecast_length`-row Series pandas-aligns onto only the
+   *first* `forecast_length`-ish of those row labels — everything past
+   that is `NaN` for that column.
+4. `run_forecast_diagnostic()`'s own `forecast_out =
+   Gf.DataOut.dropna()...` then keeps only the surviving intersection:
+   row-labels `0..forecast_length`, which the leaf's `'Time'` column
+   reports as literal absolute time `0..forecast_length` — the very start
+   of the recording — even though every SMap node's predictions were
+   genuinely computed from data near `generate_start` (confirmed: job
+   40421505's real figure shows `generate_start` near row ~38000, and the
+   stray early cluster near row 0, on *every* subplot regardless of node,
+   exactly matching this mechanism rather than a per-node coincidence).
+
+### Consequences
+
+- **Plot**: the mislabeled-near-zero `Forecast()` trace has real x=0 data,
+  so matplotlib's autoscale (no explicit `ax.set_xlim()` was ever set)
+  stretches every subplot back to the start of the recording regardless of
+  `FORECAST_PLOT_RANGE` — `"windowed"` and `"full"` looked identical
+  because the *data itself*, not the plotting code's own windowing math,
+  was overriding the intended range.
+- **Scores**: `rhos[node] = tsls._score(actual[time_idx], forecast_pred,
+  ...)` compares genuinely-near-`generate_start` predictions against
+  `actual[0:few-hundred]` — real data from the literal start of the
+  recording. Every `Forecast f1`/`Forecast correlation` value printed in
+  this diagnostic (and stored in `run['forecast_rho']`) before this fix is
+  scientifically meaningless, not just visually confusing. This does
+  **not** affect `Generate()`'s own outputs or fidelity scoring
+  (`gmn_fidelity_rho()`) — `build_gmn_config(mode='Generate', ...)` sets
+  `lib_range`/`pred_range` to `''`, so each node falls back to its own
+  correctly-computed `self.libEnd_i` (via `_generalized_node_init()`)
+  instead of a shared, leaf-passthrough-corrupted window. Only the
+  separate `Forecast()` diagnostic (this one figure and its printed
+  scores) was affected.
+
+### Fix
+
+- `_generalized_node_forecast()`'s real-data leaf shortcut now slices
+  `self.data` to `Parameters.pred`'s own row range (1-indexed, inclusive
+  — the same string every SMap node in the network already receives)
+  before returning, giving it the same length and a matching 0-based
+  index instead of the full dataset. This is the same "shared,
+  network-wide window" tradeoff `build_gmn_config()`'s own docstring
+  already documents and accepts for nodes with shallower embeddings than
+  the network's own worst case (`network_max_embedding_offset()`) — this
+  fix brings the leaf passthrough in line with that existing, accepted
+  convention rather than exempting it entirely.
+- `run_forecast_diagnostic()` now also calls `ax.set_xlim(plot_start,
+  plot_end)` per subplot as a defensive second layer, so a future
+  mismatch of this kind clips the view instead of silently defeating
+  `FORECAST_PLOT_RANGE` again.
+
+### Real cluster confirmation
+
+**Done.** Job 40563312 (mirroring job 40421505's own configuration)
+reached `PIPELINE COMPLETE -- 9467.4s total`. The
+`gmn_generate_forecast_head_position_x_head_position_y` figure now shows
+the Forecast() trace correctly windowed around `generate_start`, with no
+stray mislabeled trace near time 0 — the fix is confirmed on a real run,
+not just the toy regression test.
+
+### Follow-up finding (flagged, not yet fixed): Forecast() still mistimes predictions, separately from the mislabeling bug above
+
+Found while reviewing job 40563312's own (now-correctly-windowed)
+`gmn_generate_forecast_head_position_x_head_position_y` figure: for
+`head_position_y`, the Forecast() trace's own predicted excursion peaks
+well before the real excursion actually happens. Confirmed precisely (not
+just eyeballed) by re-running the exact `run_forecast_diagnostic()` call
+this job made, offline, against the job's own archived network/data/theta
+— the reproduced Forecast()/Generate() scores matched the real job's own
+output exactly (`head_position_x`=0.350, `head_position_y`=-0.509),
+confirming the reconstruction is faithful:
+
+- **Forecast()**: predicted peak at Time=37921; real excursion peaks at
+  Time=38090 — **169 rows (~4.2s) early**.
+- **Generate()** (same network, same discovered drivers, same theta):
+  predicted peak at Time=38069; real peak at Time=38090 — only **21 rows
+  (~0.5s) off**.
+
+This rules out "the discovered driver delays are just imprecise" as the
+explanation — Generate() uses the exact same drivers/delays and tracks
+the real excursion's timing far better. It also rules out the specific
+per-node-offset-vs-network-offset mismatch already known from this
+section's own main fix above: `head_position_x`'s own embedding offset
+(197) exactly equals `network_max_embedding_offset()` (197, no mismatch
+possible), yet `head_position_x`'s own Forecast() also showed a large
+(155-row) discrepancy at its own local extremum -- so that specific
+mechanism can't be the (sole) explanation here either.
+
+Leading hypothesis, not yet confirmed: Generate() sizes each node's own
+reference library correctly per-node (`self.libEnd_i`, individually
+corrected in `_generalized_node_init()`), while Forecast() uses one
+shared, network-wide `lib`/`pred` window sized from
+`network_max_embedding_offset()` (the deepest lag anywhere in the whole
+network, 197 rows for this job) — the same "one window sized for the
+network's worst case, not each node's own actual needs" design this
+section's own main fix (above) addressed for the *pred* side (what gets
+labeled) and R22's fix left untouched on the *lib* side (what reference
+neighbors SMap actually gets to match against). A differently-sized
+library could plausibly make SMap match against a slightly mistimed
+historical analog of the excursion. Not confirmed by direct evidence yet
+-- flagged for future investigation, not fixed. Left as-is per explicit
+instruction (2026-09-01): "Leave it flagged for now."
+
+**Second hypothesis, also unconfirmed** (raised 2026-09-01): `cfg['TP']`
+(=20 for this job) is NOT used by the actual Generate()/Forecast()
+machinery at all -- `build_gmn_config()` hardcodes `Tp = 1` for every
+GMN Node regardless of `cfg['TP']` (tsls-mde-gmn.py:3705), confirmed by
+grepping every use of `cfg['TP']` (only `ccm_prefilter_observables()`,
+the depth-0 joint MDE, and `build_network()`/`build_nested_mde_network()`
+-- all discovery-time MDE/CCM scoring, never GMN's own forecast). But
+this surfaces a real, separate, previously-unexamined mismatch: every
+discovered driver edge (delay=D) was validated during nested-MDE's own
+forward-selection by asking "does column C at delay D predict the target
+`Tp=20` steps ahead?" -- then `build_gmn_config()` reuses that same delay
+D but asks pyEDM for a `Tp=1` prediction instead. The edge only records
+`delay=D`; the Tp=20 context it was validated under is discarded. Whether
+this horizon mismatch contributes to the timing shift above is untested.
+Quantitatively it can't be the whole story on its own -- `Tp=20` rows =
+0.5s at this recording's 40Hz rate, well short of the observed ~169-row
+(~4.2s) shift -- but it's a legitimate, distinct contributing hypothesis
+worth investigating alongside the library-sizing one above, not a
+replacement for it.
+
+**Correction, escalating severity (2026-09-01)**: the framing above --
+"Forecast() genuinely has skill but Pearson correlation unfairly
+penalizes it for being phase-shifted" -- is wrong, and was retracted
+after the user pushed back on it. Direct verification: shifting
+`head_position_y`'s real trace by exactly the measured 169-row gap and
+recorrelating against the forecast gives r = 1.0000 (not just "high").
+Checking raw values (not just correlation): `forecast ≈ 0.995 *
+actual[t+169] + 0.19`, r = 0.999954. A genuine SMap forecast built from
+noisy external neural predictors would not match ground truth to four
+nines of correlation -- ordinary model residual error would show up.
+This precision is the signature of the reported "forecast" trace being
+substantially a reproduction of the real trajectory itself, offset by a
+fixed amount, not a real model output. That offset (169) is not
+arbitrary either -- it exactly equals `head_position_y`'s own embedding
+depth (`mPFC_9_tsls` at delay -169, its deepest discovered driver, per
+`_embedding_spec_for()`).
+
+This reframes the finding entirely: it is not "a fair prediction
+penalized by a phase-sensitive metric" but closer to "the reported
+one-step forecast for this node appears to be the real trajectory
+mislabeled by an offset equal to the node's own embedding depth" -- a
+labeling/indexing problem analogous in spirit to the leaf-passthrough bug
+this section's main fix addressed, but affecting an SMap/interior node
+instead of a real-data-mode leaf. The exact mechanism producing this
+specific relationship has NOT been traced through the code (unlike the
+leaf-passthrough bug, which was pinned down to an exact line) -- this is
+circumstantial-but-strong quantitative evidence (the shift magnitude
+matching the node's own offset precisely is unlikely to be coincidence),
+not a confirmed root cause. Left flagged, not fixed, per the same
+2026-09-01 instruction as above -- but any results-section language
+describing this Forecast() number should NOT claim it reflects
+understated genuine skill; it should note the number is currently
+untrustworthy for reasons beyond simple timing misalignment.
+
