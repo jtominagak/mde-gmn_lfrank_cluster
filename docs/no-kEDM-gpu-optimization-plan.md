@@ -13,6 +13,48 @@ the numbers themselves for deciding what (if anything) to build next.
 
 ---
 
+## 0. UPDATE (2026-09-02): the GPU hypothesis is confirmed — real hardware, real win
+
+§2-§5 below were written from CPU-only benchmarks on Deigo, where this approach measured 3-9x
+*slower* than the existing engines. §3 proposed a specific reason to not give up on it anyway:
+that slowdown looked compute-volume-bound (more raw FLOPs, brute-force vs. tree search), not
+overhead-bound like kEDM's failure — and a compute-volume deficit is exactly what GPU throughput
+can close, unlike kEDM's structural per-call overhead. §5 item 3 named the exact decisive
+experiment: re-run the same two validated scripts on an actual CUDA device and see which way it
+goes.
+
+**That experiment has now been run**, on Saion (`test-gpu` partition, Tesla P100-SXM2-16GB,
+compute capability (6,0) — see `docs/no-kEDM-gpu-optimization-progress.md` for the full
+procedure and raw terminal output). Both benchmarks reversed cleanly:
+
+| Target | CPU (Deigo, §2c) | GPU (Saion, P100) | 
+|---|---|---|
+| CCM gate (`_crossmap_predict` sweep) | **3.2x slower** than reference | **8.88x faster** than reference |
+| Ranking stage (multivariate Simplex sweep) | **~9x slower** than reference | **3.37x faster** than reference |
+
+Correctness held on GPU too, at the same precision level as the CPU runs (CCM max diff 8.27e-05,
+essentially identical to CPU's 8.28e-05; ranking-stage median/mean diff 2.89e-05/3.22e-04,
+matching CPU's 2.89e-05/3.24e-04 — the same benign near-tied-neighbor pattern, not a new issue).
+This is not a marginal result — it's a near order-of-magnitude reversal on both targets, on a
+nine-year-old (Pascal-generation) GPU on the cluster's *open, unrestricted* partition, before any
+attempt at further tuning.
+
+**This changes §5's recommendation from "do not proceed" to "proceed, with the specific next
+steps in the updated §5 below."** §2-§4's CPU-only findings are NOT invalidated — they remain the
+correct explanation of *why* naive CPU tuning wouldn't have helped, and the bug/threading fixes
+documented there are still exactly what any GPU port needs too (both scripts already carry them
+forward). Read them as the reasoning that got this branch to the point of testing on real
+hardware, not as the final verdict.
+
+**What is NOT yet validated, and matters before treating this as production-ready** (see updated
+§5): the CCM benchmark used M=2000, but the actual production `CCM_WINDOW_ROWS=800` (§2c) is
+smaller — smaller libraries favor tree search even more, so the real regime hasn't been tested and
+the 8.88x figure may not hold there unchanged. The ranking-stage benchmark used 100 candidates;
+production candidate pools run 1000-2000+. Both need a production-scale re-test before any claim
+stronger than "the mechanism is real" is made.
+
+---
+
 ## 1. The proposal, and which part of it is actually confirmed
 
 The idea (as given): MDE has no kEDM implementation, so instead reimplement the candidate sweep's
@@ -144,10 +186,12 @@ regular, dense, parallel arithmetic (a big batched `cdist`+`topk`) is typically 
 throughput for the same operation, whereas GPU kernel-launch overhead doesn't get better than
 CPU thread-wake overhead in the same way. **In short: kEDM's problem is structural and
 backend-independent; this approach's CPU-measured problem is a raw-throughput deficit that GPU
-hardware could plausibly offset — but this is a hypothesis, not yet a finding, because no GPU
-exists on this cluster to test it against.** Do not treat this distinction as license to assume a
-GPU win; it is the reason to keep this line of investigation open pending hardware, not a
-substitute for testing it.
+hardware could plausibly offset.**
+
+**Confirmed 2026-09-02 (see §0): this is no longer a hypothesis.** Both benchmarks reversed on an
+actual GPU (Saion, P100) — CCM gate went from 3.2x slower to 8.88x faster; ranking stage went
+from 9x slower to 3.37x faster. The reasoning above was the correct explanation, verified by
+testing it rather than trusting the analogy.
 
 ## 4. What does NOT need re-litigating for this approach (shared with the kEDM plan)
 
@@ -160,43 +204,62 @@ substitute for testing it.
   the torch approach's raw-prediction access matters (§1) — it is not a nice-to-have, it's the
   actual production requirement.
 
-## 5. Revised, evidence-based recommendation
+## 5. Recommendation (updated 2026-09-02 after real GPU results — see §0)
 
-**Do not proceed to a full pipeline integration of the brute-force/dense-batched approach as
-prototyped.** It is confirmed slower on the only hardware available to test it on, at every scale
+**Proceed, but through a production-scale validation step before any pipeline integration —
+do not generalize from the two prototype-scale numbers in §0 directly to "ship it."**
+
+The original (pre-GPU) recommendation here was "do not proceed" — that was the correct call
+*given only CPU evidence*, and is kept below for the record since the reasoning (don't chase a
+compute-volume gap with CPU tuning) is still correct on its own terms. It is superseded now that
+the GPU experiment it called for has actually been run and won.
+
+**Concrete next steps, in order:**
+
+1. **Re-run both benchmarks at production scale on the same Saion GPU**, not the prototype
+   scale used to get the go signal. Specifically: the CCM gate benchmark used M=2000 while real
+   production uses `CCM_WINDOW_ROWS=800` (§2c) — smaller libraries favor tree search more, so
+   confirm the speedup survives at the real size, not just assume it does because M=2000 won. The
+   ranking-stage benchmark used 100 candidates while production pools run 1000-2000+ — confirm
+   the chunked-batching approach (chunk_b=5, chosen for a 16GB P100) still fits and still wins at
+   that pool size, adjusting chunk_b as needed for whatever GPU memory is actually available.
+2. **The metric-fidelity result stands regardless of the above** — a from-scratch torch engine
+   exposes raw predictions, so this pipeline's `f1`/`gamma` metrics work on it exactly as they do
+   on the CPU reference, unlike kEDM's `ccm()`. This was already true before the GPU confirmation
+   and doesn't need re-validating.
+3. **Confirm whether `test-gpu` (open, P100-only) is suitable for real production runs**, or
+   whether a real pipeline job would need the restricted `gpu-v100`/`gpu-a100` partitions instead
+   (access-request form, per the Saion guide) — `test-gpu`'s name and "open" access suggest it may
+   be intended for exactly this kind of validation work, not long-running production jobs; this
+   hasn't been confirmed either way and is worth asking OIST SCDA (`ask-scda@oist.jp`) directly
+   rather than assuming.
+4. **Only after 1 and 3 above**, plan the actual pipeline integration: which call sites
+   (`_simplex_metric`'s ranking-stage calls, `proper_ccm`/`multi_proper_ccm`'s CCM-gate calls) get
+   routed to the new torch engine, how `pool`-based threading (currently `ThreadPoolExecutor`,
+   since "pyEDM.Simplex releases the GIL") interacts with a single shared GPU device across
+   multiple worker threads/processes (not yet investigated — a GPU is a single shared resource in
+   a way CPU cores aren't; concurrent access patterns need their own design, not an assumption
+   that today's CPU-thread-pool structure ports over unchanged).
+5. **Revisit the memory-tiling problem from §2c** with real GPU memory numbers now in hand: the
+   P100 tested has 16GB VRAM (`nvidia-smi`, confirmed 2026-09-02) — smaller than assumed when
+   `chunk_b=5` was chosen defensively against CPU RAM. Now that an actual device exists to profile
+   against, tune `chunk_b` (or an equivalent tiling parameter) against real VRAM headroom rather
+   than a conservative guess.
+
+<details>
+<summary>Original (CPU-only) recommendation — superseded by §0, kept for the record</summary>
+
+Do not proceed to a full pipeline integration of the brute-force/dense-batched approach as
+prototyped. It is confirmed slower on the only hardware available to test it on, at every scale
 tested, even after fixing both the correctness bug and the threading misconfiguration that made
 the first attempt look worse than it really was. Building this out further on CPU would be
-speculative engineering against a metric (GPU throughput) this cluster cannot measure.
+speculative engineering against a metric (GPU throughput) this cluster cannot measure. What was
+worth keeping regardless: the metric-fidelity result (§1's premise); not chasing CPU-side tuning
+further since the gap was compute-volume-bound, not overhead-bound; and getting access to actual
+GPU hardware to run the decisive experiment before deciding anything else — which is exactly what
+happened next (§0).
 
-**What is worth keeping and building on, in order:**
-
-1. **The metric-fidelity result stands on its own merit, independent of speed.** If there is ever
-   a reason to want a from-scratch, fully custom-metric-capable EDM engine — for portability, for
-   avoiding a C++ dependency, or simply because kEDM's `ccm()` is a hard blocker under
-   `ccmMetric='f1'` — the validated torch primitives from §2a/§2c's second prototype (properly
-   batched-compacted CCM cross-map; batched multivariate Simplex) are a correct starting point,
-   not a wrong one. Keep the code (see progress log for its current location); don't discard it as
-   worthless just because it's not fast yet.
-2. **Do not invest further CPU-side tuning effort chasing a speed win here.** The compute-volume
-   gap (tree search vs. brute force) is large (3-9x in the measurements above) and unlikely to be
-   closed by micro-optimizing the torch code further on CPU — the entire premise of this approach
-   (regular, dense, parallel arithmetic) is what GPU hardware, not CPU vectorization, is suited to
-   accelerate.
-3. **Before any further investment, get access to actual GPU hardware and re-run the exact same
-   three validated benchmarks (§2c) there.** This is a small, cheap, decisive experiment —
-   re-running `torch.cdist`/`topk`-based code on a CUDA device requires no algorithm change, only
-   a `.to('cuda')` on the tensors and re-measuring. If the GPU numbers still lose to
-   `pyEDM.Simplex`/scipy's `KDTree` (both CPU-only, unchanged), the compute-volume theory in §3 is
-   wrong and this whole direction should be closed out. If GPU numbers win, that's the actual
-   green light to build the full integration — not before.
-4. **This is the same hardware-access blocker as the kEDM plan's Stage 3** — ask the user where
-   GPU hardware is actually reachable (a different OIST cluster/allocation, cloud, or a future
-   Deigo addition) before treating this as actionable. Not yet asked in this branch's own work.
-5. **If/when GPU access exists, also revisit the memory-tiling problem found in §2c** (the 16 GB
-   OOM from an unchunked candidate batch) — a real GPU implementation will need deliberate,
-   correctly-sized chunking of the batch dimension to fit in GPU memory (which is typically
-   *smaller* than a compute node's system RAM, making this more urgent on GPU than it was here),
-   not just "port the CPU code as-is."
+</details>
 
 ## 6. Open questions to verify before any further work
 

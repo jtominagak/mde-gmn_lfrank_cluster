@@ -197,22 +197,28 @@ cd ~/pao_rotation
 git status              # should show branch no-kEDM-gpu-optimization, clean
 git log --oneline -1    # should show 6285f68 or later
 
-# 3. Get an interactive GPU allocation on the OPEN test-gpu partition (no access
-#    request needed) and sanity-check the GPU + driver before installing anything
-srun -p test-gpu -t 0-2 -c 4 --mem=10G --gres=gpu:1 --pty bash -l
-nvidia-smi   # note the "CUDA Version: X.Y" the DRIVER supports (top-right of the header table)
-
-# 4. Build a GPU-specific venv -- deliberately SEPARATE from the project's own
-#    .venv/ (which is committed to torch's CPU-only wheel via pyproject.toml's
-#    [tool.uv.sources] pin) so nothing here touches the shared, NFS-mounted
-#    pyproject.toml/uv.lock that Deigo's CPU pipeline also depends on.
+# 3. Build the GPU-specific venv FIRST, on the LOGIN node, before requesting any
+#    allocation -- compute nodes commonly have no/restricted outbound internet
+#    (needed to download the torch wheel) and srun's time limit shouldn't be
+#    spent on non-GPU setup work anyway. Deliberately SEPARATE from the
+#    project's own .venv/ (committed to torch's CPU-only wheel via
+#    pyproject.toml's [tool.uv.sources] pin) so nothing here touches the
+#    shared, NFS-mounted pyproject.toml/uv.lock Deigo's CPU pipeline depends on.
 cd ~/pao_rotation
 uv venv .venv-gpu --python 3.11
-# Pick the torch index matching nvidia-smi's reported CUDA version from step 3
-# (cu121 for 12.1, cu124 for 12.4, cu126 for 12.6, etc. -- check
-# https://pytorch.org/get-started/locally/ if the exact tag is unclear):
-uv pip install --python .venv-gpu/bin/python numpy pandas 'pyedm==2.5.0' \
-    torch --index-url https://download.pytorch.org/whl/cu121   # <-- adjust cu tag
+uv pip install --python .venv-gpu/bin/python numpy pandas "pyedm==2.5.0"
+# torch==2.14.0 (same version as Deigo's CPU venv) from the cu126 index --
+# NOT cu128+, which dropped Pascal/P100 (sm_60) support (confirmed via
+# PyTorch's own dev-discuss announcement, see plan doc's sources):
+uv pip install --python .venv-gpu/bin/python "torch==2.14.0" \
+    --index-url https://download.pytorch.org/whl/cu126
+
+# 4. NOW get an interactive GPU allocation on the OPEN test-gpu partition (no
+#    access request needed) -- venv is already fully built, nothing left to
+#    download inside the allocation
+srun -p test-gpu -t 0-2 -c 4 --mem=10G --gres=gpu:1 --pty bash -l
+cd ~/pao_rotation
+nvidia-smi
 
 # 5. Verify CUDA actually works before running anything real. P100 = compute
 #    capability 6.0 (Pascal) -- recent PyTorch wheels have been dropping
@@ -262,3 +268,92 @@ reference is not enough on its own.
 - `/deigo_flash` (read-only from Saion) may or may not be the same mount as this session's own
   `/flash/.../scratchpad` path used earlier — don't assume scratch files written during earlier
   Deigo work are reachable/writable from a Saion compute node.
+
+---
+
+## 2026-09-02 (continued) — GPU results: confirmed win on real hardware
+
+**Status: the decisive experiment (plan §5 item 3, pre-update) has been run. Verdict: WIN on
+both benchmarks, by a wide margin. See `docs/no-kEDM-gpu-optimization-plan.md` §0 for the
+plan-level implications — this entry is the raw record.**
+
+The user ran the procedure above on Saion (`test-gpu` partition, node `saion-gpu06`) and reported
+back the full terminal output. Environment: driver 580.167.08, CUDA 13.0 (driver-side; torch
+itself was installed as the `cu126` build per the procedure above — the driver supports newer
+CUDA than the torch build needs, which is fine, forward compatibility), `Tesla P100-SXM2-16GB`,
+compute capability `(6, 0)` — confirmed still supported by `torch==2.14.0+cu126` (unlike a
+cu128+ build, which would have failed here per the dev-discuss source in the plan doc).
+
+**CUDA sanity check** (before running either benchmark):
+```
+cuda available: True
+device: Tesla P100-SXM2-16GB
+capability: (6, 0)
+matmul ok: -58747.58203125
+```
+Confirms the environment is genuinely using the GPU, not silently falling back to CPU.
+
+**CCM gate benchmark** (`validate_batched_ccm.py`, M=2000, same config as the CPU run):
+```
+Reference (numpy/KDTree, 140 calls): 0.659s
+Torch device: cuda (Tesla P100-SXM2-16GB, compute capability (6, 0))
+Torch batched, single-threaded, cached cdist (7 batched calls of size 20): 0.074s
+Speedup: 8.88x
+Max abs diff (float64 ref vs float32 torch), 280000 points compared: 8.27e-05
+NaN-pattern mismatches: 0 / 140
+```
+CPU (Deigo) had been 1.19s (ref) vs 3.77s (torch) = 0.31x (torch 3.2x *slower*). On GPU: **8.88x
+faster**. Correctness: 8.27e-05 max diff, essentially identical to CPU's 8.28e-05 — the GPU port
+didn't introduce any new numerical issue.
+
+**Ranking-stage benchmark** (`validate_ranking_simplex.py`, lib=20000/pred=2000/100 candidates,
+chunk_b=5, same config as the CPU run):
+```
+pyEDM.Simplex looped, 100 candidates: 1.638s (16.38 ms/call)
+Torch device: cuda (Tesla P100-SXM2-16GB, compute capability (6, 0))
+Torch batched, chunk_b=5 (20 chunked calls), 100 candidates: 0.486s
+Speedup: 3.37x
+Diff vs pyEDM.Simplex across 200000 points: median=2.89e-05  mean=3.22e-04  max=1.31e-01  frac>0.01=0.0040
+```
+CPU (Deigo) had been 4.01s (ref) vs 35.78s (torch) = 0.11x (torch ~9x *slower*). On GPU: **3.37x
+faster**. Correctness distribution (median/mean/max/frac>0.01) matches the CPU run's
+2.89e-05/3.24e-04/0.131/0.0040 almost exactly — same benign near-tied-neighbor pattern (§2c of
+the plan doc), not a new GPU-specific issue, and chunk_b=5 fit comfortably in the P100's 16GB
+VRAM (no `torch.cuda.OutOfMemoryError` triggered).
+
+**Also notable**: Saion's CPU (used for the "reference" computation in both scripts, which still
+runs on CPU regardless of `DEVICE`) is itself roughly 1.8-2.4x faster per-core than Deigo's for
+this workload (0.659s/1.638s here vs. 1.19s/4.01s on Deigo for the same configs) — a different
+CPU generation, not a discrepancy in the code. This makes the GPU speedup slightly more
+conservative than it would look against Deigo's own CPU numbers, not less.
+
+### What this confirms
+- The plan's §3 hypothesis (CPU slowdown = compute-volume-bound, not overhead-bound like kEDM,
+  therefore GPU-closeable) was correct, verified by measurement, not just successful reasoning.
+- The metric-fidelity premise (§1) was already independently true and unaffected by this result.
+
+### What this does NOT yet confirm — see plan §5's updated next steps
+- Real production scale: CCM gate was tested at M=2000, not the actual `CCM_WINDOW_ROWS=800`;
+  ranking stage was tested at 100 candidates, not production's 1000-2000+. Smaller CCM libraries
+  favor tree search more, so the 8.88x figure specifically should not be assumed to hold unchanged
+  at M=800 without re-testing.
+- Whether `test-gpu` (open, P100-only, likely meant for validation/testing rather than long
+  production runs) is the right partition for an eventual real pipeline job, or whether the
+  restricted `gpu-v100`/`gpu-a100` partitions would be needed — not yet asked of OIST SCDA.
+- How a single shared GPU device interacts with this pipeline's existing `ThreadPoolExecutor`
+  based inner-parallelism design (`pool` argument threaded through `proper_mde`/`proper_ccm`) —
+  not yet investigated at all; a GPU is a single shared resource in a way CPU cores aren't, so this
+  needs its own design, not an assumption that the current threading structure ports over for free.
+
+### Next steps
+1. Re-run both benchmarks at production-realistic scale (M=800 for CCM; 1000-2000+ candidates for
+   ranking, adjusting `chunk_b` for the P100's 16GB as needed) before treating the 8.88x/3.37x
+   figures as representative of real jobs.
+2. Ask OIST SCDA (`ask-scda@oist.jp`) whether `test-gpu` is appropriate for production-length runs
+   or whether restricted-partition access should be requested instead.
+3. Investigate GPU-sharing behavior under this pipeline's existing thread-pool-based inner
+   parallelism before designing any real integration.
+4. Only after 1-3: plan which call sites (`_simplex_metric`'s ranking loop,
+   `proper_ccm`/`multi_proper_ccm`'s CCM gate) actually get routed to the torch engine, and how
+   that interacts with the outer `ProcessPoolExecutor` fork-based worker pools (fork-safety check,
+   mirroring `docs/gpu-optimization-plan.md`'s Stage 4, still not done for torch specifically).
