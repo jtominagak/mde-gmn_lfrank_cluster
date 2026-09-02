@@ -227,19 +227,16 @@ the GPU experiment it called for has actually been run and won.
    exposes raw predictions, so this pipeline's `f1`/`gamma` metrics work on it exactly as they do
    on the CPU reference, unlike kEDM's `ccm()`. This was already true before the GPU confirmation
    and doesn't need re-validating.
-3. **Confirm whether `test-gpu` (open, P100-only) is suitable for real production runs**, or
-   whether a real pipeline job would need the restricted `gpu-v100`/`gpu-a100` partitions instead
-   (access-request form, per the Saion guide) — `test-gpu`'s name and "open" access suggest it may
-   be intended for exactly this kind of validation work, not long-running production jobs; this
-   hasn't been confirmed either way and is worth asking OIST SCDA (`ask-scda@oist.jp`) directly
-   rather than assuming.
-4. **Only after 1 and 3 above**, plan the actual pipeline integration: which call sites
-   (`_simplex_metric`'s ranking-stage calls, `proper_ccm`/`multi_proper_ccm`'s CCM-gate calls) get
-   routed to the new torch engine, how `pool`-based threading (currently `ThreadPoolExecutor`,
-   since "pyEDM.Simplex releases the GIL") interacts with a single shared GPU device across
-   multiple worker threads/processes (not yet investigated — a GPU is a single shared resource in
-   a way CPU cores aren't; concurrent access patterns need their own design, not an assumption
-   that today's CPU-thread-pool structure ports over unchanged).
+3. **~~Confirm whether `test-gpu` is suitable for production runs~~ — deliberately deferred
+   (2026-09-02, user decision).** The user has judged `test-gpu` is likely not appropriate for
+   production-length runs and restricted-partition access (`gpu-v100`/`gpu-a100`) will probably be
+   needed — but is explicitly choosing to defer requesting it until a working GPU-optimized
+   pipeline exists to justify the request. Do not block on this; `test-gpu` remains available and
+   sufficient for all the validation/development work in steps 1, 4, and 5 below.
+4. **Now resolved — see §7**: torch/CUDA fork-safety (confirmed hazard, same class as kEDM's,
+   concrete fix identified) and how a single shared GPU interacts with this pipeline's existing
+   `ProcessPoolExecutor`/`ThreadPoolExecutor` parallelism model (a real architectural question,
+   reasoned through below — not empirically tested on Saion yet, but not a blank unknown either).
 5. **Revisit the memory-tiling problem from §2c** with real GPU memory numbers now in hand: the
    P100 tested has 16GB VRAM (`nvidia-smi`, confirmed 2026-09-02) — smaller than assumed when
    `chunk_b=5` was chosen defensively against CPU RAM. Now that an actual device exists to profile
@@ -279,3 +276,81 @@ happened next (§0).
   were tested); S-Map's locally-weighted regression is a different (batched weighted least
   squares, not weighted k-NN averaging) computation and would need its own from-scratch
   correctness validation before any speed claims are made about it.
+
+## 7. Fork-safety and GPU-sharing design (2026-09-02) — closes plan item 4 above
+
+These two questions were flagged as open in the 2026-09-02 progress log entry. Both are now
+reasoned through from documented CUDA/PyTorch behavior — not yet empirically re-verified on Saion,
+but no longer blank unknowns. Verify empirically (a small standalone script, same spirit as
+§2's prototypes) before relying on this section for a real integration decision.
+
+### 7a. Fork-safety: confirmed hazard, same fix as kEDM's Stage 4
+
+**CUDA does not support `fork()` at all** — this is not a performance footgun like kEDM's
+Kokkos-at-import issue, it is an explicit, documented incompatibility. PyTorch's own
+multiprocessing guidance states plainly that `spawn` or `forkserver` are *required* to use CUDA in
+subprocesses; forking a process that already holds a CUDA context produces undefined behavior in
+the child, commonly surfacing as `RuntimeError: Cannot re-initialize CUDA in forked subprocess`
+(this is the loud, well-known form of the failure — a real crash, not a silent hang like kEDM's
+OpenMP issue, which makes it easier to *detect* but no less necessary to *design around*).
+Sources: [PyTorch issue #15734](https://github.com/pytorch/pytorch/issues/15734),
+[PyTorch issue #77159](https://github.com/pytorch/pytorch/issues/77159),
+[PyTorch forums thread](https://discuss.pytorch.org/t/unable-to-fix-runtimeerror-cannot-re-initialize-cuda-in-forked-subprocess-to-use-cuda-with-multiprocessing-you-must-use-the-spawn-start-method/208718).
+
+The subtlety: PyTorch's CUDA context creation is *lazy* — plain `import torch` does not itself
+create a context; one gets created on first CUDA-touching call (`.cuda()`, a CUDA tensor
+allocation, etc. — `torch.cuda.is_available()` queries the driver but is generally safe/does not
+itself force full context init, though this specific boundary is worth re-verifying rather than
+relying on memory of it). In principle, if the *parent* process orchestrating
+`ProcessPoolExecutor` never touches CUDA before forking, and each forked child creates its own
+CUDA context fresh, entirely after the fork, this could work even under `mp_context='fork'`. This
+is fragile in practice — one accidental CUDA-touching import or debug check anywhere in the main
+process's code path before the pool is created breaks every worker with the same hard crash — and
+is exactly the shape of latent bug this codebase has already been bitten by once (the pyEDM
+per-call-Pool-spawn issue in memory `perf_pyedm_pool_bug`). **Recommendation, matching kEDM's
+Stage 4 exactly**: switch both outer `ProcessPoolExecutor` pools in `tsls-mde-gmn.py`
+(`~2603-2604`, `~2781-2782`) from `mp_context=mp.get_context('fork')` to
+`mp_context=mp.get_context('spawn')` before any torch/CUDA code is introduced into a code path
+those pools can reach — not conditional on whether the fragile fork-after-no-CUDA-touch approach
+would happen to work today, since that's one careless import away from breaking. Same downstream
+cost as the kEDM plan noted: spawn re-imports fresh per worker (no fork-inherited state, slower
+startup, every submitted argument must be picklable) — accept this cost once, deliberately, rather
+than debug an intermittent CUDA crash later.
+
+### 7b. GPU-sharing under the existing thread/process parallelism model
+
+This pipeline's current parallelism is two-layer: outer `ProcessPoolExecutor` (Stage 1/2 BFS-wave
+workers, CPU-core-budgeted via `outer_workers`) and, inside each worker, an inner
+`ThreadPoolExecutor` (`inner_workers`, sized because "pyEDM.Simplex releases the GIL" so CPU
+threads get real parallelism). **This sizing model is calibrated for CPU core budgets and does
+not translate to a GPU unchanged**:
+
+- **Across outer processes**: each forked-then-spawned worker process that touches CUDA gets its
+  *own* CUDA context on the *same physical device* (a P100 has one GPU; multiple processes can
+  each hold a context on it, but they then share one 16GB VRAM budget and the device's single
+  execution engine between them — this is supported, not an error, but it's *contention*, not
+  *added throughput*, unlike CPU cores where more processes running independently really do add
+  parallel capacity). Running `outer_workers` processes each independently launching large batched
+  GPU calls is likely to fight over both memory (each process's own batch competing for the same
+  16GB) and the GPU's scheduler, not scale the way it does on CPU cores today.
+- **Across inner threads within one process**: multiple Python threads *can* issue CUDA operations
+  concurrently on the same device from a single process — the CUDA driver serializes/queues kernel
+  launches issued to the same (default) stream safely, no explicit locking required for
+  correctness. But without deliberately using separate CUDA streams per thread (an optimization
+  this pipeline does not currently do and would need to add), concurrent GPU-bound work from
+  multiple threads does not get true concurrent execution the way CPU-bound threaded work does
+  today — the GPU processes queued kernels from all threads, interleaved, on largely the same
+  timeline it would if called from one thread. Thread count is not the lever for GPU throughput
+  the way it is for CPU throughput.
+
+**Practical implication for a future integration, not yet empirically verified**: the actual lever
+for GPU throughput in this pipeline is *batch size per call* (as demonstrated in §2c/§0 — one
+call handling many candidates at once), not *thread or process count*. A reasonable starting
+design: route GPU-eligible work (ranking-stage candidate sweeps, CCM-gate sweeps) through a single
+GPU-owning worker (or a small, deliberately-capped number, sized to fit VRAM concurrently, likely
+1-2 rather than today's CPU-core-sized `outer_workers`) that internally batches as much of its
+pending work as memory allows per call, rather than assuming the existing `outer_workers ×
+inner_workers` product still describes available parallelism once GPU calls are introduced. This
+needs an actual experiment (queue depth vs. throughput, concurrently-submitted-batch vs. VRAM
+ceiling) before being trusted as a final design — treat it as the working hypothesis to test, not
+a settled conclusion.
