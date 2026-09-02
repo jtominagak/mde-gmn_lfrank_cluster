@@ -114,10 +114,9 @@ pending GPU hardware access. See plan §5 for the exact reasoning and next steps
 not copied to the repo) and the M-scaling sweep script (killed mid-run, not saved). The two
 scripts actually worth keeping are committed at `scripts/gpu_prototypes/` (see step 9 above).
 
-### Next steps
-1. **Ask the user where GPU hardware is actually reachable** — not yet asked, same open item as
-   `docs/gpu-optimization-plan.md`'s own Stage 3. Nothing past this point is actionable without an
-   answer.
+### Next steps (superseded by the 2026-09-02 (Saion) entry below — kept for history)
+1. ~~Ask the user where GPU hardware is actually reachable~~ — answered (see next entry): Saion,
+   `ssh <oist-id>@saion.oist.jp`, a separate OIST cluster from Deigo.
 2. Once hardware is identified: install `torch` with the matching CUDA build there, move
    `scripts/gpu_prototypes/validate_batched_ccm.py` and `validate_ranking_simplex.py`'s tensors to
    the GPU device, and re-run both — this is the single experiment that actually decides whether
@@ -134,3 +133,132 @@ scripts actually worth keeping are committed at `scripts/gpu_prototypes/` (see s
    `ProcessPoolExecutor` use (mirrors `docs/gpu-optimization-plan.md`'s Stage 4, though torch
    itself doesn't have kEDM's specific Kokkos-at-import fork hazard — not yet checked whether
    torch's own CPU thread pool has an analogous fork-safety concern; assume caution until checked).
+
+---
+
+## 2026-09-02 (continued) — Saion identified; CUDA support added; manual procedure written
+
+**Status: GPU hardware identified (Saion). Scripts are CUDA-ready and re-verified correct on CPU.
+Not yet run on an actual GPU — this session has no SSH credentials to reach Saion (tried directly;
+`~/.ssh/` on this Deigo session has no private key/config for outbound access, only an
+`authorized_keys` for *incoming* connections). User chose to run the procedure manually rather
+than set up passwordless access for this session. Waiting on the user to run the procedure below
+and report back the printed numbers.**
+
+### What was done
+1. Fetched the official guide (scda-guide.oist.jp/saion-system). Key facts: **`/home` is shared
+   between Deigo and Saion** (this whole project directory, `pyproject.toml`/`uv.lock` included,
+   is already visible at the same path on Saion — no code sync needed); `/bucket` is read-only on
+   Saion compute nodes (matches this pipeline's existing bucket-archival conventions); `/work`
+   (200TB SSD, 10TB/unit) is the place for temporary compute output, not `/home` (50GB cap) or the
+   Deigo-only `/flash` scratchpad (not necessarily mounted the same way on Saion — untested).
+   Scheduler is Slurm (`srun`/`sbatch`, same as Deigo). GPU partitions: **`test-gpu` (open, no
+   access request needed)** — 6 nodes, 4×P100 each; `gpu-p100`/`gpu-v100`/`gpu-a100` are
+   *restricted*, need a form. Start with `test-gpu`.
+2. Updated `scripts/gpu_prototypes/validate_batched_ccm.py` and `validate_ranking_simplex.py` to
+   auto-detect `DEVICE = "cuda" if torch.cuda.is_available() else "cpu"`, move every tensor
+   accordingly, add a warm-up call + `torch.cuda.synchronize()` around the timed region (CUDA
+   calls are async — a naive `time.perf_counter()` would measure kernel-launch time, not actual
+   completion), and catch `torch.cuda.OutOfMemoryError` in the chunked ranking-stage loop with a
+   message to shrink `chunk_b` (GPU memory is typically smaller than a compute node's system RAM,
+   so the chunking problem from the 2026-09-02 entry above is more urgent on GPU, not less).
+3. While doing this, found and fixed a **real bug in the ranking-stage script's own correctness
+   check** (not the algorithm — the test harness): `pyEDM.Simplex`'s `Predictions` array carries
+   one extra **leading** boundary row (`Time = pred_start`, `Predictions = NaN`) before its
+   `n_pred` real, `Tp`-shifted predictions. The script was comparing `ref[:n_pred]` against the
+   torch output (`n_pred` rows, unpadded) — silently comparing misaligned rows, previously
+   misreported as a spurious ~1.0 max diff. Root-caused by hand-inspecting `pyEDM.Simplex`'s raw
+   output on a small (`n_lib=30`) case where torch matched to 1e-5 once correctly aligned (`ref[1:]`
+   vs the torch output). At full benchmark scale (`n_lib=20000`), after the fix: median diff
+   2.89e-05, mean 3.24e-04, max 0.131, only 0.4% of 200,000 compared points over 0.01 — the
+   occasional larger single-row diff is expected, not a bug: a smooth multi-period test signal
+   creates many near-duplicate (candidate, selected) state-space points, so float32 (torch) vs
+   pyEDM's internal float64 can pick a different but similarly-close k-th neighbor at a near-tie
+   for a handful of rows. Switched the script's reported statistic to median/mean primarily,
+   with an explanatory comment, so this doesn't look alarming when the user runs it on Saion.
+4. Re-ran both scripts on this Deigo CPU environment after the edits to confirm the CUDA-support
+   changes didn't regress the CPU path — both reproduce the same numbers as the original
+   2026-09-02 entry (CCM: 1.12s ref vs 3.61s torch, 8.28e-05 max diff; ranking: 3.5s ref vs 32s
+   torch chunked, now-correct diff stats above). Committed as `6285f68`.
+5. Attempted a direct SSH test from this Deigo session to Saion — rejected
+   (`Permission denied (publickey,password,hostbased)`). Checked `~/.ssh/`: no private key or
+   `config` entry for outbound Saion access exists in this environment. Asked the user how to
+   proceed (set up passwordless access for this session, vs. running it manually themselves) —
+   **user chose to run it manually.**
+
+### Manual procedure for the user to run on Saion
+
+```bash
+# 1. Log in (separate cluster/credentials from Deigo)
+ssh j-tominaga@saion.oist.jp
+
+# 2. Confirm the shared home actually shows the right branch/commit
+cd ~/pao_rotation
+git status              # should show branch no-kEDM-gpu-optimization, clean
+git log --oneline -1    # should show 6285f68 or later
+
+# 3. Get an interactive GPU allocation on the OPEN test-gpu partition (no access
+#    request needed) and sanity-check the GPU + driver before installing anything
+srun -p test-gpu -t 0-2 -c 4 --mem=10G --gres=gpu:1 --pty bash -l
+nvidia-smi   # note the "CUDA Version: X.Y" the DRIVER supports (top-right of the header table)
+
+# 4. Build a GPU-specific venv -- deliberately SEPARATE from the project's own
+#    .venv/ (which is committed to torch's CPU-only wheel via pyproject.toml's
+#    [tool.uv.sources] pin) so nothing here touches the shared, NFS-mounted
+#    pyproject.toml/uv.lock that Deigo's CPU pipeline also depends on.
+cd ~/pao_rotation
+uv venv .venv-gpu --python 3.11
+# Pick the torch index matching nvidia-smi's reported CUDA version from step 3
+# (cu121 for 12.1, cu124 for 12.4, cu126 for 12.6, etc. -- check
+# https://pytorch.org/get-started/locally/ if the exact tag is unclear):
+uv pip install --python .venv-gpu/bin/python numpy pandas 'pyedm==2.5.0' \
+    torch --index-url https://download.pytorch.org/whl/cu121   # <-- adjust cu tag
+
+# 5. Verify CUDA actually works before running anything real. P100 = compute
+#    capability 6.0 (Pascal) -- recent PyTorch wheels have been dropping
+#    support for older architectures release over release, so this is a real
+#    "might just not work" checkpoint, not a formality:
+.venv-gpu/bin/python3 -c "
+import torch
+print('cuda available:', torch.cuda.is_available())
+print('device:', torch.cuda.get_device_name(0))
+print('capability:', torch.cuda.get_device_capability(0))
+x = torch.randn(1000, 1000, device='cuda')
+print('matmul ok:', (x @ x).sum().item())
+"
+# If this errors with something like "no kernel image is available for
+# execution on the device" -- the installed torch build has dropped sm_60
+# (Pascal) support. Fall back to an older torch release known to still
+# support it (check https://pytorch.org/get-started/previous-versions/,
+# look for one still listing Pascal/sm_60), or request access to gpu-v100 /
+# gpu-a100 (restricted, needs the form linked from the Saion guide) instead
+# of test-gpu's P100s -- V100 (sm_70) and A100 (sm_80) are far more likely
+# to be supported by a current wheel.
+
+# 6. Run both prototype scripts and record the printed numbers
+.venv-gpu/bin/python3 scripts/gpu_prototypes/validate_batched_ccm.py
+.venv-gpu/bin/python3 scripts/gpu_prototypes/validate_ranking_simplex.py
+```
+
+**After running this**: report back what steps 5 and 6 printed (or paste the full terminal
+output) — that's what turns into the actual go/no-go entry in this log (plan §5 item 3's
+decisive experiment). Compare directly against the CPU numbers already on record above: CCM gate
+1.12s (ref) vs 3.61s (CPU torch); ranking stage 3.5s (ref) vs ~32s (CPU torch, chunked). If the
+GPU numbers beat the *reference* engine's CPU time (not just beat the CPU-torch time), that's the
+signal this direction is worth real investment; beating CPU-torch but still losing to the
+reference is not enough on its own.
+
+### What to watch out for while running this
+- If `uv venv`/`uv pip install` behaves unexpectedly because of the project's own
+  `[tool.uv] environments`/`[tool.uv.sources]` config (added this session, scoped to
+  `linux`/`x86_64` and pinning `torch` to the CPU index) leaking into the standalone `.venv-gpu`
+  install: that config lives in `pyproject.toml` and only applies to *project-mode* commands
+  (`uv sync`, `uv add`, `uv lock`) — the `uv pip install --python .venv-gpu/bin/python ...` form
+  above deliberately bypasses project mode entirely, so it should be unaffected, but this hasn't
+  been verified on Saion itself.
+- Do not run `uv sync` or `uv add` from inside `~/pao_rotation` while on Saion unless deliberately
+  intending to change the shared `pyproject.toml`/`uv.lock` — those files are the same ones Deigo's
+  CPU pipeline depends on (shared home), and an accidental change there would affect both clusters.
+- `/deigo_flash` (read-only from Saion) may or may not be the same mount as this session's own
+  `/flash/.../scratchpad` path used earlier — don't assume scratch files written during earlier
+  Deigo work are reachable/writable from a Saion compute node.
