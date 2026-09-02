@@ -46,12 +46,45 @@ documented there are still exactly what any GPU port needs too (both scripts alr
 forward). Read them as the reasoning that got this branch to the point of testing on real
 hardware, not as the final verdict.
 
-**What is NOT yet validated, and matters before treating this as production-ready** (see updated
-§5): the CCM benchmark used M=2000, but the actual production `CCM_WINDOW_ROWS=800` (§2c) is
-smaller — smaller libraries favor tree search even more, so the real regime hasn't been tested and
-the 8.88x figure may not hold there unchanged. The ranking-stage benchmark used 100 candidates;
-production candidate pools run 1000-2000+. Both need a production-scale re-test before any claim
-stronger than "the mechanism is real" is made.
+**UPDATE 2 (2026-09-02, same day): production-scale re-test done — the two targets diverged.**
+The paragraph above called for re-testing at real production scale before trusting these numbers.
+That re-test is done (`docs/no-kEDM-gpu-optimization-progress.md` has the full raw output). The
+two targets did NOT move the same direction:
+
+| Target | Prototype scale | Production scale | Verdict |
+|---|---|---|---|
+| CCM gate (M=2000 → M=800, `CCM_WINDOW_ROWS`) | 8.88x faster | **12.30x faster** | **Win held, improved** |
+| Ranking stage (100 → 1500 candidates, pred 2,000 → 22,394 rows) | 3.37x faster | **0.60x (1.67x SLOWER)** | **Win reversed to a loss** |
+
+The ranking-stage reversal is not noise or a tuning artifact — it's explained precisely (not just
+plausibly) by the same compute-volume-vs-tree-search mechanism from §3, now showing its other
+edge: **torch's brute-force cost scales as `O(candidates × n_pred × n_lib)` with no shortcut,
+while the reference's cost is dominated by a largely pred-size-independent fixed cost (its
+index-build over the library) plus a cheap per-pred-row query.** Fitting the reference's two
+prototype-vs-production data points to `cost = fixed + k·n_pred` gives `fixed≈14.5ms`,
+`k≈0.93 microseconds/row` — meaning growing `n_pred` from 2,000 to 22,394 barely moved the
+reference's per-call cost (16.4ms→35.4ms), while it multiplied torch's total compute by the full
+`O(n_pred × n_lib)` product. Predicting torch's production time from pure compute-volume scaling
+(`0.486s × (1500/100) × (22394/2000) × (22394/20000) ≈ 91.4s`) matches the observed **88.6s**
+within 3% — this is quantitatively confirmed, not hand-waved. **The lesson: tree search's
+`O(log n_lib)`-per-query advantage over brute force's `O(n_lib)`-per-query cost becomes
+overwhelming once `n_pred` itself is large — no amount of GPU throughput or bigger batching fixes
+an asymptotically worse algorithm once the constant-factor GPU advantage is outrun by data size.**
+Note this could NOT have been predicted from the CCM gate's result alone: CCM's production
+`n_pred` (=`M`=800) shrank at production scale, while the ranking stage's production `n_pred`
+(≈22,394) grew by 11x — the two targets' production regimes moved in opposite directions on the
+one dimension (`n_pred`) that determines which way this mechanism cuts.
+
+**Revised bottom line**: proceed with the CCM gate (confirmed win, both scales, by a wide and
+improving margin). **Do not proceed with the ranking-stage torch primitive as currently
+designed** — increasing `chunk_b`/batch size will not fix this (the slowdown is compute-volume-
+bound, not overhead-bound; the observed time already matches pure FLOP-count scaling with no
+excess overhead to recover), and neither will more GPU throughput in isolation, since the
+reference's asymptotic advantage grows without bound as `n_pred` grows. A real fix would need a
+genuinely sub-linear GPU-based nearest-neighbor search (e.g. a GPU KD-tree, or an approximate-NN
+library — FAISS-GPU is the obvious candidate to investigate) rather than the dense brute-force
+`cdist`+`topk` approach prototyped here — a materially bigger undertaking than what's been built
+so far, and not yet started. See the updated §5 for the concrete, per-target next steps.
 
 ---
 
@@ -204,44 +237,48 @@ testing it rather than trusting the analogy.
   the torch approach's raw-prediction access matters (§1) — it is not a nice-to-have, it's the
   actual production requirement.
 
-## 5. Recommendation (updated 2026-09-02 after real GPU results — see §0)
+## 5. Recommendation (updated 2026-09-02, twice — first after prototype-scale GPU results, then
+after production-scale re-test; this is the current version)
 
-**Proceed, but through a production-scale validation step before any pipeline integration —
-do not generalize from the two prototype-scale numbers in §0 directly to "ship it."**
+**Proceed with the CCM gate. Do not proceed with the ranking-stage torch primitive as currently
+designed — it needs a different algorithm, not more tuning, before it's worth revisiting.**
 
-The original (pre-GPU) recommendation here was "do not proceed" — that was the correct call
-*given only CPU evidence*, and is kept below for the record since the reasoning (don't chase a
-compute-volume gap with CPU tuning) is still correct on its own terms. It is superseded now that
-the GPU experiment it called for has actually been run and won.
+The original (pre-GPU) recommendation was "do not proceed at all" (CPU-only evidence). The first
+update, after prototype-scale GPU results, was "proceed with both, pending production-scale
+validation." That validation is now done (see the "UPDATE 2" block above) and the two targets
+split: CCM gate's win held and improved (8.88x→12.30x); the ranking stage's win reversed into a
+1.67x loss, for reasons that are understood precisely (compute-volume scaling, not a fixable
+inefficiency — see above). Both earlier recommendations are kept below for the record.
 
 **Concrete next steps, in order:**
 
-1. **Re-run both benchmarks at production scale on the same Saion GPU**, not the prototype
-   scale used to get the go signal. Specifically: the CCM gate benchmark used M=2000 while real
-   production uses `CCM_WINDOW_ROWS=800` (§2c) — smaller libraries favor tree search more, so
-   confirm the speedup survives at the real size, not just assume it does because M=2000 won. The
-   ranking-stage benchmark used 100 candidates while production pools run 1000-2000+ — confirm
-   the chunked-batching approach (chunk_b=5, chosen for a 16GB P100) still fits and still wins at
-   that pool size, adjusting chunk_b as needed for whatever GPU memory is actually available.
-2. **The metric-fidelity result stands regardless of the above** — a from-scratch torch engine
-   exposes raw predictions, so this pipeline's `f1`/`gamma` metrics work on it exactly as they do
-   on the CPU reference, unlike kEDM's `ccm()`. This was already true before the GPU confirmation
-   and doesn't need re-validating.
-3. **~~Confirm whether `test-gpu` is suitable for production runs~~ — deliberately deferred
+1. **CCM gate: proceed to integration design.** This target is validated at real production scale
+   on real hardware, twice, with an improving margin. It's the one to actually build.
+2. **Ranking stage: do not integrate the current design.** Re-confirm this is truly a dead end
+   (not a chunk_b/batching artifact) is not needed — the compute-volume-scaling match (91.4s
+   predicted vs. 88.6s observed) already rules that out quantitatively. If this target is worth
+   revisiting later, it needs a genuinely sub-linear GPU nearest-neighbor search (e.g. GPU KD-tree,
+   or an approximate-NN library like FAISS-GPU), which is new engineering, not a parameter tweak —
+   scope it as such if picked up again, and don't re-attempt the brute-force approach at a "maybe
+   a bigger batch would help" premise; the mechanism rules that out.
+3. **The metric-fidelity result stands regardless of the above, for the CCM gate specifically** —
+   a from-scratch torch engine exposes raw predictions, so `f1`/`gamma` work on it exactly as on
+   the CPU reference, unlike kEDM's `ccm()`. This was already true before the GPU confirmation.
+4. **~~Confirm whether `test-gpu` is suitable for production runs~~ — deliberately deferred
    (2026-09-02, user decision).** The user has judged `test-gpu` is likely not appropriate for
    production-length runs and restricted-partition access (`gpu-v100`/`gpu-a100`) will probably be
    needed — but is explicitly choosing to defer requesting it until a working GPU-optimized
    pipeline exists to justify the request. Do not block on this; `test-gpu` remains available and
-   sufficient for all the validation/development work in steps 1, 4, and 5 below.
-4. **Now resolved — see §7**: torch/CUDA fork-safety (confirmed hazard, same class as kEDM's,
-   concrete fix identified) and how a single shared GPU interacts with this pipeline's existing
-   `ProcessPoolExecutor`/`ThreadPoolExecutor` parallelism model (a real architectural question,
-   reasoned through below — not empirically tested on Saion yet, but not a blank unknown either).
-5. **Revisit the memory-tiling problem from §2c** with real GPU memory numbers now in hand: the
-   P100 tested has 16GB VRAM (`nvidia-smi`, confirmed 2026-09-02) — smaller than assumed when
-   `chunk_b=5` was chosen defensively against CPU RAM. Now that an actual device exists to profile
-   against, tune `chunk_b` (or an equivalent tiling parameter) against real VRAM headroom rather
-   than a conservative guess.
+   sufficient for all the validation/development work in steps 1, 5, and 6.
+5. **Resolved — see §7**: torch/CUDA fork-safety (confirmed hazard, same class as kEDM's, concrete
+   fix identified) and how a single shared GPU interacts with this pipeline's existing
+   `ProcessPoolExecutor`/`ThreadPoolExecutor` parallelism model. This reasoning was done with both
+   targets in mind; re-read it now scoped to the CCM gate only, since that's the one proceeding.
+6. **Revisit the memory-tiling problem from §2c/§7 with real GPU memory numbers now in hand**: the
+   P100 tested has 16GB VRAM. The CCM gate's own memory footprint at production scale (M=800) is
+   trivial compared to what the ranking-stage test needed — no tiling pressure expected for this
+   target specifically; confirm this assumption when building the real integration rather than
+   carrying over the ranking-stage-motivated tiling design unnecessarily.
 
 <details>
 <summary>Original (CPU-only) recommendation — superseded by §0, kept for the record</summary>
@@ -255,6 +292,17 @@ worth keeping regardless: the metric-fidelity result (§1's premise); not chasin
 further since the gap was compute-volume-bound, not overhead-bound; and getting access to actual
 GPU hardware to run the decisive experiment before deciding anything else — which is exactly what
 happened next (§0).
+
+</details>
+
+<details>
+<summary>First GPU-results recommendation (prototype scale only) — superseded by the production-
+scale re-test above, kept for the record</summary>
+
+Proceed with both targets, but through a production-scale validation step before any pipeline
+integration — do not generalize from the two prototype-scale numbers (CCM 8.88x, ranking 3.37x)
+directly to "ship it." This was the right caution to have written down: the ranking-stage number
+it warned against trusting is exactly the one that reversed once actually re-tested.
 
 </details>
 

@@ -345,15 +345,142 @@ conservative than it would look against Deigo's own CPU numbers, not less.
   not yet investigated at all; a GPU is a single shared resource in a way CPU cores aren't, so this
   needs its own design, not an assumption that the current threading structure ports over for free.
 
+### Next steps (superseded by the entries below — kept for history)
+1. ~~Re-run both benchmarks at production-realistic scale~~ — done, see the 2026-09-02 (production
+   scale) entry below. Result: NOT symmetric across targets — CCM gate held/improved, ranking
+   stage reversed to a loss.
+2. ~~Ask OIST SCDA whether test-gpu is appropriate for production runs~~ — deferred by explicit
+   user decision (see the plan doc's §5 item 4); not blocking further validation/design work.
+3. ~~Investigate GPU-sharing behavior~~ — done via reasoning from documented CUDA/PyTorch
+   behavior (see the "fork-safety and GPU-sharing design" entry below); not yet empirically tested.
+4. Refined below now that only one target (CCM gate) is proceeding.
+
+---
+
+## 2026-09-02 (continued) — Fork-safety and GPU-sharing design resolved; test-gpu deferred
+
+**Status: two of the three open design questions from the previous entry are now resolved via
+research/reasoning (not yet empirical Saion testing). See `docs/no-kEDM-gpu-optimization-plan.md`
+§7 for the full write-up — this is the pointer entry.**
+
+- **Fork-safety**: confirmed, directly (not by analogy) — CUDA does not support `fork()` at all;
+  PyTorch's own docs require `spawn`/`forkserver` for CUDA in subprocesses. Same fix as the kEDM
+  plan's Stage 4: switch `tsls-mde-gmn.py`'s two outer `ProcessPoolExecutor` pools
+  (`mp_context=fork`, lines ~2603-2604/~2781-2782) to `spawn` before any torch/CUDA code can reach
+  them. Sources in the plan doc §7a.
+- **GPU-sharing under the existing thread/process parallelism model**: reasoned through (not yet
+  measured) — multiple outer-pool processes sharing one P100 compete for its 16GB VRAM and
+  scheduler rather than adding throughput; concurrent inner-thread GPU calls within one process are
+  safe (CUDA driver serializes them) but don't get true concurrent execution without deliberately
+  using separate CUDA streams (not currently done). Working hypothesis: shrink `outer_workers`
+  drastically when GPU-bound (maybe to 1-2, not today's CPU-core-sized value) and rely on batch
+  size per call as the real throughput lever instead. Full reasoning in plan §7b.
+- The user reviewed the plan and explicitly deferred requesting restricted-partition access
+  (`gpu-v100`/`gpu-a100`) until a working GPU-optimized pipeline exists to justify it — `test-gpu`
+  remains sufficient for all remaining validation/design work in the meantime.
+- Prepared and committed production-scale versions of both prototype scripts (commit `5f61ed7`):
+  CCM gate at `M=800`/`libSizes=[16,24,40,64,160,400,800]` (exact `CCM_WINDOW_ROWS`/
+  `CCM_LIB_SIZES_ROWS` from `scripts/batch/tsls-mde-gmn.sbatch`, not guessed); ranking stage at
+  `n_total=44788` (real row count from an archived job, 40563312) with the `N//2` lib/pred split
+  `proper_mde` documents as its default, `n_candidates=1500` (representative of prior sessions'
+  observed pool sizes). Recalculated `chunk_b` from 5→2 for the much larger `n_pred` this implies
+  (~10GB/chunk at the old value vs. the P100's 16GB — too tight for comfort unsupervised).
+  Re-verified both scripts on CPU before handing off again: CCM fully re-run (1.49e-05 max diff,
+  tighter than the M=2000 prototype); ranking stage smoke-tested at reduced scale (same code path,
+  smaller N, since the full CPU run would take too long to be worth waiting for).
+
+---
+
+## 2026-09-02 (continued) — Production-scale results: the two targets diverged
+
+**Status: DECISIVE. CCM gate confirmed for integration (win held and improved at real production
+scale, twice validated). Ranking-stage torch primitive as currently designed is NOT viable —
+reverses to a loss at production scale, for a well-understood, non-fixable-by-tuning reason. See
+`docs/no-kEDM-gpu-optimization-plan.md` §0's "UPDATE 2" and revised §5 for the full plan-level
+implications — this entry is the raw record and mechanism derivation.**
+
+User ran the production-scale scripts (commit `5f61ed7`) on Saion (`test-gpu`, node
+`saion-gpu06`), after first noting `git pull` doesn't work here (expected and harmless — `/home`
+is shared NFS between Deigo and Saion, so commits made from Deigo are already present on Saion;
+there's no remote to pull from for this workflow, `git log --oneline -1` is the correct check,
+not `git pull`. This was a bad instruction on my part in the prior turn, corrected here for the
+record).
+
+**CCM gate** (`validate_batched_ccm.py`, `M=800`, real `CCM_LIB_SIZES_ROWS`):
+```
+Reference (numpy/KDTree, 140 calls): 0.202s
+Torch device: cuda (Tesla P100-SXM2-16GB, compute capability (6, 0))
+Torch batched, single-threaded, cached cdist (7 batched calls of size 20): 0.016s
+Speedup: 12.30x
+Max abs diff (float64 ref vs float32 torch), 112000 points compared: 1.89e-05
+NaN-pattern mismatches: 0 / 140
+```
+Prototype scale (M=2000) had been 8.88x. **Production scale (M=800): 12.30x — the win IMPROVED,
+not degraded**, despite the plan's own prior concern that smaller libraries would favor tree
+search more. Correctness held (1.89e-05, similar order to the CPU M=800 run's 1.49e-05).
+
+**Ranking stage** (`validate_ranking_simplex.py`, `n_total=44788`, `n_candidates=1500`,
+`chunk_b=2`):
+```
+pyEDM.Simplex looped, 1500 candidates: 53.050s (35.37 ms/call)
+Torch device: cuda (Tesla P100-SXM2-16GB, compute capability (6, 0))
+Torch batched, chunk_b=2 (750 chunked calls), 1500 candidates: 88.592s
+Speedup: 0.60x
+Diff vs pyEDM.Simplex across 33591000 points: median=3.71e-05  mean=3.85e-04  max=2.38e-01  frac>0.01=0.0052
+```
+Prototype scale (100 candidates, pred=2,000) had been 3.37x faster. **Production scale (1500
+candidates, pred≈22,394): 0.60x — 1.67x SLOWER, a full reversal.** Correctness distribution is
+unchanged/benign (same near-tied-neighbor pattern as every prior run) — this is a pure speed
+regression, not a new bug.
+
+### The mechanism, verified quantitatively (not just plausibly)
+Fit the reference's two known (n_pred, cost) points to `cost = fixed + k·n_pred`:
+`16.38ms` at `n_pred=2000` and `35.37ms` at `n_pred=22394` (n_lib barely changed, 20000→22394,
+~1.12x) gives `fixed≈14.5ms`, `k≈0.93 microseconds/row`. This says pyEDM.Simplex's per-call cost
+is dominated by a roughly pred-size-independent fixed cost (almost certainly building a search
+index over the library) plus a very cheap per-query cost against that already-built index —
+classic tree-search behavior. Torch's brute-force approach has no equivalent shortcut: predicting
+its production-scale total time from pure `O(candidates × n_pred × n_lib)` compute-volume scaling
+— `0.486s × (1500/100) × (22394/2000) × (22394/20000) ≈ 91.4s` — matches the **observed 88.6s
+within 3%**. This rules out chunking/overhead artifacts as the cause (if per-chunk overhead were
+significant, going from 20 chunks to 750 chunks would have blown the prediction, not matched it):
+**the slowdown is pure compute-volume, exactly as predicted by the O(n_lib) vs O(log n_lib)
+per-query cost difference between brute force and tree search, once n_pred is large enough for
+that difference to dominate.** No batching or GPU-throughput improvement fixes an asymptotically
+worse algorithm once data size outruns the constant-factor hardware advantage.
+
+The critical asymmetry between the two targets: CCM's production `n_pred` (=`M`=800) *shrank*
+relative to the prototype test (2000→800), while the ranking stage's production `n_pred`
+(2,000→22,394) *grew* by 11x. `n_pred` is exactly the dimension this mechanism is sensitive to —
+so the two targets moving in opposite directions on it fully explains why they diverged.
+
+### What this confirms
+- The plan's own explicit warning ("do not generalize from the prototype-scale numbers") was
+  necessary, not just cautious boilerplate — the ranking-stage number it warned about is exactly
+  the one that didn't survive.
+- The CCM gate is now validated at real production scale, on real hardware, twice, with an
+  improving margin — the strongest evidence in this entire investigation (kEDM included) for any
+  single integration target.
+
+### What this rules out (not just "doesn't confirm")
+- Retrying the ranking-stage torch primitive with a different `chunk_b`, more GPU memory, or a
+  newer/faster GPU. The 3%-accurate compute-volume prediction means this is not an overhead or
+  tuning problem — the algorithm itself is asymptotically worse at this data size, on any hardware
+  that doesn't change the O(n_lib) brute-force scan into something sub-linear.
+
 ### Next steps
-1. Re-run both benchmarks at production-realistic scale (M=800 for CCM; 1000-2000+ candidates for
-   ranking, adjusting `chunk_b` for the P100's 16GB as needed) before treating the 8.88x/3.37x
-   figures as representative of real jobs.
-2. Ask OIST SCDA (`ask-scda@oist.jp`) whether `test-gpu` is appropriate for production-length runs
-   or whether restricted-partition access should be requested instead.
-3. Investigate GPU-sharing behavior under this pipeline's existing thread-pool-based inner
-   parallelism before designing any real integration.
-4. Only after 1-3: plan which call sites (`_simplex_metric`'s ranking loop,
-   `proper_ccm`/`multi_proper_ccm`'s CCM gate) actually get routed to the torch engine, and how
-   that interacts with the outer `ProcessPoolExecutor` fork-based worker pools (fork-safety check,
-   mirroring `docs/gpu-optimization-plan.md`'s Stage 4, still not done for torch specifically).
+1. **Design and build the CCM-gate integration** — this is the one target to actually carry
+   forward. Needs: (a) fork-safety fix (spawn, plan §7a) applied before any torch code can reach
+   the outer worker pools; (b) a concrete decision on GPU-sharing (plan §7b's hypothesis — likely
+   a small, dedicated number of GPU-using workers rather than today's CPU-core-sized
+   `outer_workers` — needs empirical testing on Saion, not just the reasoning already done);
+   (c) an actual call-site integration plan (which exact functions in `cleaned_helper_functions.py`
+   change, what the CPU-fallback behavior is when no GPU is available, what the test strategy is)
+   — not yet written, this is the next concrete deliverable.
+2. **Do not pursue the ranking-stage torch primitive further** without first securing a
+   sub-linear GPU nearest-neighbor search (GPU KD-tree, FAISS-GPU, or similar) — a materially
+   different, bigger engineering effort than anything built so far. Not started; not scheduled
+   unless the user decides it's worth the investment given the CCM-only win in hand.
+3. Empirically test the GPU-sharing hypothesis from plan §7b (queue depth vs. throughput, small
+   `outer_workers` vs. today's CPU-sized value) before finalizing the CCM-gate integration's
+   worker-pool design — reasoned through so far, not yet measured on Saion.
