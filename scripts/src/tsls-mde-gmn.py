@@ -1326,6 +1326,34 @@ def load_config():
     cfg['RUN_CACHE_DIR'] = Path(os.environ.get('TSLS_MDE_GMN_RUN_CACHE_DIR', cfg['RESULTS_DIR']))
     cfg['RUN_CACHE_DIR'].mkdir(parents=True, exist_ok=True)
 
+    # ---- GPU (torch) engine ---------------------------------------------
+    # GPU_ENABLED gates the whole torch/CUDA path. OFF by default, and when
+    # off this pipeline behaves byte-for-byte as it did before the flag
+    # existed (fork-based worker pools, pyEDM/scipy engines throughout).
+    #
+    # Why this flag also controls the multiprocessing start method: CUDA does
+    # NOT support fork() -- forking a process that holds a CUDA context gives
+    # undefined behaviour in the child, typically surfacing as
+    # "RuntimeError: Cannot re-initialize CUDA in forked subprocess". PyTorch's
+    # own multiprocessing guidance requires 'spawn' (or 'forkserver') for CUDA
+    # in subprocesses. See docs/no-kEDM-gpu-optimization-plan.md section 7a.
+    #
+    # Spawn is NOT free here, which is exactly why this is conditional rather
+    # than a blanket switch: a spawn worker re-imports this module from
+    # scratch, measured at ~18s on Deigo (pandas/numpy/matplotlib/pyEDM/gmn
+    # all get re-imported), and the outer pools below are recreated once per
+    # BFS wave -- so the cost is paid per worker per wave. CPU-only runs get
+    # no benefit from it, so they keep fork.
+    #
+    # Structural preconditions for spawn are already satisfied by this module
+    # and were verified before adding this (see the plan doc): the gmn
+    # monkeypatching is applied at module scope (re-executes correctly on
+    # re-import in a spawn worker), there is a proper `if __name__ ==
+    # "__main__"` guard, and there is no runtime-mutated module-level global
+    # state a spawn worker would silently miss.
+    cfg['GPU_ENABLED'] = _env_bool('TSLS_MDE_GMN_GPU_ENABLED', False)
+    cfg['MP_START_METHOD'] = 'spawn' if cfg['GPU_ENABLED'] else 'fork'
+
     cfg['TARGET_COLORS'] = {t: plt.get_cmap('tab10')(i % 10) for i, t in enumerate(cfg['TARGETS'])}
 
     return cfg
@@ -2468,7 +2496,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                               lag_set, stage2_allow_real_observables,
                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                               data_file=None, data_file_sha256=None, code_fingerprint=None,
-                              progress_log_path=None):
+                              progress_log_path=None, mp_start_method='fork'):
     '''Two-stage nested-MDE network construction, MODE='MDE-GMN' only --
     FULLY SERIAL between stages (R12, 2026-08-27: reverted from the
     2026-08-25 unified-per-wave-BFS design -- see JOB_LOG.md for that
@@ -2600,8 +2628,12 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                           f'stage1 wave START -- {len(to_compute)} node(s) at depth '
                           f'{to_compute[0][1]}: {[n for n, _ in to_compute]}')
 
+            # mp_start_method: 'fork' (default, CPU-only runs -- unchanged
+            # behaviour) or 'spawn' when the GPU/torch path is enabled, since
+            # CUDA does not support fork(). See load_config()'s GPU_ENABLED
+            # docstring and docs/no-kEDM-gpu-optimization-plan.md section 7a.
             with ProcessPoolExecutor(max_workers=outer_workers,
-                                      mp_context=mp.get_context('fork')) as executor:
+                                      mp_context=mp.get_context(mp_start_method)) as executor:
                 futures = {}
                 node_window_estimate = {}
                 for node, depth in to_compute:
@@ -2778,8 +2810,9 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                       f'{wave_depths}: {[n for n, _ in wave_nodes]}')
 
         stage2_results = {}
+        # Same fork-vs-spawn rationale as Stage 1's pool above.
         with ProcessPoolExecutor(max_workers=outer_workers2,
-                                  mp_context=mp.get_context('fork')) as executor:
+                                  mp_context=mp.get_context(mp_start_method)) as executor:
             futures = {}
             node_window_estimate = {}
             for node, depth in wave_nodes:
@@ -3141,7 +3174,8 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                    data_file=None, data_file_sha256=None, code_fingerprint=None,
                    gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
-                   external_input_mode='real_data', progress_log_path=None):
+                   external_input_mode='real_data', progress_log_path=None,
+                   mp_start_method='fork'):
     '''Build one network spanning `targets` and their driver candidates, via
     one of two unrelated constructions depending on `mode` -- same
     mode-branch restructuring as simple-mde-gmn.py's own build_network():
@@ -3223,6 +3257,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
                 code_fingerprint,
                 progress_log_path=progress_log_path,
+                mp_start_method=mp_start_method,
             )
         graph.graph['self_delay_set'] = sorted(set(lag_set) | {0}, reverse=True)
         partition_network(graph, targets, external_input_mode)
@@ -5543,6 +5578,7 @@ def main():
             multi_mde_target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
             external_input_mode=cfg['EXTERNAL_INPUT_MODE'],
             progress_log_path=progress_log_path,
+            mp_start_method=cfg['MP_START_METHOD'],
         )
         draw_colored_network(
             net_result, cfg['TARGET_COLORS'],

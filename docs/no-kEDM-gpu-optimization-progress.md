@@ -484,3 +484,76 @@ so the two targets moving in opposite directions on it fully explains why they d
 3. Empirically test the GPU-sharing hypothesis from plan §7b (queue depth vs. throughput, small
    `outer_workers` vs. today's CPU-sized value) before finalizing the CCM-gate integration's
    worker-pool design — reasoned through so far, not yet measured on Saion.
+
+---
+
+## 2026-09-03 — Fork-safety implemented; GPU-sharing experiment written; integration spec drafted
+
+**Status: all three of the previous entry's next steps are addressed. One (the GPU-sharing
+measurement) is written but NOT yet run — it needs Saion GPU access, which this session does not
+have. Integration coding (plan §8.3 onward) has not started.**
+
+### 1. Fork-safety fix — DONE and tested
+Implemented as a *conditional* switch rather than a blanket one, because measurement showed spawn
+is expensive here: **a spawn worker re-imports this module in 18.3s** (pandas/numpy/matplotlib/
+pyEDM/gmn), and the outer pools are recreated per BFS wave, so CPU-only runs would pay that
+repeatedly for a GPU path they never use.
+
+- `load_config()`: new `GPU_ENABLED` (`TSLS_MDE_GMN_GPU_ENABLED`, default False) and derived
+  `MP_START_METHOD` (`'spawn'` when GPU on, else `'fork'`).
+- `build_network()` / `build_nested_mde_network()`: new `mp_start_method='fork'` keyword
+  (defaulted, so existing callers are unaffected), threaded from `main()`; both outer
+  `ProcessPoolExecutor` pools now use it instead of a hardcoded `'fork'`.
+- Verified before changing anything: gmn monkeypatching is at module scope (lines 600/809 —
+  re-executes correctly on re-import in a spawn worker), there is a proper `__main__` guard
+  (line ~5686), and there are no `global` statements. Without these, spawn would have broken.
+- New test `tests/test_gpu_fork_safety.py` — all pass: default stays fork; flag flips to spawn;
+  `mp_start_method` genuinely reaches both pools (asserts the hardcoded `'fork'` is gone and both
+  pools reference the parameter); and a real spawn-context `ProcessPoolExecutor` runs while
+  round-tripping the argument *types* the real `submit()` passes (DataFrame/Path/dict/list/
+  ndarray). That last check is the one fork would silently let a regression through on.
+- Existing suite re-run green after the change: `test_r12_stage_serialization`,
+  `test_r13_shared_depth_budget`, `test_metric_routing_depth_ge1`.
+
+### 2. GPU-sharing experiment — written, not yet run
+`scripts/gpu_prototypes/measure_gpu_sharing.py`. States plan §7b's claims as four falsifiable
+hypotheses and prints directly interpretable results, using the CCM-gate primitive at production
+scale (M=800):
+- **H1** batch size is the real throughput lever (expect per-sweep time to drop as batch grows).
+- **H2** more *processes* sharing one GPU = contention, not throughput (fixed total work split
+  across 1/2/4 spawn processes; expect throughput ~flat or worse, unlike CPU cores).
+- **H3** more *threads* in one process likewise don't add GPU parallelism (kernels on the default
+  stream serialize).
+- **H4** CUDA cannot fork — expected to FAIL loudly; that failure is the on-hardware confirmation
+  of §7a and of why `GPU_ENABLED=1` switches to spawn. Timeout-guarded (60s) because undefined
+  behaviour can hang rather than raise, and the script explicitly warns against relaxing the spawn
+  requirement even if the fork probe unexpectedly succeeds.
+- Smoke-tested end-to-end on Deigo CPU (runs, all sections execute, H4 skips cleanly without a
+  GPU). The CPU numbers it printed are meaningless for the hypotheses — the script says so itself
+  in that case.
+
+### 3. Code-level integration spec — written (plan §8)
+Scope deliberately narrowed to the **CCM gate only**; the ranking stage is explicitly excluded per
+the production-scale result. Key decisions recorded there:
+- New isolated module `scripts/src/gpu_edm.py` (keeps the torch import optional; must import
+  cleanly on a GPU-less machine), porting the already-validated batched primitive unchanged —
+  including the two hard-won details (first-`k`-valid compaction before `d_min`, and
+  `set_num_threads(1)`).
+- Integration point is `proper_ccm`'s existing task grid, which is already ideally structured:
+  all `rng.choice` draws happen up-front and sequentially, so the torch path reuses the *same*
+  draws and reproducibility per `seed` is preserved; and `_score()` (with `f1`/`gamma`) stays on
+  CPU untouched, which is exactly what makes this viable where kEDM's `ccm()` wasn't.
+- Mandatory transparent CPU fallback: `use_gpu=True` without a GPU must fall back, not raise, so
+  the same code runs on Deigo and Saion with only the flag differing.
+- Test strategy centred on a `proper_ccm`-level equivalence test (GPU vs CPU, same seed, matching
+  outputs) that skips cleanly without a GPU — the check that would catch a silent scientific
+  regression rather than just a broken primitive.
+
+### Next steps
+1. Run `scripts/gpu_prototypes/measure_gpu_sharing.py` on Saion (`test-gpu`, same venv/procedure
+   as before). Its H2 result is a prerequisite for choosing `outer_workers` under
+   `GPU_ENABLED=1`; H4 confirms the fork hazard on this actual hardware.
+2. Then implement plan §8.3-§8.4 (`gpu_edm.py`, `proper_ccm(use_gpu=...)`, flag threading) with
+   the §8.5 tests.
+3. Then the §8.6 step-5 end-to-end small-scale A/B on Saion (`GPU_ENABLED=1` vs `0`, same config)
+   before any long production run.

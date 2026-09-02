@@ -402,3 +402,133 @@ inner_workers` product still describes available parallelism once GPU calls are 
 needs an actual experiment (queue depth vs. throughput, concurrently-submitted-batch vs. VRAM
 ceiling) before being trusted as a final design — treat it as the working hypothesis to test, not
 a settled conclusion.
+
+**Status update (2026-09-02/03)**: §7a is now IMPLEMENTED (see §8.1) and §7b now has a
+ready-to-run measurement script (`scripts/gpu_prototypes/measure_gpu_sharing.py`) that states each
+hypothesis in falsifiable form and prints directly interpretable results — it has not been run on
+GPU hardware yet.
+
+## 8. Code-level integration spec (CCM gate only)
+
+Written 2026-09-03, after the production-scale results narrowed the scope to one target. This is
+the section an implementing agent should follow. **Scope: the CCM gate only.** The ranking stage
+is explicitly OUT of scope (§0's UPDATE 2 — it loses at production scale for algorithmic reasons
+that batching cannot fix); do not route `_simplex_metric` through torch on the strength of this
+spec.
+
+### 8.1 Fork-safety — DONE (2026-09-03)
+
+Implemented and tested; nothing further needed here unless the design changes.
+
+- `load_config()` gained `GPU_ENABLED` (`TSLS_MDE_GMN_GPU_ENABLED`, default **False**) and
+  `MP_START_METHOD` (derived: `'spawn'` when GPU is on, `'fork'` otherwise).
+- `build_network()` and `build_nested_mde_network()` both gained `mp_start_method='fork'`
+  (defaulted so every existing caller is unaffected), threaded from `main()`'s
+  `cfg['MP_START_METHOD']`; both outer `ProcessPoolExecutor` pools now use it.
+- **Deliberately conditional, not a blanket switch**: a spawn worker re-imports this module from
+  scratch — measured **18.3s** on Deigo — and the pools are recreated per BFS wave, so CPU-only
+  runs would pay that repeatedly for a path they never use. With `GPU_ENABLED=False` the pipeline
+  is byte-for-byte unchanged.
+- Preconditions verified before making the change: gmn monkeypatching is at module scope
+  (re-executes correctly on re-import), there is a proper `if __name__ == "__main__"` guard, and
+  there are no `global` statements (no runtime-mutated module state a spawn worker would miss).
+- Regression test: `tests/test_gpu_fork_safety.py` — checks the default stays fork, the flag flips
+  it, `mp_start_method` actually reaches both pools (not silently dropped), and that a real
+  spawn-context `ProcessPoolExecutor` runs and round-trips the argument *types* the real
+  `submit()` passes (DataFrame/Path/dict/list/ndarray). Existing suite
+  (`test_r12_stage_serialization`, `test_r13_shared_depth_budget`,
+  `test_metric_routing_depth_ge1`) re-run green after the change.
+
+### 8.2 The exact integration point
+
+`proper_ccm()` in `cleaned_helper_functions.py` (~lines 1030-1060). Its current structure is
+already ideal for this — do not restructure it:
+
+```python
+for t in range(sample):                      # (1) ALL random draws happen first, in order,
+    for i, L in enumerate(libSizes):         #     on this function's own rng
+        lib_idx_fwd = rng.choice(M_fwd, size=min(L, M_fwd), replace=False); lib_idx_fwd.sort()
+        lib_idx_rev = rng.choice(M_rev, size=min(L, M_rev), replace=False); lib_idx_rev.sort()
+        tasks.append((t, i, lib_idx_fwd, lib_idx_rev))
+
+def _run_one_cell(task):                     # (2) one (sample, libSize) cell = TWO
+    ...                                      #     _crossmap_predict calls (fwd + rev),
+    preds_fwd = _crossmap_predict(...)       #     each scored by _score()
+    c2t = _score(obs_fwd, preds_fwd, target_measurement, gammaDelta=gammaDelta)
+    preds_rev = _crossmap_predict(...)
+    t2c = _score(obs_rev, preds_rev, columns_measurement, gammaDelta=gammaDelta)
+
+mapper = pool.map if pool is not None else map   # (3) mapped over the sample x libSize grid
+```
+
+Two properties of this make the integration clean and low-risk:
+- **Reproducibility is already decoupled from execution order.** Every `rng.choice` draw happens
+  up-front, sequentially, before any compute — the function's own docstring calls this out as why
+  `pool` doesn't change results. The torch path reuses those exact same `lib_idx` arrays, so a
+  given `seed` must still reproduce bit-identical library draws. **Do not regenerate the draws
+  inside the torch path.**
+- **Scoring stays on CPU, unchanged.** `_score()` (with `f1`/`gamma`) keeps operating on raw
+  prediction arrays exactly as today — this is the whole reason this approach beats kEDM's `ccm()`
+  (§1/§4). The torch path replaces *only* `_crossmap_predict`, never `_score`.
+
+### 8.3 What to build
+
+**New module `scripts/src/gpu_edm.py`** (new file, not additions to
+`cleaned_helper_functions.py`, so the torch import stays optional and isolated):
+
+- `is_available()` → bool. True only if torch imports AND `torch.cuda.is_available()`. Must never
+  raise when torch is absent — a CPU-only environment (Deigo) must import this module fine.
+- `batched_crossmap_predict(embed, pred_vals, lib_idx_batch, k, exclusionRadius, time_indices,
+  full_dist=None, device=...)` → `(B, M)` array. Port from the validated
+  `scripts/gpu_prototypes/validate_batched_ccm.py::batched_crossmap_predict_torch` **unchanged in
+  algorithm** — it is already numerically validated against `_crossmap_predict` (max abs diff
+  1.89e-05 on GPU at production scale, 0/140 NaN-pattern mismatches). Carry over its two
+  hard-won details: the first-`k`-valid **compaction** before computing `d_min` (getting this
+  wrong silently produced 1.16-magnitude errors — see §2a), and `torch.set_num_threads(1)`.
+- Returns a **numpy** array (caller stays numpy-only; keep torch types from leaking into
+  `cleaned_helper_functions.py`).
+
+**Modification to `proper_ccm()`**: add a `use_gpu=False` keyword. When True *and*
+`gpu_edm.is_available()`, group the already-drawn tasks by `(direction, len(lib_idx))` — same `L`
+means same tensor shape, which is exactly what the batch dimension requires — issue one batched
+call per group, then score each resulting row with the same `_score()` calls as today. When False
+or unavailable, run the existing `mapper(_run_one_cell, tasks)` path untouched.
+
+**Fallback behaviour is mandatory, not optional**: `use_gpu=True` on a machine with no GPU must
+transparently fall back to the CPU path, not raise. The same code must run on Deigo (no GPU) and
+Saion (GPU) with only the flag differing.
+
+### 8.4 Wiring the flag through
+
+`cfg['GPU_ENABLED']` already exists (§8.1). It needs threading to `proper_ccm`'s callers the same
+way `mp_start_method` was threaded to the pools: `main()` → `build_network()` →
+`build_nested_mde_network()` → `run_mde_for_target()` → `proper_mde`/`multi_proper_mde` → the
+CCM-gate `proper_ccm`/`multi_proper_ccm` call. Add it as a defaulted keyword (`use_gpu=False`) at
+each hop so no existing caller changes behaviour. Note `run_mde_for_target` runs **inside** the
+worker processes — with `GPU_ENABLED=1` those are spawn workers, so each initialises its own CUDA
+context (see §7b on why `outer_workers` likely needs to shrink; settle that with
+`measure_gpu_sharing.py`'s H2 result before picking a number).
+
+### 8.5 Test strategy
+
+1. **Equivalence test (the important one)** — `tests/test_gpu_ccm_equivalence.py`: run
+   `proper_ccm` twice on the same synthetic data with the same `seed`, once `use_gpu=False` and
+   once `use_gpu=True`, and assert the returned `c2t`/`t2c` arrays match within float32 tolerance.
+   Must **skip cleanly** (not fail) when no GPU is present, so it's runnable on Deigo. This is the
+   test that would catch a silent scientific regression — it compares the pipeline-level output,
+   not just the primitive.
+2. **Fallback test**: `use_gpu=True` with no GPU available must produce results identical to
+   `use_gpu=False`, no exception.
+3. **Reproducibility test**: same `seed`, `use_gpu` True vs False → identical library draws
+   (assert on the drawn indices, not just final scores).
+4. Re-run the existing suite; `GPU_ENABLED=False` must leave every current test green.
+
+### 8.6 Order of work
+
+1. ~~Fork-safety~~ — done (§8.1).
+2. Run `scripts/gpu_prototypes/measure_gpu_sharing.py` on Saion → settles `outer_workers`/thread
+   sizing and confirms/falsifies §7b before any sizing decision is baked in. **Not yet run.**
+3. Build `gpu_edm.py` + `proper_ccm(use_gpu=...)` + the equivalence test (§8.3, §8.5).
+4. Thread the flag through the call chain (§8.4).
+5. End-to-end run on Saion with `GPU_ENABLED=1` at small scale (`REGION_CHANNEL_CAP` low), diffed
+   against the same config with `GPU_ENABLED=0`, before any long production run.
