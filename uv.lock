@@ -212,6 +212,27 @@ wheels = [
 ]
 
 [[package]]
+name = "kedm"
+version = "0.10.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2c/f0/ea332298571e4b851c9a70d5644b0a9e4de6aed0a82d91a7c0560f87a6a8/kedm-0.10.1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:b75b9af48584a594dc7af48e0f461f2a4b5d136389dd10380a03d0b2c4c636e5", size = 594845, upload-time = "2026-01-14T07:37:39.716Z" },
+    { url = "https://files.pythonhosted.org/packages/88/f5/273d83e1f5f96790081f529bc3f8e3939ee7b7687745babd1f555e0f6884/kedm-0.10.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:504354da056659ffdec10acde3420abc3c29e2d3f219dcbcd1f74665ef18da62", size = 12896461, upload-time = "2026-01-14T07:37:41.112Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/8f/1ef5fd50690e6a6146a1553c190fc70e380a932010e287b55795f3d1afa0/kedm-0.10.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:232d6fd2e3448e1bf37ba93debb491ff0aa792c72cf40a8203ab2140f7a0e5fd", size = 596365, upload-time = "2026-01-14T07:37:43.145Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/f1/079021d104c800563b7525578bfeca3574950ce156f9d1526ee7b2691c85/kedm-0.10.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8bfa5f48ea349311af6b0ca5dcc930716594c301659bfda00660c9da60e7bfe9", size = 12897400, upload-time = "2026-01-14T07:37:45.11Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/9f/3b3fda6e9bf4941adb9363af5e1e7a800818f5980b3bd752a51578b369c9/kedm-0.10.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:dd20849e2033e2b244b73716016173eee63b6216536ddac761eddab0065bcad2", size = 596449, upload-time = "2026-01-14T07:37:47.13Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/e6/a357ec2122704e9856b92f77df424ad5b7ca3c683b67fea653e13de354e9/kedm-0.10.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:183ec0b720fd29816553eb56fe47b708e927043e7be15748e5e5c45d5d8cb4e3", size = 12898458, upload-time = "2026-01-14T07:37:49.05Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/88/dfdfd5a49778463e3b69129813ae67f1be6a052d0285ee684f08acf05c94/kedm-0.10.1-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:37eb983bccc7d5611c50b9a898b6d16365682cacace3b0571ec072f516959a62", size = 596587, upload-time = "2026-01-14T07:37:50.891Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/32/a0ac8042ca47c6af21199fb507fc0a9a459d991da7605b2a60c9b27caf5e/kedm-0.10.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9574f7701685f22a1b4a3401f5442cb3d62fdd103c3f0823d19abad792c9055d", size = 12898604, upload-time = "2026-01-14T07:37:52.447Z" },
+    { url = "https://files.pythonhosted.org/packages/02/3e/d055134c91266151801320c6217b1b062e970face666468a6bede30dd17a/kedm-0.10.1-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:af4153882f9c7844a4247c5f69ad1684550721e8edcfc7f79d98ae4c75efd883", size = 601237, upload-time = "2026-01-14T07:37:54.377Z" },
+    { url = "https://files.pythonhosted.org/packages/47/59/5b4dbdef710e15378907a31f88144f5f2cb0926603a8c68d90e9d44f10be/kedm-0.10.1-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ccbfe25837127af92647a8aa1725d21a9dee248e96ded57a3c8c8f7e4d319041", size = 12898832, upload-time = "2026-01-14T07:37:55.839Z" },
+]
+
+[[package]]
 name = "kiwisolver"
 version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -687,6 +708,7 @@ dependencies = [
     { name = "configparser" },
     { name = "dimx" },
     { name = "gmn" },
+    { name = "kedm" },
     { name = "matplotlib" },
     { name = "network" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -702,6 +724,7 @@ requires-dist = [
     { name = "configparser", specifier = ">=7.2.0" },
     { name = "dimx", specifier = "==1.1.3" },
     { name = "gmn", specifier = "==1.5.1" },
+    { name = "kedm", specifier = ">=0.10.1" },
     { name = "matplotlib", specifier = ">=3.11.0" },
     { name = "network", specifier = ">=0.1" },
     { name = "numpy", specifier = ">=2.4.6" },
