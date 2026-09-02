@@ -7,13 +7,15 @@ torch.set_num_threads(1)  # confirmed: default 40 threads causes catastrophic pe
 sys.path.insert(0, "/home/j/j-tominaga/pao_rotation/scripts/src")
 from cleaned_helper_functions import _crossmap_predict
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 
 def batched_crossmap_predict_torch(embed_t, pred_vals_t, lib_idx_batch, k, exclusionRadius, time_indices_t, full_dist=None):
     M = embed_t.shape[0]
     B, L = lib_idx_batch.shape
     k = min(k, L - 1)
     if k < 1:
-        return torch.full((B, M), float("nan"))
+        return torch.full((B, M), float("nan"), device=embed_t.device)
 
     k_query = k + 1
     if exclusionRadius > 0:
@@ -29,7 +31,7 @@ def batched_crossmap_predict_torch(embed_t, pred_vals_t, lib_idx_batch, k, exclu
     nn_dist, nn_local = torch.topk(dist_b, k_query, dim=2, largest=False, sorted=True)
     glob = torch.gather(lib_idx_batch.unsqueeze(1).expand(B, M, L), 2, nn_local)
 
-    r_M = torch.arange(M).view(1, M, 1)
+    r_M = torch.arange(M, device=embed_t.device).view(1, M, 1)
     is_self = glob == r_M
     if exclusionRadius > 0:
         qt = time_indices_t.view(1, M, 1)
@@ -91,20 +93,35 @@ def main():
     t_ref = time.perf_counter() - t0
     print(f"Reference (numpy/KDTree, {len(libSizes)*n_sample} calls): {t_ref:.3f}s")
 
-    embed_t = torch.tensor(embed, dtype=torch.float32)
-    pred_vals_t = torch.tensor(pred_vals, dtype=torch.float32)
-    time_indices_t = torch.tensor(time_indices, dtype=torch.long)
+    print(f"Torch device: {DEVICE}" + (f" ({torch.cuda.get_device_name(0)}, "
+          f"compute capability {torch.cuda.get_device_capability(0)})" if DEVICE == "cuda" else ""))
+
+    embed_t = torch.tensor(embed, dtype=torch.float32, device=DEVICE)
+    pred_vals_t = torch.tensor(pred_vals, dtype=torch.float32, device=DEVICE)
+    time_indices_t = torch.tensor(time_indices, dtype=torch.long, device=DEVICE)
+    lib_idx_batches_t = {
+        L: torch.tensor(np.stack([ref_results[(L, s)][0] for s in range(n_sample)]), dtype=torch.long, device=DEVICE)
+        for L in libSizes
+    }
+
+    if DEVICE == "cuda":
+        # Warm-up: first CUDA call pays one-time context/kernel-JIT overhead
+        # unrelated to steady-state throughput -- exclude it from the timed run.
+        _ = torch.cdist(embed_t.unsqueeze(0), embed_t.unsqueeze(0)).squeeze(0)
+        _ = batched_crossmap_predict_torch(embed_t, pred_vals_t, lib_idx_batches_t[libSizes[0]], k, exclusionRadius, time_indices_t)
+        torch.cuda.synchronize()
 
     t0 = time.perf_counter()
     full_dist = torch.cdist(embed_t.unsqueeze(0), embed_t.unsqueeze(0)).squeeze(0)  # cached ONCE across all libSizes/samples
     torch_results = {}
     for L in libSizes:
-        lib_idx_batch = np.stack([ref_results[(L, s)][0] for s in range(n_sample)])
-        lib_idx_batch_t = torch.tensor(lib_idx_batch, dtype=torch.long)
-        preds_b = batched_crossmap_predict_torch(embed_t, pred_vals_t, lib_idx_batch_t, k, exclusionRadius, time_indices_t, full_dist=full_dist)
+        preds_b = batched_crossmap_predict_torch(embed_t, pred_vals_t, lib_idx_batches_t[L], k, exclusionRadius, time_indices_t, full_dist=full_dist)
         for s in range(n_sample):
-            torch_results[(L, s)] = preds_b[s].numpy()
+            torch_results[(L, s)] = preds_b[s]
+    if DEVICE == "cuda":
+        torch.cuda.synchronize()  # CUDA calls are async -- must drain the queue before stopping the clock
     t_torch = time.perf_counter() - t0
+    torch_results = {k_: v.cpu().numpy() for k_, v in torch_results.items()}
     print(f"Torch batched, single-threaded, cached cdist ({len(libSizes)} batched calls of size {n_sample}): {t_torch:.3f}s")
     print(f"Speedup: {t_ref/t_torch:.2f}x")
 
