@@ -71,7 +71,16 @@ def batched_crossmap_predict_torch(embed_t, pred_vals_t, lib_idx_batch, k, exclu
 
 def main():
     rng = np.random.default_rng(0)
-    M = 2000
+    # Production-scale parameters, sourced from scripts/batch/tsls-mde-gmn.sbatch
+    # (not guessed): CCM_WINDOW_ROWS=800 is the real embedding pool size (M),
+    # CCM_LIB_SIZES_ROWS="16,24,40,64,160,400,800" are the exact library sizes
+    # swept, CCM_SAMPLE=20 is the exact sample count. exclusionRadius is
+    # actually dynamic per-dimension in production (grows on top of a static
+    # floor of 0, see EXCLUSION_RADIUS/R21 in the sbatch) -- 2 here is a
+    # representative mid-range value, not an exact reproduction of any one
+    # node's runtime value. E is likewise representative (production E is
+    # auto-selected per candidate/dimension, not a single fixed number).
+    M = 800
     E = 3
     embed = rng.normal(0, 1, (M, E)).astype(np.float64)
     pred_vals = np.sin(np.linspace(0, 40, M)) + rng.normal(0, 0.1, M)
@@ -79,7 +88,7 @@ def main():
     k = E + 1
     exclusionRadius = 2
 
-    libSizes = [200, 400, 800, 1200, 1600, 1800, 1900]
+    libSizes = [16, 24, 40, 64, 160, 400, 800]
     n_sample = 20
 
     t0 = time.perf_counter()

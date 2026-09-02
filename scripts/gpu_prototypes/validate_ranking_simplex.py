@@ -46,11 +46,20 @@ def batched_ranking_simplex_torch(lib_states, pred_states, target_lib_vals, Tp):
 
 def main():
     rng = np.random.default_rng(0)
-    n_lib = 20000
-    n_pred = 2000
-    n_total = n_lib + n_pred
+    # Production-scale parameters. n_total=44788 is the real row count from an
+    # actual archived job's post-MDE data (confirmed via `wc -l` on
+    # data_after_mde_head_position_x_head_position_y.csv, job 40563312).
+    # lib/pred split follows proper_mde's own documented default convention
+    # (lib=[1,N//2], pred=[N//2+1,N]) since no single job's exact override is
+    # on record -- this is the sourced default, not a guess. n_candidates=1500
+    # is representative of production candidate pool sizes (prior sessions
+    # observed pools of ~1071 and larger depending on REGION_CHANNEL_CAP), not
+    # an exact reproduction of one specific job.
+    n_total = 44788
+    n_lib = n_total // 2
+    n_pred = n_total - n_lib
     Tp = 1
-    n_candidates = 100
+    n_candidates = 1500
 
     selected = np.sin(np.linspace(0, 400, n_total)) + rng.normal(0, 0.05, n_total)
     target = np.roll(selected, 5) + rng.normal(0, 0.05, n_total)
@@ -79,13 +88,15 @@ def main():
     pred_sel = selected[n_lib:].astype(np.float32)
     target_t = torch.tensor(target.astype(np.float32), device=DEVICE)
 
-    # A full (n_candidates, n_pred, n_lib) dense distance tensor would be
-    # 100*2000*20000*4 bytes = 16 GB -- OOMs outright on CPU (confirmed: this
-    # exact unchunked version was SIGKILLed) and GPU memory is typically
-    # SMALLER than this node's system RAM, so chunking matters even more here.
-    # If this OOMs on GPU (torch.cuda.OutOfMemoryError), reduce chunk_b -- try
-    # 1 before concluding the approach doesn't fit.
-    chunk_b = 5
+    # Chunk size recalculated for THIS run's much larger n_pred (~22,394 vs the
+    # original prototype's 2,000): one chunk's dense distance tensor is
+    # chunk_b * n_pred * n_lib * 4 bytes. At chunk_b=5 that would be
+    # ~10 GB -- too close to the P100's 16 GB VRAM for comfort with no one
+    # watching it run. chunk_b=2 keeps it to ~4 GB, leaving headroom for the
+    # topk/gather intermediates and everything else already resident. If this
+    # still OOMs (torch.cuda.OutOfMemoryError), rerun with chunk_b=1 before
+    # concluding the approach doesn't fit at this scale.
+    chunk_b = 2
 
     def make_chunk_tensors(idx):
         lib_states = np.stack([np.stack([cand_cols[f"c{i}"][:n_lib], lib_sel], axis=1) for i in idx])
