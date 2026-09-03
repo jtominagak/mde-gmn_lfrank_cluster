@@ -21,6 +21,9 @@ echo or contrast with it directly.
    pre-measurement reasoning, kept only for context.
 3. **§8** — the implementation spec. §8.1 (fork-safety) and §8.3/§8.4 (the actual `gpu_edm.py`
    build + call-chain wiring) are DONE and committed. §8.6 marks the next step with "← next".
+4. **§9** — the follow-up that extends the GPU path to `GMN_MODE='combined'`. Read this if that's
+   your task. It matters because `combined` is the pipeline **default**, so what §8 built
+   currently does nothing for a default production run.
 
 **Current state in one line**: `scripts/src/gpu_edm.py` exists, `proper_ccm(use_gpu=...)` uses it,
 `GPU_ENABLED` reaches it from `main()`, and `tests/test_gpu_ccm_equivalence.py` passes on Deigo
