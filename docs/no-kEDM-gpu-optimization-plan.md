@@ -403,10 +403,63 @@ needs an actual experiment (queue depth vs. throughput, concurrently-submitted-b
 ceiling) before being trusted as a final design — treat it as the working hypothesis to test, not
 a settled conclusion.
 
-**Status update (2026-09-02/03)**: §7a is now IMPLEMENTED (see §8.1) and §7b now has a
-ready-to-run measurement script (`scripts/gpu_prototypes/measure_gpu_sharing.py`) that states each
-hypothesis in falsifiable form and prints directly interpretable results — it has not been run on
-GPU hardware yet.
+**Status update (2026-09-03): §7b has now been MEASURED, and two of its claims are FALSIFIED.**
+§7a is implemented (§8.1) and independently confirmed on hardware. The measurement results and
+what they change are in §7c below — read that before using anything in §7b above, which is
+retained as the pre-measurement reasoning.
+
+### 7c. Measured results (2026-09-03, Saion `test-gpu`, P100) — §7b partly wrong
+
+`scripts/gpu_prototypes/measure_gpu_sharing.py`, run on `saion-gpu05`. Full raw output in the
+progress log. **The headline: measurement contradicted the reasoning in §7b on two of four
+points, and the corrections all SIMPLIFY the integration rather than complicate it.**
+
+| Hypothesis (from §7b) | Result | Evidence |
+|---|---|---|
+| H1 "batch size is the real throughput lever" | **FALSIFIED** | 16x more batching bought **11%** (14.80 → 13.19 ms/sweep) |
+| H3 "more inner threads don't add GPU parallelism" | **CONFIRMED** | dead flat: 67.7 / 68.3 / 68.3 / 67.9 sweeps/s at 1/2/4/8 threads |
+| H2 "more processes = contention, not throughput" | **INCONCLUSIVE** — test design flaw | see below |
+| H4 "CUDA cannot fork" (§7a) | **CONFIRMED on hardware** | `RuntimeError: Cannot re-initialize CUDA in forked subprocess` |
+
+**H1 — why the "batching is the lever" claim was wrong.** Total FLOPs are constant no matter how
+the work is chunked; batching only pays when *per-call overhead* is significant relative to
+per-call work. At the CCM gate's production size (M=800) it isn't — the workload is already
+compute-bound, so consolidating 448 kernel launches into 28 changed almost nothing. **Design
+consequence: do NOT build a candidate-level batching layer into the CCM-gate integration.** The
+already-validated primitive (which batches across the `sample` dimension per libSize) is
+sufficient; adding another batching tier would be complexity bought for ~11%.
+
+**H2 — the apparent 3x "win" is not a real scaling result.** H3 establishes one process does
+~68 sweeps/s, so H2's 32 sweeps is **~0.47s of actual compute** — against wall times of
+9.8-28.3s. H2 therefore measured spawn startup (torch import + CUDA context creation), not GPU
+contention. The monotonic improvement across `procs=1→2→4` is also consistent with page-cache
+warming, since `procs=1` ran first and cold. **The contention question remains genuinely open**;
+answering it would need a redesigned test where per-worker GPU work dominates startup.
+
+**But the question H2 was meant to settle is now substantially de-risked anyway**, by three facts
+that don't depend on it:
+1. **Spawn startup is negligible in production.** 10-28s per worker per wave, against real
+   per-node `run_mde_for_target` runtimes of minutes to many hours (job 40582445's
+   `head_position_x`: 49,238s for one node) — 0.02-0.3% overhead. The benchmark's 0.47s workload
+   made this look alarming; at production scale it isn't.
+2. **VRAM pressure is nil.** Peak GPU memory for the whole run: **1.27 GB of 17.1 GB.** Several
+   concurrent workers fit comfortably; this also retires plan §5 item 6 (no tiling design needed
+   for this target — that concern was inherited from the ranking-stage experiments, which are now
+   out of scope).
+3. **Only the CCM gate is being ported.** The ranking stage stays on CPU (§0 UPDATE 2) and
+   dominates per-node runtime, so each worker spends only a fraction of its life touching the GPU
+   — intermittent multi-worker GPU access, not sustained contention.
+
+**Revised recommendation, replacing §7b's "shrink `outer_workers` drastically"**: do NOT change
+`outer_workers`/`inner_workers` sizing preemptively. Keep today's CPU-core-based sizing, and
+measure contention in the real end-to-end A/B (§8.6 step 5) where the workload is realistic. §7b's
+reasoning that a GPU "is a single shared resource in a way CPU cores aren't" is still true in
+principle — it simply doesn't bind here, because GPU work is a small, intermittent slice of each
+worker's total runtime and the memory footprint is tiny.
+
+**H3's confirmation is also a simplification, not a constraint**: extra threads neither help nor
+*hurt* (flat, not degrading), so the existing inner `ThreadPoolExecutor` structure can stay
+exactly as it is. No threading redesign is needed for the integration.
 
 ## 8. Code-level integration spec (CCM gate only)
 
@@ -506,8 +559,20 @@ way `mp_start_method` was threaded to the pools: `main()` → `build_network()` 
 CCM-gate `proper_ccm`/`multi_proper_ccm` call. Add it as a defaulted keyword (`use_gpu=False`) at
 each hop so no existing caller changes behaviour. Note `run_mde_for_target` runs **inside** the
 worker processes — with `GPU_ENABLED=1` those are spawn workers, so each initialises its own CUDA
-context (see §7b on why `outer_workers` likely needs to shrink; settle that with
-`measure_gpu_sharing.py`'s H2 result before picking a number).
+context. **Per §7c, do NOT change `outer_workers`/`inner_workers` sizing as part of this work**
+(the earlier §7b hypothesis that they'd need to shrink drastically did not survive measurement);
+keep today's sizing and evaluate contention in the §8.6 step-5 A/B instead.
+
+### 8.4b What §7c's measurements removed from this spec
+
+Three things this spec would otherwise have called for are now explicitly NOT needed — recorded
+so they don't get reintroduced by someone reasoning from first principles later:
+- **No candidate-level batching tier** (H1 falsified: ~11% for 16x batching). The validated
+  primitive's existing per-libSize batching across the `sample` dimension is enough.
+- **No threading redesign** (H3: extra threads are neutral, neither helping nor hurting). The
+  existing inner `ThreadPoolExecutor` stays as-is.
+- **No VRAM tiling/chunking design** (peak 1.27 GB of 17.1 GB for the whole measurement run). The
+  `chunk_b`-style tiling the ranking-stage prototype needed is irrelevant to this target.
 
 ### 8.5 Test strategy
 
@@ -525,10 +590,12 @@ context (see §7b on why `outer_workers` likely needs to shrink; settle that wit
 
 ### 8.6 Order of work
 
-1. ~~Fork-safety~~ — done (§8.1).
-2. Run `scripts/gpu_prototypes/measure_gpu_sharing.py` on Saion → settles `outer_workers`/thread
-   sizing and confirms/falsifies §7b before any sizing decision is baked in. **Not yet run.**
-3. Build `gpu_edm.py` + `proper_ccm(use_gpu=...)` + the equivalence test (§8.3, §8.5).
+1. ~~Fork-safety~~ — done (§8.1), and independently confirmed on hardware by H4 (§7c).
+2. ~~Run `measure_gpu_sharing.py`~~ — done 2026-09-03 (§7c). Outcome: no sizing changes needed;
+   three planned pieces of complexity dropped (§8.4b).
+3. **Build `gpu_edm.py` + `proper_ccm(use_gpu=...)` + the equivalence test (§8.3, §8.5).** ← next
 4. Thread the flag through the call chain (§8.4).
 5. End-to-end run on Saion with `GPU_ENABLED=1` at small scale (`REGION_CHANNEL_CAP` low), diffed
-   against the same config with `GPU_ENABLED=0`, before any long production run.
+   against the same config with `GPU_ENABLED=0`, before any long production run. This is also
+   where multi-worker GPU contention gets evaluated for real (§7c), since the H2 measurement
+   couldn't answer it.

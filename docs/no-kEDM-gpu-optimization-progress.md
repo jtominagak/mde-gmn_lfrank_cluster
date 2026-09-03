@@ -557,3 +557,88 @@ the production-scale result. Key decisions recorded there:
    the §8.5 tests.
 3. Then the §8.6 step-5 end-to-end small-scale A/B on Saion (`GPU_ENABLED=1` vs `0`, same config)
    before any long production run.
+
+---
+
+## 2026-09-03 — GPU-sharing measured: two hypotheses falsified, integration simplified
+
+**Status: `measure_gpu_sharing.py` run on Saion (`saion-gpu05`, P100). Two of four hypotheses
+falsified, one confirmed, one inconclusive due to a test-design flaw. Net effect: the integration
+spec got SIMPLER, and no worker-sizing change is needed. Plan §7c has the analysis; this is the
+raw record. Next: build the integration (plan §8.6 step 3) — not yet started.**
+
+### Raw output
+```
+device: cuda (Tesla P100-SXM2-16GB, capability (6, 0), 17.1 GB)
+
+--- H1: batch size as the throughput lever ---
+  batch= 1  calls= 64  sweeps= 64  total=0.947s  per-sweep=14.80ms
+  batch= 2  calls= 32  sweeps= 64  total=0.875s  per-sweep=13.67ms
+  batch= 4  calls= 16  sweeps= 64  total=0.858s  per-sweep=13.41ms
+  batch= 8  calls=  8  sweeps= 64  total=0.849s  per-sweep=13.27ms
+  batch=16  calls=  4  sweeps= 64  total=0.844s  per-sweep=13.19ms
+
+--- H3: thread count vs. throughput (fixed total work, one process) ---
+  threads=1  sweeps/thread=32  total_sweeps=32  wall=0.47s  throughput=67.67 sweeps/s
+  threads=2  sweeps/thread=16  total_sweeps=32  wall=0.47s  throughput=68.32 sweeps/s
+  threads=4  sweeps/thread=8  total_sweeps=32  wall=0.47s  throughput=68.26 sweeps/s
+  threads=8  sweeps/thread=4  total_sweeps=32  wall=0.47s  throughput=67.93 sweeps/s
+
+--- H2: process count vs. throughput (fixed total work) ---
+  procs=1  sweeps/proc=32  total_sweeps=32  wall=28.28s  throughput=1.13 sweeps/s
+  procs=2  sweeps/proc=16  total_sweeps=32  wall=10.75s  throughput=2.98 sweeps/s
+  procs=4  sweeps/proc=8  total_sweeps=32  wall=9.81s  throughput=3.26 sweeps/s
+
+--- H4: CUDA + fork (expected to FAIL -- that is the confirmation) ---
+  forked child failed as expected: RuntimeError: Cannot re-initialize CUDA in forked subprocess.
+  To use CUDA with multiprocessing, you must use the 'spawn' start method
+
+peak GPU memory this run: 1.27 GB
+```
+
+### H4 — CONFIRMED on hardware
+The exact predicted error. This independently validates the §8.1 fork→spawn change against the
+real GPU, rather than resting on documentation alone.
+
+### H3 — CONFIRMED
+Throughput dead flat (67.7 → 68.3 → 68.3 → 67.9 sweeps/s) across 1→8 threads. Extra inner threads
+add no GPU parallelism — as reasoned. Usefully, they don't *degrade* it either, so the existing
+inner `ThreadPoolExecutor` needs no redesign.
+
+### H1 — FALSIFIED (my §7b reasoning was wrong)
+I had claimed batch size was "the real throughput lever." It bought **11%** across a 16x batch
+increase. The correct reading: total FLOPs don't change with chunking, so batching only helps when
+per-call overhead is significant relative to per-call work — at M=800 the workload is already
+compute-bound, so consolidating 448 kernel launches into 28 changed almost nothing. Recorded
+explicitly because it's the kind of plausible-sounding claim that would otherwise get
+reintroduced later by first-principles reasoning.
+
+### H2 — INCONCLUSIVE (my test design was flawed, not just the hypothesis)
+The apparent 3x throughput gain from 1→4 processes is not a real scaling result. H3 establishes
+one process does ~68 sweeps/s, so H2's 32 sweeps is **~0.47s of actual compute** against wall
+times of 9.8-28.3s — meaning H2 measured spawn startup (torch import + CUDA context), not GPU
+contention. The monotonic improvement is also consistent with page-cache warming, since `procs=1`
+ran first and cold. A valid contention test would need per-worker GPU work large enough to
+dominate startup; deferred to the real end-to-end A/B instead of rebuilding the microbenchmark.
+
+**Important calibration note**: the 10-28s spawn startup looks alarming against a 0.47s benchmark
+workload, but production per-node `run_mde_for_target` runtimes are minutes to many hours (job
+40582445's `head_position_x`: 49,238s for a single node) — so it's 0.02-0.3% overhead in reality.
+Do not "fix" spawn startup on the strength of this benchmark; it isn't a real problem.
+
+### What this changed in the plan
+Three pieces of planned complexity were dropped (plan §8.4b), and no sizing change is needed:
+- **No candidate-level batching tier** (H1) — the validated primitive's existing per-libSize
+  batching is sufficient.
+- **No threading redesign** (H3) — existing inner `ThreadPoolExecutor` stays as-is.
+- **No VRAM tiling design** (peak 1.27 GB of 17.1 GB) — the `chunk_b`-style tiling the
+  ranking-stage prototype needed is irrelevant here. Retires plan §5 item 6.
+- **No `outer_workers` shrink** — §7b's hypothesis that it would need to shrink drastically did
+  not survive measurement; keep current sizing, evaluate contention in the §8.6 step-5 A/B.
+
+### Next steps
+1. Build `scripts/src/gpu_edm.py` + `proper_ccm(use_gpu=...)` + the equivalence test
+   (plan §8.3/§8.5). This is now unblocked — nothing else gates it.
+2. Thread `GPU_ENABLED` through the call chain (plan §8.4).
+3. End-to-end small-scale A/B on Saion (`GPU_ENABLED=1` vs `0`, same config), which also serves
+   as the real contention measurement H2 couldn't provide.
