@@ -2048,7 +2048,8 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
                                ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
                                reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                                data_file=None, data_file_sha256=None, code_fingerprint=None,
-                               cache_stage='stage1', E=3, max_e=10, target_aggregate='mean'):
+                               cache_stage='stage1', E=3, max_e=10, target_aggregate='mean',
+                               use_gpu=False):
     '''Multi-target counterpart of run_mde_for_target() -- GMN_MODE='combined'
     only (see load_config()'s MULTI_MDE_E docstring and main()'s own MDE
     block). Runs cleaned_helper_functions.multi_proper_mde's forward
@@ -2060,6 +2061,17 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
     see multi_proper_mde's own docstring; E>0 is still the static,
     every-candidate-identical original behavior) and `target_aggregate`
     are the genuinely new knobs.
+
+    `use_gpu` (docs/no-kEDM-gpu-optimization-plan.md section 9): threaded
+    straight through to `multi_proper_mde`'s own `use_gpu` -- see that
+    function's docstring, and run_mde_for_target()'s own identical
+    `use_gpu` docstring for the general contract (transparent CPU
+    fallback, byte-for-byte unchanged when False). This is the call this
+    section 9 follow-up exists for: GMN_MODE='combined' (the pipeline
+    default) reaches its own CCM gate through multi_proper_ccm via this
+    function, not through run_mde_for_target()'s proper_ccm -- section 8's
+    work alone left this path unaccelerated. Callers pass
+    `cfg['GPU_ENABLED']`, same source as every other use_gpu in this file.
 
     Returns the same dict shape as run_mde_for_target() except keyed by
     `'targets'` (list) instead of a single `'target'` -- main() builds one
@@ -2134,7 +2146,7 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
         crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
         metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
         target_aggregate=target_aggregate,
-        verbose=True,
+        verbose=True, use_gpu=use_gpu,
     )
 
     mde_out = pd.DataFrame({'rho': result['MDErho']})
@@ -5488,6 +5500,7 @@ def main():
                     data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
                     code_fingerprint=code_fingerprint,
                     E=0, max_e=cfg['MULTI_MDE_E'], target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
+                    use_gpu=cfg['GPU_ENABLED'],
                 )
             except Exception as exc:
                 # Same failure mode _failed_mde_result() guards against below

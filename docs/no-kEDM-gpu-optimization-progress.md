@@ -764,11 +764,122 @@ confirm" below before treating this as more validated than it is.**
 - Anything about `GMN_MODE='combined'` runs (see the scope decision in item 4 above) — those are
   simply not GPU-accelerated by this work at all yet.
 
+### Next steps (superseded by the entry below for the `GMN_MODE='combined'` gap — kept for history)
+1. ~~Run the plan §8.6 step-5 A/B on Saion~~ — still not run (no GPU/no Saion access this session),
+   but the scope it needs to cover grew: see the entry below, then the updated command block in the
+   chat turn that entry corresponds to.
+
+---
+
+## 2026-09-03 (continued) — GPU path extended to `GMN_MODE='combined'` (plan section 9)
+
+**Status: plan section 9 done and committed. `multi_proper_ccm(use_gpu=...)` now exists alongside
+`proper_ccm(use_gpu=...)`, closing the gap the previous entry's item 4 scope note flagged —
+`GMN_MODE='combined'` (the pipeline default) now gets GPU acceleration too. Same caveat as before:
+built and verified entirely on Deigo (no GPU); the Saion A/B (next) is what actually proves this on
+real hardware, for both `GMN_MODE` values now.**
+
+### What was done
+
+1. **`multi_proper_ccm(..., use_gpu=False)`** (`cleaned_helper_functions.py`). The real work here
+   was structural, not algorithmic (section 9.1 was right that the underlying primitive applies
+   unchanged) — three differences from `proper_ccm` drove it, matching plan section 9.2 exactly:
+   - **Draws collected up front.** Unlike `proper_ccm` (already structured that way),
+     `multi_proper_ccm`'s original code interleaved `rng_fwd.choice`/`rng_rev.choice` calls with
+     `_crossmap_predict`/`_score` compute, one `(i, t)` cell at a time, with an explicit code
+     comment about preserving consumption order/count. Rewrote as: one pass that draws every
+     `(i, t[, target])` library index into `fwd_draws`/`rev_draws` dicts, in EXACTLY the original
+     per-libSize `rng_fwd`/`rng_rev` Generator creation and consumption order — the same `for i:
+     rng_fwd = default_rng(...); rng_rev = default_rng(...); for t: for tname: ...; then rev`
+     structure, just recording instead of computing — followed by separate compute passes (CPU
+     loop or GPU-batched) that only ever read from those already-drawn values.
+   - **Fwd batches per `(libSize, target)` pair.** Each target has its own predicted values
+     (`obs_fwd_dict[tname]`), and `batched_crossmap_predict` takes one `pred_vals` array per call
+     (not one per batch row) — so unlike `proper_ccm`'s one-call-per-libSize, this is one call per
+     `(i, tname)` pair, batching across `sample`. A single cached `(M_fwd, M_fwd)` distance matrix
+     is still reused across every one of those calls (embed_fwd never changes across the whole
+     function, regardless of `use_full_pool`). Scores are computed per target immediately after
+     each batched call, then aggregated via `target_aggregate` (`mean`/`min`) in a final pass —
+     aggregating scores, never predictions, per section 9.2 item 2. Moved the
+     `target_aggregate not in ('mean', 'min')` check to the top of the function (was previously
+     raised lazily inside the per-cell loop) — same error, now fail-fast instead of after
+     potentially wasted compute; a strict improvement, not a behavior change for valid inputs.
+   - **Rev batches only when `use_full_pool`.** `target_embed` is constant across every sample only
+     when `target_select_E is None` (the full joint pool) — exactly the precondition the cached
+     distance-matrix trick needs. When `target_select_E` is an int, `target_embed` is rebuilt from
+     a freshly-drawn `col_idx` every `(i, t)`, so per section 9.2 item 3 this stays on the CPU
+     `_crossmap_predict` path unconditionally (not yet measured as worth batching per distinct
+     embedding — explicitly deferred, matching the "don't add complexity before measuring" lesson
+     section 7c's H1 already established for a different case).
+   - `multi_proper_ccm` still has no `pool` parameter (per the guardrail) — not added.
+
+2. **Verification beyond the committed test suite** (two scratchpad-only scripts, deleted after
+   use, not committed): (a) loaded the PRE-this-session committed version of
+   `cleaned_helper_functions.py` (via `git show HEAD:...`) side by side with the edited working-tree
+   version and called `multi_proper_ccm(..., use_gpu=False)` on both across five configurations
+   (`use_full_pool` True/False, `n_extra` zero/nonzero, 1-3 targets, `mean`/`min` aggregate) —
+   **all five produced byte-identical `c2t`/`t2c`/`libSizes`**, direct confirmation the
+   draw-then-compute restructuring didn't change CPU-path numerics, not just an argument that it
+   shouldn't have. (b) Monkeypatched `gpu_edm.is_available()` to return `True` and
+   `gpu_edm.batched_crossmap_predict` to force `device='cpu'` (both late-imported inside
+   `multi_proper_ccm`, so patching the `gpu_edm` module's attributes before calling it redirects
+   those lookups) to actually exercise the new GPU-batched fwd/rev code paths on this GPU-less
+   machine, compared against the `use_gpu=False` CPU path across four configurations — max diffs
+   3.6e-06/3.0e-08 (`use_full_pool=True`, both directions batched) down to exactly 0.0 for the rev
+   direction when `use_full_pool=False` (confirms rev genuinely never touches the GPU path in that
+   case, as designed). This is the same class of check as `gpu_edm.py`'s own CPU-device port
+   validation from the previous session (1.49e-05 max diff there) — independent evidence the new
+   wiring is correct, without needing real CUDA hardware to get it.
+
+3. **Call-chain wiring** (mirroring section 8.4's pattern exactly): `use_gpu=False` added to
+   `multi_proper_mde()`, threaded to its `multi_proper_ccm()` call; added to
+   `run_multi_mde_for_targets()` (`tsls-mde-gmn.py`), threaded to its `tsls.multi_proper_mde()`
+   call; `main()`'s `GMN_MODE='combined'` depth-0 seed call site now passes
+   `use_gpu=cfg['GPU_ENABLED']`. Confirmed by reading the call graph directly that
+   `run_multi_mde_for_targets`/`multi_proper_mde`/`multi_proper_ccm` are reached ONLY from this one
+   depth-0 seed call, not from `build_nested_mde_network()`'s Stage 1/Stage 2 BFS (that BFS always
+   uses `run_mde_for_target`/`proper_mde`/`proper_ccm` regardless of `GMN_MODE` — confirmed by
+   grepping every `gmn_mode`/`GMN_MODE` reference in `tsls-mde-gmn.py`, not assumed). So this
+   session's work specifically closes the ONE call that was previously unaccelerated under
+   `GMN_MODE='combined'`, not a whole separate code path running throughout the network build.
+
+4. **`tests/test_gpu_multi_ccm_equivalence.py`** (new) — the `multi_proper_ccm` counterpart to
+   `tests/test_gpu_ccm_equivalence.py`, same three checks: equivalence (skips clean on Deigo),
+   fallback (runs and PASSES on Deigo), reproducibility (runs and PASSES on Deigo, recording both
+   the `rng_fwd` and `rng_rev` draw streams via the same `numpy.random.default_rng`-patching
+   technique as the `proper_ccm` test — `numpy.random.Generator.choice` itself can't be
+   monkeypatched directly, Cython extension type). Equivalence and reproducibility both run against
+   BOTH `use_full_pool` True and False (target_select_E=None vs an int), since those are genuinely
+   different code paths inside the function (rev GPU-batched vs rev CPU-only) and both need
+   hardware coverage — the equivalence test additionally asserts `t2c` is BYTE-IDENTICAL (not just
+   close) between `use_gpu=False`/`True` in the `use_full_pool=False` case specifically, since rev
+   never touches the GPU path there regardless of the flag.
+
+5. **Existing suite**: full `tests/test_*.py` (20 files now, including the new one) run
+   individually, all PASS — in particular every test named as must-stay-green:
+   `test_gpu_ccm_equivalence`, `test_gpu_fork_safety`, `test_r12_stage_serialization`,
+   `test_r13_shared_depth_budget`, `test_metric_routing_depth_ge1`. Also specifically re-checked
+   `test_multi_mde_auto_embed_dimension.py` (calls `multi_proper_mde`/`multi_proper_ccm` directly,
+   not via a fake) and `test_r19_mde_evaluate.py` (exercises `GMN_MODE='combined'` end-to-end via
+   `run_mde_evaluate`) since those were the tests most likely to be sensitive to this session's
+   restructuring — both PASS unchanged. No test fakes needed updating this time (unlike the
+   previous entry's `run_mde_for_target` fakes) — nothing in `tests/` stands in for
+   `run_multi_mde_for_targets`/`multi_proper_mde`/`multi_proper_ccm`.
+
+### What this does NOT yet confirm
+- Actual GPU numerics on real hardware — same caveat as the previous entry, now for this path too.
+  The CPU-forced monkeypatch validation in item 2 above proves the wiring/grouping logic is
+  correct; it says nothing CUDA-specific.
+- Multi-worker GPU contention specifically for the `GMN_MODE='combined'` depth-0 seed call, which
+  runs BEFORE `build_nested_mde_network()`'s own `ProcessPoolExecutor` waves start (single-process,
+  no `pool` at all) — a different concurrency shape than the Stage 1/Stage 2 contention question
+  §7c's H2 left open. Not yet reasoned through in detail; likely low-risk (it's one process, not
+  many, sharing the GPU during this specific call) but not measured.
+
 ### Next steps
-1. **Run the plan §8.6 step-5 A/B on Saion**: `GPU_ENABLED=1` vs `GPU_ENABLED=0`, same config,
-   small scale (`REGION_CHANNEL_CAP` low) — diff the two runs' MDE selections/edges, confirm
-   `tests/test_gpu_ccm_equivalence.py`'s equivalence test actually passes (not just skips) there,
-   and use it as the real multi-worker contention measurement H2 couldn't provide. This session has
-   no GPU and no Saion SSH credentials, so this is handed to the user as a command block (see the
-   chat turn this entry corresponds to) rather than run here — same handoff pattern as the
-   2026-09-02 manual-procedure entries above.
+1. **Run the plan §8.6 step-5 A/B on Saion, now covering BOTH `GMN_MODE` values**:
+   `GPU_ENABLED=1` vs `GPU_ENABLED=0`, small scale (`REGION_CHANNEL_CAP` low), once with
+   `GMN_MODE=separate` and once with `GMN_MODE=combined` — diff each pair's MDE selections/edges,
+   confirm both `tests/test_gpu_ccm_equivalence.py` and `tests/test_gpu_multi_ccm_equivalence.py`
+   actually PASS (not skip) there. This session still has no GPU and no Saion SSH credentials, so
+   this is handed to the user as a command block (see the chat turn this entry corresponds to).

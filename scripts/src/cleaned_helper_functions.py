@@ -1795,6 +1795,7 @@ def multi_proper_ccm(
     gammaDelta=2,
     show_plot=False,
     pass_fail=False,
+    use_gpu=False,
 ):
     """CCM with a multi-variable target manifold.
 
@@ -1846,6 +1847,22 @@ def multi_proper_ccm(
     target_select_E : int or None
         Number of columns to randomly draw from the pool to form the
         target embedding. Defaults to E.
+    use_gpu : bool
+        Same contract as ``proper_ccm``'s own ``use_gpu`` (transparent
+        CPU fallback with no GPU, reproducible library draws regardless
+        of the flag, ``_score`` stays on CPU unchanged) -- see that
+        function's docstring for the full behaviour. Two differences
+        specific to this function (docs/no-kEDM-gpu-optimization-plan.md
+        section 9.2): the fwd direction batches across ``sample`` for
+        each ``(libSize, target)`` pair independently (one call per pair,
+        since each target has its own predicted values) rather than one
+        call per libSize; the rev direction is only GPU-batched when
+        ``target_select_E is None`` (the full joint pool, constant across
+        every sample -- the precondition the cached distance-matrix trick
+        needs), and stays on the CPU path otherwise (an int
+        ``target_select_E`` redraws the target embedding at random every
+        sample, so there is no single embedding to cache a distance
+        matrix against).
     Other parameters: same as ``proper_ccm``.
 
     HOW TO USE
@@ -1861,6 +1878,10 @@ def multi_proper_ccm(
     """
     if isinstance(targets, str):
         targets = [targets]
+    if target_aggregate not in ('mean', 'min'):
+        raise ValueError(
+            f'target_aggregate must be mean/min, got {target_aggregate!r}'
+        )
     if target_pool_depth is None:
         target_pool_depth = E
     # target_select_E=None  -> use the FULL joint pool deterministically.
@@ -1956,41 +1977,40 @@ def multi_proper_ccm(
 
     M_fwd = embed_fwd.shape[0]
 
+    gpu_ready = False
+    if use_gpu:
+        from gpu_edm import is_available as _gpu_is_available
+        gpu_ready = _gpu_is_available()
+    if gpu_ready:
+        from gpu_edm import batched_crossmap_predict
+
+    # Draw every (i, t[, target]) library index SEQUENTIALLY, in EXACTLY
+    # the order and from the exact same per-i rng_fwd/rng_rev Generators
+    # the original inline (draw-then-compute-immediately) loop used --
+    # this is what keeps a given seed reproducible bit-for-bit regardless
+    # of use_gpu (docs/no-kEDM-gpu-optimization-plan.md section 9.2 item
+    # 1: this function's rng draws are NOT collected up front the way
+    # proper_ccm's are, so getting this order wrong is the likeliest way
+    # to silently break reproducibility). Only the draw is sequential; the
+    # expensive part (KDTree build+query, or the batched GPU primitive)
+    # happens in the separate passes below.
+    fwd_draws = {i: {tname: [] for tname in targets} for i in range(n_L)}
+    rev_draws = {i: [] for i in range(n_L)}  # each entry: (t, lib_idx_rev, col_idx)
+
     for i, L in enumerate(libSizes):
         rng_fwd = np.random.default_rng(child_seqs[2 * i])
         rng_rev = np.random.default_rng(child_seqs[2 * i + 1])
         for t in range(sample):
-            # ---- fwd: predict each target with source embedding ----
-            per_target = []
+            # _crossmap_predict no longer draws its own library -- see
+            # that function's own docstring -- so the draw that used to
+            # happen inside it happens here, in the same per-target spot
+            # in the loop, preserving this function's existing rng_fwd
+            # consumption order/count exactly.
             for tname in targets:
-                # _crossmap_predict no longer draws its own library --
-                # see that function's own docstring -- so the draw that
-                # used to happen inside it now happens here, in the same
-                # per-target spot in the loop, preserving this function's
-                # existing rng_fwd consumption order/count exactly.
                 lib_idx_fwd = rng_fwd.choice(M_fwd, size=min(L, M_fwd), replace=False)
                 lib_idx_fwd.sort()
-                preds = _crossmap_predict(
-                    embed_fwd, obs_fwd_dict[tname], lib_idx_fwd, k_fwd,
-                    exclusionRadius=exclusionRadius,
-                    time_indices=idx_fwd,
-                )
-                per_target.append(_score(
-                    obs_fwd_dict[tname], preds, target_measurement,
-                    gammaDelta=gammaDelta,
-                ))
-            arr = np.asarray(per_target, dtype=float)
-            if target_aggregate == 'mean':
-                c2t_measurements[t, i] = np.nanmean(arr)
-            elif target_aggregate == 'min':
-                c2t_measurements[t, i] = np.nanmin(arr)
-            else:
-                raise ValueError(
-                    f'target_aggregate must be mean/min, got '
-                    f'{target_aggregate!r}'
-                )
+                fwd_draws[i][tname].append((t, lib_idx_fwd))
 
-            # ---- rev: target embedding ---------------------------------
             # full pool (deterministic) or lag-0 + random delayed draws.
             if use_full_pool:
                 col_idx = full_pool_idx
@@ -2006,15 +2026,84 @@ def multi_proper_ccm(
                 target_embed.shape[0], size=min(L, target_embed.shape[0]), replace=False,
             )
             lib_idx_rev.sort()
-            preds_rev = _crossmap_predict(
-                target_embed, obs_rev, lib_idx_rev, k_rev,
-                exclusionRadius=exclusionRadius,
-                time_indices=idx_rev,
+            rev_draws[i].append((t, lib_idx_rev, col_idx))
+
+    # ---- fwd: predict each target from the source embedding, score each
+    # target separately, aggregate over SCORES (not predictions) via
+    # target_aggregate -- section 9.2 item 2. embed_fwd never changes
+    # across this whole call (unaffected by use_full_pool), so a single
+    # cached (M_fwd, M_fwd) distance matrix is reused across every
+    # (libSize, target) group when GPU-batched; each group batches across
+    # `sample` for one (i, tname) pair, since each target has its own
+    # predicted values (`batched_crossmap_predict` takes one pred_vals
+    # array per call, not one per batch row).
+    fwd_scores = {i: {tname: [None] * sample for tname in targets} for i in range(n_L)}
+
+    if gpu_ready:
+        full_dist_fwd = None
+        for i in range(n_L):
+            for tname in targets:
+                group = fwd_draws[i][tname]
+                t_order = [t for t, _ in group]
+                lib_batch = np.stack([lib for _, lib in group])
+                preds, full_dist_fwd = batched_crossmap_predict(
+                    embed_fwd, obs_fwd_dict[tname], lib_batch, k_fwd, exclusionRadius, idx_fwd,
+                    full_dist=full_dist_fwd,
+                )
+                for row, t in zip(preds, t_order):
+                    fwd_scores[i][tname][t] = _score(
+                        obs_fwd_dict[tname], row, target_measurement, gammaDelta=gammaDelta)
+    else:
+        for i in range(n_L):
+            for tname in targets:
+                for t, lib_idx_fwd in fwd_draws[i][tname]:
+                    preds = _crossmap_predict(
+                        embed_fwd, obs_fwd_dict[tname], lib_idx_fwd, k_fwd,
+                        exclusionRadius=exclusionRadius, time_indices=idx_fwd,
+                    )
+                    fwd_scores[i][tname][t] = _score(
+                        obs_fwd_dict[tname], preds, target_measurement, gammaDelta=gammaDelta)
+
+    for i in range(n_L):
+        for t in range(sample):
+            arr = np.asarray([fwd_scores[i][tname][t] for tname in targets], dtype=float)
+            if target_aggregate == 'mean':
+                c2t_measurements[t, i] = np.nanmean(arr)
+            else:  # 'min' -- only other value target_aggregate can hold, validated at entry
+                c2t_measurements[t, i] = np.nanmin(arr)
+
+    # ---- rev: target embedding cross-maps columns. GPU-batched only when
+    # use_full_pool -- the embedding is then constant across every sample,
+    # the same precondition the cached-distance-matrix trick needs
+    # (section 9.2 item 3). When False, the embedding is redrawn at
+    # random per (i, t), so this stays on the CPU path -- an acceptable
+    # first cut per that section, not yet measured as a bottleneck worth
+    # the extra complexity (mirrors the "don't add a batching tier before
+    # measuring" lesson from section 7c's H1 result).
+    if gpu_ready and use_full_pool:
+        target_embed_full = np.ascontiguousarray(pool_valid[:, full_pool_idx])
+        full_dist_rev = None
+        for i in range(n_L):
+            group = rev_draws[i]
+            t_order = [t for t, _, _ in group]
+            lib_batch = np.stack([lib for _, lib, _ in group])
+            preds, full_dist_rev = batched_crossmap_predict(
+                target_embed_full, obs_rev, lib_batch, k_rev, exclusionRadius, idx_rev,
+                full_dist=full_dist_rev,
             )
-            t2c_measurements[t, i] = _score(
-                obs_rev, preds_rev, columns_measurement,
-                gammaDelta=gammaDelta,
-            )
+            for row, t in zip(preds, t_order):
+                t2c_measurements[t, i] = _score(
+                    obs_rev, row, columns_measurement, gammaDelta=gammaDelta)
+    else:
+        for i in range(n_L):
+            for t, lib_idx_rev, col_idx in rev_draws[i]:
+                target_embed = np.ascontiguousarray(pool_valid[:, col_idx])
+                preds_rev = _crossmap_predict(
+                    target_embed, obs_rev, lib_idx_rev, k_rev,
+                    exclusionRadius=exclusionRadius, time_indices=idx_rev,
+                )
+                t2c_measurements[t, i] = _score(
+                    obs_rev, preds_rev, columns_measurement, gammaDelta=gammaDelta)
 
     if pass_fail:
         from sklearn.linear_model import LinearRegression
@@ -2186,6 +2275,7 @@ def multi_proper_mde(
     noTime=True,
     verbose=False,
     pool=None,
+    use_gpu=False,
 ):
     """Multi-target MDE: forward-stepwise selection of neurons that
     jointly predict (and causally drive) all variables in ``targets``.
@@ -2234,6 +2324,12 @@ def multi_proper_mde(
         ``multi_proper_embed_dimension()``'s own sweep when ``E <= 0``
         (each E in that sweep is independent -- same convention as
         ``proper_mde``'s own ``pool``). Unused when ``E > 0``.
+    use_gpu : bool
+        Threaded straight through to every ``multi_proper_ccm`` call in
+        the CCM gate below -- see that function's own ``use_gpu``
+        docstring. Does not affect the ranking stage
+        (``_simplex_multi_metric``), which stays on CPU/pyEDM.Simplex
+        unconditionally, same as ``proper_mde``'s own ``use_gpu``.
     Other parameters: same meaning as in ``proper_mde``.
 
     INTUITION (plain-language)
@@ -2405,6 +2501,7 @@ def multi_proper_mde(
                     exclusionRadius=exclusionRadius,
                     seed=ccmSeed,
                     gammaDelta=gammaDelta,
+                    use_gpu=use_gpu,
                 )
             except Exception as exc:
                 if verbose:

@@ -9,7 +9,7 @@ echo or contrast with it directly.
 
 ---
 
-## START HERE (updated 2026-09-03, again — §8.6 steps 3-4 now done)
+## START HERE (updated 2026-09-03, again — §9 now done too)
 
 **If you are picking this up to implement it, read in this order and skip the rest for now:**
 
@@ -19,18 +19,18 @@ echo or contrast with it directly.
 2. **§7c** — what hardware measurement settled, including two hypotheses of mine it falsified.
    This is what makes the spec simpler than it would otherwise be; §7b above it is superseded
    pre-measurement reasoning, kept only for context.
-3. **§8** — the implementation spec. §8.1 (fork-safety) and §8.3/§8.4 (the actual `gpu_edm.py`
-   build + call-chain wiring) are DONE and committed. §8.6 marks the next step with "← next".
-4. **§9** — the follow-up that extends the GPU path to `GMN_MODE='combined'`. Read this if that's
-   your task. It matters because `combined` is the pipeline **default**, so what §8 built
-   currently does nothing for a default production run.
+3. **§8** — the implementation spec for `proper_ccm`/`GMN_MODE='separate'`. §8.1 (fork-safety) and
+   §8.3/§8.4 (the actual `gpu_edm.py` build + call-chain wiring) are DONE and committed.
+4. **§9** — the follow-up that extends the same GPU path to `multi_proper_ccm`/
+   `GMN_MODE='combined'` (the pipeline **default**). Also DONE and committed (§9.4).
 
-**Current state in one line**: `scripts/src/gpu_edm.py` exists, `proper_ccm(use_gpu=...)` uses it,
-`GPU_ENABLED` reaches it from `main()`, and `tests/test_gpu_ccm_equivalence.py` passes on Deigo
-(fallback + reproducibility checked directly; the GPU-vs-CPU equivalence check itself skips
-clean, since Deigo has no GPU to run it against) — but NONE of this has run on real GPU hardware
-yet. §8.6 step 5 (the Saion A/B) is next and is what actually proves the integration works, not
-just that it falls back safely.
+**Current state in one line**: both CCM-gate call paths (`proper_ccm` for `GMN_MODE='separate'`,
+`multi_proper_ccm` for `GMN_MODE='combined'`) have a working `use_gpu=...` keyword, wired all the
+way from `main()`'s `cfg['GPU_ENABLED']`, with matching equivalence/fallback/reproducibility test
+suites that pass on Deigo (fallback + reproducibility checked directly; the GPU-vs-CPU equivalence
+checks themselves skip clean, since Deigo has no GPU to run them against) — but NONE of this has
+run on real GPU hardware yet. §8.6 step 5 (the Saion A/B, now covering both `GMN_MODE` values) is
+next and is what actually proves the integration works, not just that it falls back safely.
 
 **§2-§5 are historical reasoning**, not current guidance. §2 in particular reports the approach as
 a loss at every scale — that was true on CPU-only evidence and was overturned by §0's GPU results.
@@ -627,19 +627,19 @@ so they don't get reintroduced by someone reasoning from first principles later:
 4. ~~Thread the flag through the call chain (§8.4).~~ — done 2026-09-03. `main()` →
    `build_network()` → `build_nested_mde_network()` → `run_mde_for_target()` → `proper_mde()` →
    `proper_ccm()`, each hop a defaulted `use_gpu=False` keyword, mirroring exactly how
-   `mp_start_method` was threaded in §8.1. **Scope note**: `multi_proper_mde`/`multi_proper_ccm`
-   (the `GMN_MODE='combined'` multi-target path, driven by `run_multi_mde_for_targets` — a
-   separate function from `run_mde_for_target`, not a branch of it) were deliberately left
-   untouched — `multi_proper_ccm` has a materially different sweep structure (interleaved
-   per-target draws inside the same `t` loop, no `pool` parameter at all today) that §8.2/§8.3
-   never specified a batched design for, and porting it wasn't asked for. `GPU_ENABLED=1` today
-   therefore only accelerates the `GMN_MODE='separate'`/single-target path. Revisit as a
-   separate, scoped follow-up if the combined-mode path needs it.
+   `mp_start_method` was threaded in §8.1. **Scope note (RESOLVED — see §9)**: this step originally
+   left `multi_proper_mde`/`multi_proper_ccm` (the `GMN_MODE='combined'` multi-target path, driven
+   by `run_multi_mde_for_targets` — a separate function from `run_mde_for_target`, not a branch of
+   it) deliberately untouched, since §8.2/§8.3 never specified a batched design for its materially
+   different sweep structure. §9 (2026-09-03, same day) closed that gap — both `GMN_MODE` values
+   now get GPU acceleration.
 5. **End-to-end run on Saion with `GPU_ENABLED=1` at small scale (`REGION_CHANNEL_CAP` low),
    diffed against the same config with `GPU_ENABLED=0`, before any long production run.** ← next.
-   This is also where multi-worker GPU contention gets evaluated for real (§7c), since the H2
-   measurement couldn't answer it, and where `tests/test_gpu_ccm_equivalence.py`'s
-   GPU-vs-CPU equivalence check actually runs for the first time (it only skips-clean on Deigo).
+   Now covers BOTH `GMN_MODE` values (`separate` via §8, `combined` via §9 — see §9.4's own status
+   note). This is also where multi-worker GPU contention gets evaluated for real (§7c), since the
+   H2 measurement couldn't answer it, and where `tests/test_gpu_ccm_equivalence.py` and
+   `tests/test_gpu_multi_ccm_equivalence.py`'s own GPU-vs-CPU equivalence checks actually run for
+   the first time (they only skip-clean on Deigo).
 
 ## 9. Follow-up: extend the GPU path to `GMN_MODE='combined'` (2026-09-03)
 
@@ -695,3 +695,29 @@ is a port, not new algorithm work.
   `use_gpu=False` vs `True`, asserting identical `c2t`/`t2c` — plus an explicit assertion that
   the **drawn library indices** match, since §9.2 item 1 is the likeliest way to break this
   silently.
+
+### 9.4 Status: DONE (2026-09-03)
+
+Implemented and committed. `multi_proper_ccm(..., use_gpu=False)` (`cleaned_helper_functions.py`)
+now draws every `(i, t[, target])` library index into `fwd_draws`/`rev_draws` dicts up front, in
+exactly the original per-libSize `rng_fwd`/`rng_rev` consumption order (§9.2 item 1), before any
+compute happens — verified byte-identical to the pre-this-work function across five configurations
+(`use_full_pool` True/False, `n_extra` zero/nonzero, 1-3 targets, `mean`/`min` aggregate) by loading
+the prior commit's version side by side and diffing outputs directly, not just by inspection. The
+fwd direction batches per `(libSize, target)` pair — one `batched_crossmap_predict` call per pair,
+since each target has its own predicted values and the primitive takes one `pred_vals` array per
+call — then aggregates over the per-target *scores* (§9.2 item 2), never predictions; a single
+cached `(M_fwd, M_fwd)` distance matrix is reused across every pair since `embed_fwd` never changes
+in this function, regardless of `use_full_pool`. The rev direction is GPU-batched only when
+`use_full_pool` is True (its own cached distance matrix, separate from fwd's); when False it stays
+on the CPU `_crossmap_predict` path exactly as before, per §9.2 item 3's explicit "acceptable first
+cut" — not yet measured as a bottleneck worth batching per distinct embedding.
+
+`use_gpu` threaded through `multi_proper_mde()` → `multi_proper_ccm()` and
+`run_multi_mde_for_targets()` → `multi_proper_mde()`, with `main()` passing `cfg['GPU_ENABLED']` at
+the `GMN_MODE='combined'` depth-0 seed call site — the same defaulted-keyword-at-each-hop pattern
+§8.4 used for the `proper_ccm` chain. `tests/test_gpu_multi_ccm_equivalence.py` covers all three
+§8.5/§9.3 checks (equivalence — run against both `use_full_pool` True and False, since they're
+genuinely different code paths; fallback; reproducibility, recording both the `rng_fwd` and
+`rng_rev` draw streams). Full record, including the CPU-forced GPU-branch validation this session
+could run without real hardware, in the progress log's 2026-09-03 (continued) entry.
