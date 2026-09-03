@@ -9,7 +9,7 @@ echo or contrast with it directly.
 
 ---
 
-## START HERE (updated 2026-09-03)
+## START HERE (updated 2026-09-03, again — §8.6 steps 3-4 now done)
 
 **If you are picking this up to implement it, read in this order and skip the rest for now:**
 
@@ -19,12 +19,15 @@ echo or contrast with it directly.
 2. **§7c** — what hardware measurement settled, including two hypotheses of mine it falsified.
    This is what makes the spec simpler than it would otherwise be; §7b above it is superseded
    pre-measurement reasoning, kept only for context.
-3. **§8** — the implementation spec. §8.1 (fork-safety) is already DONE and committed. §8.6 marks
-   the next step with "← next".
+3. **§8** — the implementation spec. §8.1 (fork-safety) and §8.3/§8.4 (the actual `gpu_edm.py`
+   build + call-chain wiring) are DONE and committed. §8.6 marks the next step with "← next".
 
-**Current state in one line**: research and validation are complete and positive; the actual
-implementation has NOT started — no torch code exists anywhere in `scripts/src/`, and setting
-`GPU_ENABLED=1` today buys nothing but spawn-startup cost.
+**Current state in one line**: `scripts/src/gpu_edm.py` exists, `proper_ccm(use_gpu=...)` uses it,
+`GPU_ENABLED` reaches it from `main()`, and `tests/test_gpu_ccm_equivalence.py` passes on Deigo
+(fallback + reproducibility checked directly; the GPU-vs-CPU equivalence check itself skips
+clean, since Deigo has no GPU to run it against) — but NONE of this has run on real GPU hardware
+yet. §8.6 step 5 (the Saion A/B) is next and is what actually proves the integration works, not
+just that it falls back safely.
 
 **§2-§5 are historical reasoning**, not current guidance. §2 in particular reports the approach as
 a loss at every scale — that was true on CPU-only evidence and was overturned by §0's GPU results.
@@ -612,9 +615,25 @@ so they don't get reintroduced by someone reasoning from first principles later:
 1. ~~Fork-safety~~ — done (§8.1), and independently confirmed on hardware by H4 (§7c).
 2. ~~Run `measure_gpu_sharing.py`~~ — done 2026-09-03 (§7c). Outcome: no sizing changes needed;
    three planned pieces of complexity dropped (§8.4b).
-3. **Build `gpu_edm.py` + `proper_ccm(use_gpu=...)` + the equivalence test (§8.3, §8.5).** ← next
-4. Thread the flag through the call chain (§8.4).
-5. End-to-end run on Saion with `GPU_ENABLED=1` at small scale (`REGION_CHANNEL_CAP` low), diffed
-   against the same config with `GPU_ENABLED=0`, before any long production run. This is also
-   where multi-worker GPU contention gets evaluated for real (§7c), since the H2 measurement
-   couldn't answer it.
+3. ~~Build `gpu_edm.py` + `proper_ccm(use_gpu=...)` + the equivalence test (§8.3, §8.5).~~ — done
+   2026-09-03. `scripts/src/gpu_edm.py` (new, isolated, imports cleanly with no torch/no GPU);
+   `proper_ccm(..., use_gpu=False)` in `cleaned_helper_functions.py` groups the already-drawn
+   tasks by libSize index and issues one batched `gpu_edm.batched_crossmap_predict` call per
+   group per direction, `_score()` untouched; `tests/test_gpu_ccm_equivalence.py` (equivalence,
+   fallback, reproducibility — see §8.5). Full record in the progress log's 2026-09-03 entry.
+4. ~~Thread the flag through the call chain (§8.4).~~ — done 2026-09-03. `main()` →
+   `build_network()` → `build_nested_mde_network()` → `run_mde_for_target()` → `proper_mde()` →
+   `proper_ccm()`, each hop a defaulted `use_gpu=False` keyword, mirroring exactly how
+   `mp_start_method` was threaded in §8.1. **Scope note**: `multi_proper_mde`/`multi_proper_ccm`
+   (the `GMN_MODE='combined'` multi-target path, driven by `run_multi_mde_for_targets` — a
+   separate function from `run_mde_for_target`, not a branch of it) were deliberately left
+   untouched — `multi_proper_ccm` has a materially different sweep structure (interleaved
+   per-target draws inside the same `t` loop, no `pool` parameter at all today) that §8.2/§8.3
+   never specified a batched design for, and porting it wasn't asked for. `GPU_ENABLED=1` today
+   therefore only accelerates the `GMN_MODE='separate'`/single-target path. Revisit as a
+   separate, scoped follow-up if the combined-mode path needs it.
+5. **End-to-end run on Saion with `GPU_ENABLED=1` at small scale (`REGION_CHANNEL_CAP` low),
+   diffed against the same config with `GPU_ENABLED=0`, before any long production run.** ← next.
+   This is also where multi-worker GPU contention gets evaluated for real (§7c), since the H2
+   measurement couldn't answer it, and where `tests/test_gpu_ccm_equivalence.py`'s
+   GPU-vs-CPU equivalence check actually runs for the first time (it only skips-clean on Deigo).

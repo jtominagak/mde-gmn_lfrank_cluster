@@ -901,7 +901,7 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
                target, columns, target_measurement, columns_measurement,
                embedded=False, exclusionRadius=0, seed=None,
                gammaDelta=2,
-               show_plot=False, pass_fail=False, pool=None):
+               show_plot=False, pass_fail=False, pool=None, use_gpu=False):
     """CCM with random-library subsampling and pluggable metric.
 
     Parameters
@@ -930,7 +930,24 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
         a given ``seed`` reproduces bit-identical results either way --
         only wall-clock time changes. ``None`` (default) runs the exact
         same work inline via the builtin ``map``, unchanged from before
-        this parameter existed.
+        this parameter existed. Ignored when ``use_gpu`` actually engages
+        (see below) -- the GPU path replaces the per-cell dispatch this
+        pool would otherwise parallelize with one batched call per
+        libSize, so there is nothing left for threads to split.
+    use_gpu : bool
+        When True AND a CUDA device is visible (``gpu_edm.is_available()``
+        -- see ``scripts/src/gpu_edm.py``), routes the CCM gate's
+        cross-map step through a batched torch/CUDA primitive instead of
+        the per-cell ``_crossmap_predict`` loop: docs/no-kEDM-gpu-
+        optimization-plan.md section 8 has the full design. Reuses the
+        exact same ``rng``-drawn library indices the CPU path would have
+        used (see the "every random draw happens first" note above) --
+        a given ``seed`` reproduces the identical library draws, and
+        ``_score()`` (with its ``f1``/``gamma`` handling) stays on CPU
+        unchanged either way, so only ``_crossmap_predict`` itself is
+        replaced. False (default), or True on a machine with no GPU,
+        runs the exact ``pool``/``map`` path described above -- this
+        never raises for a missing GPU, it silently falls back.
 
     HOW TO USE
     ----------
@@ -1054,10 +1071,64 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
         t2c = _score(obs_rev, preds_rev, columns_measurement, gammaDelta=gammaDelta)
         return t, i, c2t, t2c
 
-    mapper = pool.map if pool is not None else map
-    for t, i, c2t, t2c in mapper(_run_one_cell, tasks):
-        c2t_measurements[t, i] = c2t
-        t2c_measurements[t, i] = t2c
+    # GPU path (docs/no-kEDM-gpu-optimization-plan.md section 8.3): only
+    # attempted at all when use_gpu is truthy, so use_gpu=False (the
+    # default) never even imports gpu_edm -- byte-for-byte the same code
+    # path as before this parameter existed.
+    gpu_ready = False
+    if use_gpu:
+        from gpu_edm import is_available as _gpu_is_available
+        gpu_ready = _gpu_is_available()
+
+    if gpu_ready:
+        from gpu_edm import batched_crossmap_predict
+
+        # Group the already-drawn tasks by i (libSize index): every task
+        # at a given i has the same fwd library length (min(libSizes[i],
+        # M_fwd)) and the same rev library length (min(libSizes[i],
+        # M_rev)) across every t -- exactly the (B, L) shape the batch
+        # dimension needs. This does NOT touch how lib_idx_fwd/lib_idx_rev
+        # were drawn above, so a given seed reproduces identical library
+        # draws regardless of use_gpu.
+        by_i_fwd = [[] for _ in range(n_L)]
+        by_i_rev = [[] for _ in range(n_L)]
+        for t, i, lib_idx_fwd, lib_idx_rev in tasks:
+            by_i_fwd[i].append((t, lib_idx_fwd))
+            by_i_rev[i].append((t, lib_idx_rev))
+
+        # Cached (M, M) pairwise distance matrix, one per direction,
+        # reused across every libSize's batched call within that
+        # direction -- NEVER share this between fwd and rev, they're
+        # different embeddings. See batched_crossmap_predict's own
+        # docstring for why this is the dominant cost this caching avoids
+        # recomputing.
+        full_dist_fwd = None
+        full_dist_rev = None
+        for i in range(n_L):
+            t_fwd = [t for t, _ in by_i_fwd[i]]
+            lib_batch_fwd = np.stack([lib for _, lib in by_i_fwd[i]])
+            preds_fwd, full_dist_fwd = batched_crossmap_predict(
+                embed_fwd, obs_fwd, lib_batch_fwd, k, exclusionRadius, idx_fwd,
+                full_dist=full_dist_fwd,
+            )
+            for row, t in zip(preds_fwd, t_fwd):
+                c2t_measurements[t, i] = _score(
+                    obs_fwd, row, target_measurement, gammaDelta=gammaDelta)
+
+            t_rev = [t for t, _ in by_i_rev[i]]
+            lib_batch_rev = np.stack([lib for _, lib in by_i_rev[i]])
+            preds_rev, full_dist_rev = batched_crossmap_predict(
+                embed_rev, obs_rev, lib_batch_rev, k, exclusionRadius, idx_rev,
+                full_dist=full_dist_rev,
+            )
+            for row, t in zip(preds_rev, t_rev):
+                t2c_measurements[t, i] = _score(
+                    obs_rev, row, columns_measurement, gammaDelta=gammaDelta)
+    else:
+        mapper = pool.map if pool is not None else map
+        for t, i, c2t, t2c in mapper(_run_one_cell, tasks):
+            c2t_measurements[t, i] = c2t
+            t2c_measurements[t, i] = t2c
 
     if pass_fail:
         # Quick convergence verdict instead of the full measurement arrays:
@@ -1165,6 +1236,7 @@ def proper_mde(
     pool=None,
     column_delay=None,
     column_observable=None,
+    use_gpu=False,
 ):
     """Forward-stepwise Manifold Dimensional Expansion.
 
@@ -1280,6 +1352,15 @@ def proper_mde(
         for sizing and the pool's lifetime -- see ``run_mde_for_target``
         in tsls-mde-gmn.py for the intended one-pool-per-node-call
         pattern (opened once for this whole call, not once per candidate).
+    use_gpu : bool
+        Threaded straight through to every ``proper_ccm`` call in the CCM
+        gate below -- see that function's own ``use_gpu`` docstring for
+        the full behaviour (transparent CPU fallback when no GPU is
+        visible, reproducible library draws regardless of the flag).
+        Does not affect the ranking stage (``_simplex_metric``), which
+        stays on CPU/pyEDM.Simplex unconditionally -- docs/no-kEDM-gpu-
+        optimization-plan.md section 0 UPDATE 2 found that target loses
+        at production scale on GPU for algorithmic reasons.
     column_delay : dict[str, int] or None
         R21 (docs/review-actions-v1.md): dynamic per-dimension exclusion
         radius. This function has no built-in notion of "delay" attached
@@ -1588,6 +1669,7 @@ def proper_mde(
                     seed=ccmSeed,
                     gammaDelta=gammaDelta,
                     pool=pool,
+                    use_gpu=use_gpu,
                 )
             except Exception as exc:
                 if verbose:

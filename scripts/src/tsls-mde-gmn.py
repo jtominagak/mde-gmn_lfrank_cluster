@@ -1736,7 +1736,8 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
                         ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
                         reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                         data_file=None, data_file_sha256=None, code_fingerprint=None,
-                        cache_stage='stage1', max_e=None, inner_workers=1, raw_columns=None):
+                        cache_stage='stage1', max_e=None, inner_workers=1, raw_columns=None,
+                        use_gpu=False):
     '''Run cleaned_helper_functions.proper_mde's forward selection for a
     single target variable -- TSLS-flavored equivalent of
     simple-mde-gmn.py's own run_mde_for_target() (dimx.MDE), matching that
@@ -1854,6 +1855,15 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     and Stage 2 calls both pass `raw_columns=raw_columns` (their
     `observable_columns`/`candidate_pool` can genuinely contain
     delay-suffixed synthetic names, confirmed on real data this session).
+
+    `use_gpu` (docs/no-kEDM-gpu-optimization-plan.md section 8): threaded
+    straight through to `proper_mde`'s own `use_gpu` -- see that
+    function's docstring. `False` (default) is byte-for-byte today's
+    behaviour; `True` only actually changes anything on a machine with a
+    visible CUDA device (transparent CPU fallback otherwise). Callers
+    pass `cfg['GPU_ENABLED']` down this same chain that carries
+    `mp_start_method` (main() -> build_network() ->
+    build_nested_mde_network() -> here), not a separate flag of its own.
 
     `ccm_lib_sizes_rows` (window-sizing fix, docs/review-findings.md):
     explicit, absolute row counts for the CCM gate's own convergence-curve
@@ -1992,7 +2002,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
             crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
             metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
             verbose=True, pool=inner_pool, column_delay=column_delay,
-            column_observable=column_observable,
+            column_observable=column_observable, use_gpu=use_gpu,
         )
 
     mde_out = pd.DataFrame({'rho': result['MDErho']})
@@ -2496,7 +2506,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                               lag_set, stage2_allow_real_observables,
                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                               data_file=None, data_file_sha256=None, code_fingerprint=None,
-                              progress_log_path=None, mp_start_method='fork'):
+                              progress_log_path=None, mp_start_method='fork', use_gpu=False):
     '''Two-stage nested-MDE network construction, MODE='MDE-GMN' only --
     FULLY SERIAL between stages (R12, 2026-08-27: reverted from the
     2026-08-25 unified-per-wave-BFS design -- see JOB_LOG.md for that
@@ -2683,6 +2693,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                         run_cache_dir=run_cache_dir, data_file=data_file,
                         data_file_sha256=data_file_sha256, code_fingerprint=code_fingerprint,
                         max_e=nested_n, inner_workers=inner_workers, raw_columns=raw_columns,
+                        use_gpu=use_gpu,
                     )
                     futures[fut] = node
 
@@ -2851,6 +2862,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                     data_file_sha256=data_file_sha256, code_fingerprint=code_fingerprint,
                     cache_stage='stage2',
                     max_e=nested_n, inner_workers=inner_workers2, raw_columns=raw_columns,
+                    use_gpu=use_gpu,
                 )
                 futures[fut] = node
 
@@ -3175,7 +3187,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                    data_file=None, data_file_sha256=None, code_fingerprint=None,
                    gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
                    external_input_mode='real_data', progress_log_path=None,
-                   mp_start_method='fork'):
+                   mp_start_method='fork', use_gpu=False):
     '''Build one network spanning `targets` and their driver candidates, via
     one of two unrelated constructions depending on `mode` -- same
     mode-branch restructuring as simple-mde-gmn.py's own build_network():
@@ -3258,6 +3270,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                 code_fingerprint,
                 progress_log_path=progress_log_path,
                 mp_start_method=mp_start_method,
+                use_gpu=use_gpu,
             )
         graph.graph['self_delay_set'] = sorted(set(lag_set) | {0}, reverse=True)
         partition_network(graph, targets, external_input_mode)
@@ -5522,6 +5535,7 @@ def main():
                         # split, this depth-0 seed call gets the FULL core
                         # budget for its own inner pool.
                         inner_workers=max(1, cfg['CORES']),
+                        use_gpu=cfg['GPU_ENABLED'],
                     )
                 except Exception as exc:
                     # Same failure mode _failed_mde_result() guards against
@@ -5579,6 +5593,7 @@ def main():
             external_input_mode=cfg['EXTERNAL_INPUT_MODE'],
             progress_log_path=progress_log_path,
             mp_start_method=cfg['MP_START_METHOD'],
+            use_gpu=cfg['GPU_ENABLED'],
         )
         draw_colored_network(
             net_result, cfg['TARGET_COLORS'],

@@ -636,9 +636,139 @@ Three pieces of planned complexity were dropped (plan §8.4b), and no sizing cha
 - **No `outer_workers` shrink** — §7b's hypothesis that it would need to shrink drastically did
   not survive measurement; keep current sizing, evaluate contention in the §8.6 step-5 A/B.
 
-### Next steps
-1. Build `scripts/src/gpu_edm.py` + `proper_ccm(use_gpu=...)` + the equivalence test
-   (plan §8.3/§8.5). This is now unblocked — nothing else gates it.
-2. Thread `GPU_ENABLED` through the call chain (plan §8.4).
+### Next steps (superseded by the entry below — kept for history)
+1. ~~Build `scripts/src/gpu_edm.py` + `proper_ccm(use_gpu=...)` + the equivalence test~~ — done,
+   see the 2026-09-03 entry below.
+2. ~~Thread `GPU_ENABLED` through the call chain~~ — done, see the entry below.
 3. End-to-end small-scale A/B on Saion (`GPU_ENABLED=1` vs `0`, same config), which also serves
-   as the real contention measurement H2 couldn't provide.
+   as the real contention measurement H2 couldn't provide. Still not started — this session has
+   no GPU/no Saion access (see that entry's own note).
+
+---
+
+## 2026-09-03 (continued) — `gpu_edm.py` built, `proper_ccm(use_gpu=...)` implemented, wired through, tested
+
+**Status: plan §8.6 steps 3-4 done and committed. Step 5 (the real Saion A/B) is next and is the
+first time any of this touches actual GPU hardware — everything below was built and verified on
+Deigo (no GPU), which bounds how much confidence it earns on its own. See "What this does NOT yet
+confirm" below before treating this as more validated than it is.**
+
+### What was done
+
+1. **`scripts/src/gpu_edm.py`** (new file). `is_available()` (never raises, False whenever torch
+   itself fails to import — wrapped `import torch` in `try/except`, `torch = None` sentinel) and
+   `batched_crossmap_predict(embed, pred_vals, lib_idx_batch, k, exclusionRadius, time_indices,
+   full_dist=None, device=None)`, ported from
+   `scripts/gpu_prototypes/validate_batched_ccm.py::batched_crossmap_predict_torch` with the
+   algorithm UNCHANGED — same first-k-valid compaction (`torch.argsort`+`torch.gather`) before
+   `d_min`, same `torch.set_num_threads(1)` (called once at module import, guarded against
+   `torch is None`). One deliberate API deviation from plan §8.3's one-line signature sketch:
+   returns `(preds, full_dist)` instead of just `preds` — `full_dist` is an opaque cached (M, M)
+   torch tensor the caller can pass back into the next call against the SAME `embed` to skip
+   recomputing the O(M²) pairwise distance matrix, which is otherwise the single most expensive
+   step and doesn't depend on `lib_idx_batch` at all. This mirrors the validated prototype's own
+   "cached cdist" usage (its main() computes `full_dist` once and reuses it across every libSize
+   in the sweep) rather than dropping that optimization — recorded here explicitly since the plan
+   text's signature line didn't spell out the tuple return, so a future reader diffing against the
+   plan should know this was intentional, not a drift.
+
+2. **`proper_ccm(..., use_gpu=False)`** (`cleaned_helper_functions.py`). `use_gpu=False` (the
+   default) never imports `gpu_edm` at all — the existing `mapper(_run_one_cell, tasks)` path is
+   reached completely unchanged. When `use_gpu=True`, checks `gpu_edm.is_available()`; if False
+   (no GPU), falls through to that exact same unchanged path — no exception, no behavior
+   difference from `use_gpu=False`. If True, groups the already-drawn `tasks` list (built earlier,
+   completely unmodified — the `rng.choice` draw loop is untouched by any of this) by libSize
+   index `i`: every task at a given `i` has the same fwd library length
+   (`min(libSizes[i], M_fwd)`) and same rev library length (`min(libSizes[i], M_rev)`) across
+   every sample `t`, which is exactly the `(B, L)` shape `batched_crossmap_predict` needs. Issues
+   one batched call per `(direction, i)` group (reusing a separately-cached `full_dist` per
+   direction — fwd and rev use different embeddings, never shared), then scores each resulting row
+   through the SAME unchanged `_score()` calls the CPU path uses. Verified this reuses the exact
+   same `rng`-drawn library indices regardless of `use_gpu` (see test 3 below) and that
+   `use_gpu=False` is byte-for-byte identical to before this change (verified directly — compared
+   against a no-`use_gpu`-kwarg call and a `pool=ThreadPoolExecutor(...)` call, both
+   `np.array_equal`).
+
+3. **`tests/test_gpu_ccm_equivalence.py`** (new). Three tests, matching plan §8.5 items 1-3
+   exactly:
+   - Equivalence (`use_gpu=False` vs `True`, same seed) — skips clean on Deigo (no CUDA), the only
+     one of the three that actually needs GPU hardware to mean anything.
+   - Fallback (`use_gpu=True` with no GPU == `use_gpu=False`, byte-identical, no exception) — runs
+     and PASSES on Deigo; skips clean instead on a machine that DOES have a GPU (that combination
+     is what the equivalence test covers instead — the two tests are complementary, gated on
+     opposite `is_available()` outcomes).
+   - Reproducibility — stronger than comparing final scores, per the task instructions: patches
+     `numpy.random.default_rng` (an ordinary Python function) to return a recording wrapper that
+     logs every `.choice()` call, then asserts the recorded draw SEQUENCE is identical between
+     `use_gpu=False` and `use_gpu=True`. (Note: `numpy.random.Generator.choice` itself can't be
+     monkeypatched directly — it's a Cython extension type method, raises "cannot set 'choice'
+     attribute of immutable type" — hence patching `default_rng`'s return value instead.) Runs and
+     PASSES on Deigo; doesn't need a GPU at all, since the draw loop runs unconditionally before
+     the `use_gpu` branch.
+   All three use `target_measurement='correlation'`/`columns_measurement='correlation'` rather
+   than `'f1'`/`'gamma'` deliberately — those event-timing metrics threshold a TSLS-shaped
+   (sawtooth) signal, which the test's synthetic sine-wave data isn't, and thresholding is exactly
+   where a tiny float32-vs-float64 prediction difference could flip a boolean outcome for reasons
+   unrelated to whether the GPU port itself is correct. `'correlation'` is a smooth function of
+   the raw predictions, so it isolates the thing actually under test.
+   Separately (not committed — a throwaway scratchpad script, deleted after use): directly compared
+   `gpu_edm.batched_crossmap_predict(..., device='cpu')` against `_crossmap_predict` at production
+   scale (M=800, same libSizes/sample as the validated prototype) to catch any transcription bug
+   in the port independent of needing real GPU hardware. Result: max abs diff 1.49e-05 across
+   112,000 compared points, 0/140 NaN-pattern mismatches — matching the original prototype's own
+   CPU-production-scale number (progress log, 2026-09-02 entry) almost exactly, which is strong
+   evidence the port (numpy/torch boundary, `full_dist` tuple-threading, `k`→`k_eff` rename) didn't
+   introduce a bug, independent of anything CUDA-specific.
+
+4. **Call-chain wiring** (plan §8.4): `use_gpu=False` added as a defaulted keyword at every hop —
+   `main()` → `build_network()` → `build_nested_mde_network()` → `run_mde_for_target()` →
+   `proper_mde()` → `proper_ccm()` — mirroring exactly how `mp_start_method` was threaded in §8.1
+   (same call sites, same "defaulted so no existing caller changes behaviour" pattern).
+   `main()` passes `cfg['GPU_ENABLED']` at both of its two call sites (the depth-0 seed
+   `run_mde_for_target` call and the `build_network` call).
+   **Scope decision, not in the original plan text**: `multi_proper_mde`/`multi_proper_ccm` (the
+   `GMN_MODE='combined'` multi-target path, driven by `run_multi_mde_for_targets` — a genuinely
+   separate function from `run_mde_for_target`, not a branch inside it, confirmed by reading both)
+   were deliberately left untouched. `multi_proper_ccm` has a materially different sweep structure
+   from `proper_ccm` — per-target draws interleaved inside the same `t`/`L` loop (multiple
+   `_crossmap_predict` calls per `t` for the fwd direction, one per target) rather than one flat
+   pre-drawn task list, and it doesn't even accept a `pool` parameter today. Neither plan §8.2 nor
+   §8.3 specified a batched design for that structure, and the task instructions' own deliverable
+   list named `proper_ccm` specifically, not `multi_proper_ccm`. `GPU_ENABLED=1` therefore
+   currently only accelerates `GMN_MODE='separate'`/single-target runs. Recorded here so this
+   doesn't read as an oversight if `GMN_MODE='combined'` runs are GPU-enabled later without effect
+   — it would need its own scoped design, not an assumption that `proper_ccm`'s grouping strategy
+   ports over unchanged.
+
+5. **Existing suite**: full `tests/test_*.py` (18 files, including the new one) run individually,
+   all PASS — in particular the four named as must-stay-green: `test_gpu_fork_safety`,
+   `test_r12_stage_serialization`, `test_r13_shared_depth_budget`, `test_metric_routing_depth_ge1`.
+   Two shared test fakes needed updating to accept the new `use_gpu` kwarg
+   (`tests/_pipeline_test_utils.py`'s `make_fake_run_mde_for_target_tsls`, and
+   `tests/test_metric_routing_depth_ge1.py`'s own local `_make_fake_run_mde_for_target`) — both
+   stand in for the real `run_mde_for_target()` and would otherwise raise
+   `TypeError: unexpected keyword argument 'use_gpu'` the moment `build_nested_mde_network()`'s
+   `executor.submit(run_mde_for_target, ..., use_gpu=use_gpu)` calls reached them. Caught by
+   actually running the suite, not by inspection — worth remembering next time any
+   `run_mde_for_target` signature change lands, since these fakes have no automatic sync with the
+   real signature.
+
+### What this does NOT yet confirm
+- Actual GPU numerics beyond the CPU-device port-validation check in item 3 above. That check
+  proves the algorithm transcription is faithful; it says nothing about anything CUDA-specific
+  (kernel behavior, float32 rounding on real hardware, `torch.cuda.synchronize()` correctness).
+  Only a real Saion run (§8.6 step 5, next) tests that.
+- Multi-worker GPU contention under `outer_workers`-sized concurrent spawn processes each holding
+  their own CUDA context and calling into this new code path — still exactly the open question
+  §7c's H2 couldn't answer, deferred to the same step-5 A/B as before.
+- Anything about `GMN_MODE='combined'` runs (see the scope decision in item 4 above) — those are
+  simply not GPU-accelerated by this work at all yet.
+
+### Next steps
+1. **Run the plan §8.6 step-5 A/B on Saion**: `GPU_ENABLED=1` vs `GPU_ENABLED=0`, same config,
+   small scale (`REGION_CHANNEL_CAP` low) — diff the two runs' MDE selections/edges, confirm
+   `tests/test_gpu_ccm_equivalence.py`'s equivalence test actually passes (not just skips) there,
+   and use it as the real multi-worker contention measurement H2 couldn't provide. This session has
+   no GPU and no Saion SSH credentials, so this is handed to the user as a command block (see the
+   chat turn this entry corresponds to) rather than run here — same handoff pattern as the
+   2026-09-02 manual-procedure entries above.
