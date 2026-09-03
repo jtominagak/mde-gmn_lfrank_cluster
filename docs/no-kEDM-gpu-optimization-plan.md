@@ -7,9 +7,28 @@ from `main`'s original CPU-only pipeline). Companion progress log:
 `docs/gpu-optimization-plan.md` (the kEDM approach) — read that one too; several findings here
 echo or contrast with it directly.
 
-**Read §2 before writing any integration code.** The empirical benchmarks there are less
-favorable than the proposal's premise suggested, and the reasoning for *why* matters more than
-the numbers themselves for deciding what (if anything) to build next.
+---
+
+## START HERE (updated 2026-09-03)
+
+**If you are picking this up to implement it, read in this order and skip the rest for now:**
+
+1. **§0** — the current verdict. Two targets were evaluated; only ONE is proceeding (the CCM
+   gate, 12.30x at production scale). The ranking stage is explicitly abandoned for reasons that
+   are not fixable by tuning — do not re-attempt it.
+2. **§7c** — what hardware measurement settled, including two hypotheses of mine it falsified.
+   This is what makes the spec simpler than it would otherwise be; §7b above it is superseded
+   pre-measurement reasoning, kept only for context.
+3. **§8** — the implementation spec. §8.1 (fork-safety) is already DONE and committed. §8.6 marks
+   the next step with "← next".
+
+**Current state in one line**: research and validation are complete and positive; the actual
+implementation has NOT started — no torch code exists anywhere in `scripts/src/`, and setting
+`GPU_ENABLED=1` today buys nothing but spawn-startup cost.
+
+**§2-§5 are historical reasoning**, not current guidance. §2 in particular reports the approach as
+a loss at every scale — that was true on CPU-only evidence and was overturned by §0's GPU results.
+Read it to understand *why* things were built the way they were, not to decide what to do next.
 
 ---
 
