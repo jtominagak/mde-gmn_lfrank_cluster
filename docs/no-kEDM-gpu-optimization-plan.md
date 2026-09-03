@@ -637,3 +637,58 @@ so they don't get reintroduced by someone reasoning from first principles later:
    This is also where multi-worker GPU contention gets evaluated for real (§7c), since the H2
    measurement couldn't answer it, and where `tests/test_gpu_ccm_equivalence.py`'s
    GPU-vs-CPU equivalence check actually runs for the first time (it only skips-clean on Deigo).
+
+## 9. Follow-up: extend the GPU path to `GMN_MODE='combined'` (2026-09-03)
+
+**Why this section exists**: §8's spec named `proper_ccm()` as "the exact integration point" and
+mentioned `multi_proper_ccm` only in passing (§8.4's flag-threading list). The implementing agent
+correctly stayed in that scope and flagged the gap in §8.6 item 4 rather than inventing a design.
+The scope was under-specified — this section fixes that.
+
+**Why it matters more than "one optional path was missed"**: `GMN_MODE='combined'` is the
+**default** — `load_config()` line ~862 (`os.environ.get('TSLS_MDE_GMN_GMN_MODE', 'combined')`)
+and `scripts/batch/tsls-mde-gmn.sbatch` line ~165 (`GMN_MODE="combined"`) both set it. So as
+things stand, **a default production run gets no GPU acceleration at all**; the work done in §8
+only engages under `GMN_MODE='separate'`.
+
+### 9.1 Nothing structurally blocks this
+
+`multi_proper_ccm` (`cleaned_helper_functions.py` ~1785-2030) uses the **same** `_crossmap_predict`
+engine and the **same** `_score()` afterward as `proper_ccm`, over the same `libSizes × sample`
+grid. The already-validated `gpu_edm.batched_crossmap_predict` primitive applies unchanged. This
+is a port, not new algorithm work.
+
+### 9.2 Three real differences from `proper_ccm` — the actual work
+
+1. **The rng draws are NOT collected up front.** `proper_ccm` builds a `tasks` list of all draws
+   before computing, which is what made its batching trivially reproducible. Here,
+   `rng_fwd.choice(...)` happens inside the innermost per-target loop and `rng_rev.choice(...)`
+   inside the per-sample loop. The code comments state the draw order was deliberately preserved
+   ("preserving this function's existing `rng_fwd` consumption order/count exactly").
+   **Constraint: any restructuring must not change rng consumption order or count**, or a given
+   `seed` stops reproducing. Draw first into a task list (mirroring `proper_ccm`), *in exactly the
+   existing order*, then batch the compute — do not interleave draws with batched compute.
+2. **The forward direction has an extra per-target dimension.** It predicts each of `targets`
+   from the same source embedding, then aggregates per-sample via `target_aggregate`
+   (`'mean'`/`'min'`). So the fwd batch dimension is `sample × len(targets)` per libSize, and the
+   aggregation must happen *after* scoring each target separately — `_score` is per-target, the
+   aggregate is over scores, not over predictions. Do not aggregate predictions.
+3. **The reverse direction's embedding can vary per sample.** `target_embed` is rebuilt per
+   `(i, t)` from a randomly drawn `col_idx` when `use_full_pool` is False
+   (`use_full_pool = target_select_E is None`, line ~1868). The validated primitive caches one
+   `(M, M)` distance matrix across samples, which is only valid when the embedding is constant.
+   **So: batch the rev direction the cached-distance way only when `use_full_pool` is True; when
+   it is False, either batch per distinct embedding or leave the rev direction on the CPU path.**
+   Leaving rev on CPU is an acceptable first cut — measure before adding complexity, exactly as
+   §7c's H1 result argued.
+
+### 9.3 Scope and guardrails
+
+- Same as §8 otherwise: CCM gate only (the ranking stage stays CPU — §0 UPDATE 2), transparent
+  CPU fallback, `_score` untouched on CPU, `GPU_ENABLED=False` byte-for-byte unchanged.
+- `multi_proper_ccm` has **no `pool` parameter today** — do not add one as part of this work.
+  The GPU path replaces the compute, it doesn't need the thread pool.
+- Equivalence test is again the piece that matters: `multi_proper_ccm` with the same `seed`,
+  `use_gpu=False` vs `True`, asserting identical `c2t`/`t2c` — plus an explicit assertion that
+  the **drawn library indices** match, since §9.2 item 1 is the likeliest way to break this
+  silently.
