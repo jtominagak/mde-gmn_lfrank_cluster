@@ -25,6 +25,7 @@ from pathlib import Path
 import networkx as nx
 import numpy as np
 import pandas as pd
+from pyEDM import PredictNonlinear
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _pipeline_test_utils import load_pipeline_module  # noqa: E402
@@ -75,7 +76,7 @@ def test_equivalence_against_pyedm_predictnonlinear():
     lib_range = f'1 {split}'
     pred_range = f'{split + 1} {n}'
 
-    pn = module.PredictNonlinear(
+    pn = PredictNonlinear(
         dataFrame=embedded, columns=columns, target='x',
         theta=list(THETA_RANGE), lib=lib_range, pred=pred_range,
         Tp=1, embedded=True, showPlot=False, numProcess=1,
