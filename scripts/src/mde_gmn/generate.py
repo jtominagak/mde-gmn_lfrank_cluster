@@ -60,10 +60,10 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
                           reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                           fingerprints=None, generate_validation_start=None,
                           progress_log_path=None):
-    '''Finds, per network, which row Generate() should start free-running
-    from to best match the real held-out data -- ported from
-    simple-mde-gmn.py, scored via the same TSLS-aware evaluate_smap_candidate()
-    the theta search uses. Returns {network_id: best_generate_start_row}.'''
+    '''Finds, per network, which row Generate() should start free-running from
+    to best match the real held-out data. Scored with the same
+    evaluate_smap_candidate() the theta search uses, so the two searches
+    optimise the same thing. Returns {network_id: best_generate_start_row}.'''
     best_starts = {}
     for network_id, run in gmn_runs.items():
         if len(start_offsets) == 1:
@@ -176,24 +176,17 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
                             progress_log_path=None):
     '''Reruns Generate() at the winning per-node theta found by
     run_theta_search(), and the winning start row found by
-    sweep_generate_start(). Ported from simple-mde-gmn.py -- try/except-
-    guarded per network: a failure here is logged and that network is
-    skipped (run['G'] stays unset) rather than crashing the whole job.
+    sweep_generate_start(). Guarded per network: a failure here is logged and
+    that network is skipped (run['G'] stays unset) rather than taking the whole
+    job down.
 
-    R11 (docs/review-actions-v1.md): the search OBJECTIVE stays
-    target-only -- confirmed evaluate_smap_candidate()'s own `score` (what
-    both run_theta_search() and sweep_generate_start() actually optimize)
-    is already a mean over `net_result['targets']` only, via
-    `target_metric`, never scoring a driver node or mixing metrics into
-    that mean. This function's own per-node print loop below (every node,
-    its own `_metric_for`-resolved metric, tagged TARGET/driver) already
-    existed and is PURELY REPORTING on the one already-decided winning
-    configuration -- it does not feed back into any search. The only
-    thing this task adds is writing that same data to a CSV in
-    `results_dir` alongside the existing print, so it survives past the
-    log (metrics are not mutually comparable across rows -- correlation
-    for targets, f1 for neurons -- so the CSV labels each row's own metric
-    and is not meant to be summed down the score column).'''
+    It also REPORTS every node's score, not just the targets': printed, and
+    written to per_node_scores_<network_id>.csv. That is reporting only and
+    feeds back into nothing -- what the searches optimise is the mean over the
+    targets alone (evaluate_smap_candidate()). Scores in that file are not
+    comparable across rows, because each node is scored with its own metric
+    (correlation for targets, f1 for neurons), so each row names its metric and
+    the score column must not be summed or averaged.'''
     for network_id, run in gmn_runs.items():
         net_result = run['net_result']
         node_theta = theta_search_results[network_id]['best_node_theta']
@@ -240,10 +233,10 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
             print(f"  {node:20s} {tag:7s} {node_metric}={r:7.3f}", flush=True)
             per_node_rows.append({'node': node, 'role': tag, 'metric': node_metric, 'score': r})
 
-        # R11: purely additive -- same data the print loop above already
-        # reports, written to a file so it survives past the log. Metrics
-        # differ per row (correlation for targets, f1 for neurons) -- do
-        # not sum/average the score column, it mixes incompatible scales.
+        # The same data the loop above printed, written to a file so it
+        # survives past the log. Metrics differ per row (correlation for
+        # targets, f1 for neurons) -- do not sum or average the score column,
+        # it mixes incompatible scales.
         pd.DataFrame(per_node_rows, columns=['node', 'role', 'metric', 'score']).to_csv(
             results_dir / f'per_node_scores_{network_id}.csv', index=False)
 
@@ -253,12 +246,12 @@ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
                              generate_length=None, generate_start=None, nodes_per_figure=10,
                              exclusion_radius=0, plot_range_mode='full',
                              generate_validation_start=None, total_rows=None):
-    '''Runs the Forecast() diagnostic and draws the one actual-vs-
-    Generate()-vs-Forecast() figure for this network -- ported from
-    simple-mde-gmn.py, including the 'full'/'windowed' plot_range_mode
-    toggle (see that file's own docstring for the full behavior of each
-    option -- identical here). Returns (None, {}) instead of raising if the
-    Forecast() build/call itself fails.'''
+    '''Runs the Forecast() diagnostic and draws the one
+    actual-vs-Generate()-vs-Forecast() figure for this network.
+
+    plot_range_mode='full' plots the whole recording; 'windowed' plots only the
+    generated window. Returns (None, {}) instead of raising if the Forecast()
+    build or call fails, so one bad network does not lose the others.'''
     generate_length = generate_length if generate_length is not None else prediction_length
     generate_start = generate_start if generate_start is not None else generate_validation_start
 
@@ -319,11 +312,10 @@ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
                         color='tab:red', lw=1, label='Generate()')
             ax.plot(time_idx, forecast_pred, color='tab:purple', lw=1.2, ls=':', label='Forecast()')
             ax.axvline(generate_start, color='gray', ls='--', lw=0.8)
-            # R22 (docs/review-findings.md): defensive second layer -- clips
-            # the view to the intended window regardless of what any stray
-            # out-of-window data (a future variant of the leaf-passthrough
-            # mislabeling this section's own fix addresses) might otherwise
-            # stretch matplotlib's autoscale to.
+            # Clip the view to the intended window explicitly. A second
+            # layer of defence: any stray out-of-window data would otherwise
+            # stretch matplotlib's autoscale and hide the mislabelling this
+            # section exists to avoid.
             ax.set_xlim(plot_start, plot_end)
             ax.set_title(f"{node}   Forecast {node_metric}={rhos[node]:.3f}", fontsize=10)
             ax.legend(fontsize=7, loc='upper right')
@@ -342,11 +334,11 @@ def gmn_fidelity_rho(net_result, G, generate_start, metric, target_metric, gamma
                       default_E=3, tau=-1):
     '''Fig-4e-style generative fidelity: per node, a fresh proper_simplex
     predicts the real actual series *from* the generated series on a 50/50
-    split of the generated window -- ported from simple-mde-gmn.py, scored
-    via _metric_for()/proper_simplex instead of pyEDM's plain Simplex/
-    ComputeError (proper_simplex is TSLS's own equivalent -- see
-    load_config()'s METRIC docstring). E defaults to node_dimensions (an
-    EmbedDimension-based estimate from build_network(), when computed).'''
+    split of the generated window. Scored with _metric_for()/proper_simplex
+    rather than pyEDM's plain Simplex/ComputeError (see config.py's METRIC
+    entry for why TSLS signals need the TSLS-aware version). E defaults to
+    node_dimensions, build_network()'s per-node estimate, when it computed
+    one.'''
     actual_df = pd.read_csv(net_result['DATA_AFTER_MDE'])
     generated = G.DataOut.reset_index(drop=True)
     nodes = [c for c in generated.columns if c != 'Time']

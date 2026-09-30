@@ -30,14 +30,12 @@ def observable_and_delay(column_name, raw_columns):
     channel name were ever to collide with the delay-suffix marker
     (membership is the authoritative signal whenever available).
 
-    Falls back to a marker-presence check (bug found 2026-08-25, job
-    39605472/39605473 -- ported from simple-mde-gmn.py's own identical
-    fix) when `column_name` isn't in `raw_columns` at all. Originally this
-    triggered on every run, because depth-0's mde_results entry used to be
-    computed in main() against the *full*, unfiltered candidate pool,
-    before ccm_prefilter_observables() ever ran -- main() now runs the
-    pre-filter first and seeds depth-0 from the *same* filtered pool
-    build_nested_mde_network() itself uses, so that original mismatch no
+    Falls back to a marker-presence check when `column_name` is not in
+    `raw_columns` at all. That used to happen on every run, because depth-0's
+    mde_results entry was computed against the full, unfiltered candidate pool
+    before ccm_prefilter_observables() ran -- main() now pre-filters first and
+    seeds depth-0 from the same filtered pool the builder uses, so the mismatch
+    no
     longer happens on a normal run. The fallback stays as a cache-reuse
     safety net: with REUSE_BEST_PARAMS, a reused mde_results entry can come
     from an earlier job that used a different CCM_PREFILTER_RHO_MIN/E (or
@@ -87,8 +85,8 @@ def derive_lag_set(delay_source, explicit_delay_set, lag_mode, lag_density, lag_
     '''Resolves the nonzero-delay set used for Stage 2's lagged-driver
     candidate pool (build_nested_mde_network()'s own Stage-2 pass) and,
     unioned with {0}, every node's unconditional self_delay_set -- see
-    load_config()'s DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP docstrings
-    for the parameter semantics. Ported unchanged from simple-mde-gmn.py.
+    config.py's DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP entries for the
+    parameter semantics.
 
     delay_source='explicit': just the hand-picked delay_set list, stripped
     of any 0 entry.
@@ -126,8 +124,7 @@ def effective_mde_dimension(mde_d, candidate_columns, num_delays):
     should be able to select -- not delay-expanded columns. Each real
     observable occupies `num_delays` separate candidate columns (one per
     delay), so the D actually handed to proper_mde is scaled up by
-    num_delays -- see simple-mde-gmn.py's own docstring for the full
-    rationale (identical here). Capped at the number of real observables
-    actually present in this call's own candidate pool.'''
+    num_delays. Capped at the number of real observables actually present in
+    this call's own candidate pool, since MDE cannot pick more than exist.'''
     num_real_observables_available = len(candidate_columns) // num_delays
     return min(mde_d, num_real_observables_available) * num_delays

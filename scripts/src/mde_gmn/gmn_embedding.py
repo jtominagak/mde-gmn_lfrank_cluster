@@ -50,13 +50,10 @@ def _embedding_spec_for(graph, node_name):
     pandas/pyEDM outside gmn's Node/Network machinery entirely, before any
     gmn.GMN object exists).
 
-    MultiDiGraph (MODE='MDE-GMN', built by build_nested_mde_network()):
-    R14 (docs/review-actions-v1.md), corrected after this pipeline's own
-    R14 test found the original "built only from discovered drivers"
-    framing doesn't survive contact with pyEDM: self no longer
-    unconditionally gets the FULL self_delay_set (the deep lags -- t-1,
-    t-3, t-5, ... -- that used to ride along regardless of what nested-MDE
-    actually found) -- those are removed. But self ALWAYS keeps its own
+    MultiDiGraph (MODE='MDE-GMN', built by build_nested_mde_network()): a
+    node's coordinates are its DISCOVERED drivers, not a fixed set. The deep
+    self-lags (t-1, t-3, t-5, ...) that used to ride along on every node
+    regardless of what MDE found are gone. But self ALWAYS keeps its own
     delay=0 "anchor" coordinate unconditionally, on every node, for two
     reasons that are both load-bearing, not cosmetic: (1) gmn's own SMap
     call sets `target = node_name + '(t-0)'`, which pyEDM requires to
@@ -114,9 +111,8 @@ def _embedding_spec_for(graph, node_name):
     E-lagged-copies-of-every-column scheme, using
     graph.graph['fallback_E']/['fallback_tau'] (set in build_network() from
     that mode's own CCM E/tau grid search) in place of a per-node nested-MDE
-    result it doesn't have. R14 doesn't touch this branch -- MODE='GMN'
-    never runs build_nested_mde_network() at all, so it has no nested-MDE
-    "discovered driver" concept to partition on in the first place.
+    result it does not have. MODE='GMN' never runs the nested-MDE builder at
+    all, so it has no "discovered driver" concept to work from.
 
     Either way, this is what replaced gmn's own Embed(E, tau, columns) call
     -- see _generalized_embed()'s docstring -- since a single uniform
@@ -143,11 +139,10 @@ def network_max_embedding_offset(graph):
     shared (E, tau)), this is used by build_gmn_config()'s Forecast mode to
     size a single, network-wide lib/pred window that stays valid for every
     node (see that function's docstring for the row-alignment tradeoff this
-    implies for lower-offset nodes). Still safe post-R14: self_max stays an
-    upper bound on any node's real offset even though interior nodes no
-    longer unconditionally carry self_delay_set themselves (their own
-    in-edge delays are, structurally, never deeper than the delays
-    self_delay_set/LAG_SET already span) -- this can only over-count, never
+    implies for lower-offset nodes). self_max remains an upper bound on any
+    node's real offset even though interior nodes no longer carry the full
+    self_delay_set: an in-edge delay is structurally never deeper than the
+    delays LAG_SET spans. So this can only over-count, never
     under-count, so the window stays valid.'''
     if isinstance(graph, nx.MultiDiGraph):
         self_delays = graph.graph.get('self_delay_set', [0])
@@ -197,9 +192,8 @@ def _generalized_node_init(self, args, Network, nodeName):
     since libEnd_i is meant to reflect that original library size before
     any values get appended during a Generate() run.
 
-    R14: skipped entirely for a real-data-mode external input (see
-    partition_network()'s docstring) -- such a node has no generalized
-    embedding at all (_embedding_spec_for() is never reached for it; its
+    Skipped entirely for an external input fed from real data (see
+    partition_network()'s docstring) -- such a node has no embedding at all (_embedding_spec_for() is never reached for it; its
     Generate()/Forecast() short-circuit to a real-data passthrough), so
     there is no spec to size libEnd_i from. `_real_node_init`'s own
     (otherwise-uncorrected) formula is left in place; it's inert dead data
@@ -238,9 +232,9 @@ def _generalized_node_forecast(self):
     (unused here, since every node is SMap, but kept intact so this patch
     can't silently change behavior for a future non-SMap node).
 
-    R14: a real-data-mode external input (see partition_network()'s
-    docstring) short-circuits here too, before any SMap/embedding logic.
-    Forecast()'s own one-step-ahead skill metric is meaningless for a
+    An external input fed from real data (see partition_network()'s docstring)
+    short-circuits here too, before any SMap or embedding logic. A one-step-ahead
+    skill metric is meaningless for a
     variable this network doesn't predict at all (self.data is already
     fully real throughout Forecast mode -- no iterative lastDataOut
     feeding, unlike Generate() -- so there is nothing to "forecast" here
@@ -250,10 +244,9 @@ def _generalized_node_forecast(self):
     graph node structurally, with no partition awareness of its own)
     doesn't crash on an empty embedding spec.
 
-    This passthrough is now sliced to Parameters.pred's own row range
-    (found via direct investigation of a real run's diagnostic figure --
-    docs/review-findings.md's R22 for the full trace) rather than
-    returning self.data in full. Network.py sets
+    This passthrough is sliced to Parameters.pred's own row range rather than
+    returning self.data in full. Without that, the diagnostic figure
+    mislabelled the window -- see below. Network.py sets
     dataLib_i = range(self.data.shape[0]) in Forecast mode ("all data
     since lib & pred are specified"), so self.data always holds the ENTIRE
     dataset here, not a pred-restricted slice -- returning it whole used to
@@ -287,18 +280,13 @@ def _generalized_node_forecast(self):
     that last entry is always the node's last discovered driver whenever
     it has any in-edges (confirmed empirically: spec=[T(t-0), T(t-1),
     A(t-3), B(t-0)] -> the old slice silently excluded B(t-0) from
-    `columns`, though it stayed in `df` itself). Pre-R14 this was
-    harmless -- self_delay_set padded every node with several self-lags,
-    so losing one entry barely mattered. Post-R14 a node's spec IS its
-    discovered drivers: a 1-driver interior node had zero columns left at
-    all (`columns[1:-1]` on a 2-column df is empty -- pyEDM's "columns
-    required" RuntimeError, found via this pipeline's own R14 test), and
-    a 2+-driver node silently lost its last one. Fixed here to
-    `df.columns[1:]` (drop only `time`) -- found and fixed together with
-    R14 since R14 is what turns this from a latent, mostly-harmless
-    slicing quirk into a real crash/data-loss risk, but the fix itself
-    is general (keeps every discovered driver in the embedding
-    regardless of EXTERNAL_INPUT_MODE), not R14-specific.'''
+    `columns`, though it stayed in `df` itself). That was harmless while every
+    node was padded with several self-lags: losing one entry of many barely
+    mattered. Once a node's spec became exactly its discovered drivers it
+    turned into a real failure -- a 1-driver interior node had NO columns left
+    (`columns[1:-1]` on a 2-column frame is empty, so pyEDM raises "columns
+    required"), and a node with 2+ drivers silently lost its last one. Fixed to
+    `df.columns[1:]`, dropping only `time`.'''
     if self.args.DEBUG :
         print( '-----> Node:Forecast() : ',self.FunctionType.name, self.name)
         print( self.data.tail( 2 ), flush = True );
@@ -418,9 +406,9 @@ def _generalized_node_generate(self, lastDataOut):
     index-alignment subtlety to correct here. Every other branch is copied
     verbatim (unused here, since every node is SMap).
 
-    R14: a real-data-mode external input (see partition_network()'s
-    docstring) short-circuits here, before any SMap/embedding logic --
-    genuinely not simulated, its "generated" value each step is just the
+    An external input fed from real data (see partition_network()'s docstring)
+    short-circuits here, before any SMap or embedding logic. It is genuinely not
+    simulated: its "generated" value each step is just the
     real recorded value at that row, read straight from
     self.Network.data (loaded once, in full, from DATA_AFTER_MDE -- see
     build_gmn_config()'s own docstring). self.data has already had
@@ -429,12 +417,11 @@ def _generalized_node_generate(self, lastDataOut):
     start in lockstep at generate_start real rows, then grow by exactly
     one row per step, for every node, via the same shared lastDataOut).
 
-    Also fixes the same `columns=df.columns[1:-1]` -> `df.columns[1:]`
-    driver-drop bug as _generalized_node_forecast()'s own docstring
-    describes (found via this pipeline's own R14 test) -- the old slice
-    silently excluded a node's LAST discovered driver from its SMap
-    embedding, harmless pre-R14 (self_delay_set padding masked it) but a
-    hard crash post-R14 for a 1-driver interior node.'''
+    Also applies the same `columns=df.columns[1:-1]` -> `df.columns[1:]` fix
+    that _generalized_node_forecast()'s docstring describes: the old slice
+    silently dropped a node's LAST discovered driver from its SMap embedding,
+    which the old self-lag padding masked and a 1-driver interior node does
+    not.'''
     if self.args.DEBUG :
         print( '-----> Node:Generate() : ', self.FunctionType.name, self.name )
         print( self.data.tail( 2 ) );

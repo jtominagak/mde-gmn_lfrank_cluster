@@ -28,10 +28,9 @@ def draw_colored_network(net_result, target_colors, save_path):
     depends on them. Edges are colored by delay, with a legend mapping
     color -> delay, whenever the graph carries per-edge delay data (a
     MultiDiGraph built by build_nested_mde_network() for MODE='MDE-GMN').
-    MODE='GMN' networks (a plain DiGraph from apps.CreateNetwork, no delay
-    concept at all) fall back to the original by-target edge coloring.
-    Ported unchanged from simple-mde-gmn.py -- purely graph-structural, no
-    dependency on what the columns represent.'''
+    MODE='GMN' networks (a plain DiGraph from apps.CreateNetwork, which has no
+    concept of delay) fall back to colouring edges by target instead. Purely
+    graph-structural: it never looks at what the signals mean.'''
     graph = net_result['network']['Graph']
     targets = net_result['targets']
     has_delays = isinstance(graph, nx.MultiDiGraph)

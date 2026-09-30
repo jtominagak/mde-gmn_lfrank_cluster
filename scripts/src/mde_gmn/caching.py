@@ -25,8 +25,7 @@ import cleaned_helper_functions as tsls
 
 
 def _hash_file(path, chunk_size=1 << 20):
-    '''sha256 of a file's actual bytes -- ported unchanged from
-    simple-mde-gmn.py.'''
+    '''sha256 of a file's actual bytes.'''
     h = hashlib.sha256()
     with open(path, 'rb') as f:
         for chunk in iter(lambda: f.read(chunk_size), b''):
@@ -35,7 +34,7 @@ def _hash_file(path, chunk_size=1 << 20):
 
 def _strip_docstrings(tree):
     '''Removes every module/class/function docstring from an AST in place
-    -- ported unchanged from simple-mde-gmn.py.'''
+   .'''
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             body = node.body
@@ -71,14 +70,13 @@ def _pipeline_code_fingerprint(entry_path=None):
 
 
 def _environment_fingerprint():
-    '''Captures the installed numerical/algorithmic dependencies this
-    pipeline's cached stages actually run through. Unlike simple-mde-gmn.py:
-    no `dimx` (not imported at all in this pipeline) and no
-    `apps.InteractionMatrix` (MODE='GMN' here uses proper_ccm instead, no
-    subprocess); `cleaned_helper_functions` (this pipeline's own TSLS-aware
-    scoring engine, not an installed package) is content-hashed directly,
-    same approach as `apps.CreateNetwork` (still used for MODE='GMN''s own
-    network object).'''
+    '''The versions of everything numerical a cached result depended on.
+
+    If a dependency that does the arithmetic changes, a cached result may no
+    longer be what the current code would produce, so its version belongs in
+    the fingerprint. `cleaned_helper_functions` is not an installed package, so
+    it is hashed by content instead -- as is `apps.CreateNetwork`, used by
+    MODE='GMN'.'''
     versions = {}
     for pkg in ('gmn', 'pyEDM', 'networkx', 'numpy', 'pandas'):
         try:
@@ -102,11 +100,9 @@ def build_code_fingerprint(entry_path=None):
 
 def build_search_fingerprint(cfg, net_result, data_file_sha256, code_fingerprint):
     '''Everything that determines one network's theta search outcome
-    (run_theta_search()) -- ported from simple-mde-gmn.py, with TSLS's own
-    scoring/CCM-calibration knobs folded in (they shape the network's own
-    topology/selection outcome just as much as MDE_D/NESTED_M/etc. do) and
-    `exclusion_radius` simplified to the plain value directly (no 'auto'
-    mode to normalize against here, unlike simple-mde-gmn.py).'''
+    (run_theta_search()). The TSLS scoring and CCM-calibration knobs are part
+    of it: they shape which drivers get selected just as much as MDE_D or
+    NESTED_M do.'''
     graph = net_result['network']['Graph']
     return {
         'mode': cfg['MODE'],
@@ -141,9 +137,10 @@ def build_search_fingerprint(cfg, net_result, data_file_sha256, code_fingerprint
         'prediction_start': cfg['PREDICTION_START'],
         'prediction_length': cfg['PREDICTION_LENGTH'],
         'network_nodes': sorted(graph.nodes),
-        # R14: doesn't change topology (build_network_fingerprint()'s own
-        # concern), but does change what Generate()/theta search actually
-        # do with a zero-driver node -- belongs here, not there.
+        # Does not change the network's topology -- that is
+        # build_network_fingerprint()'s concern -- but does change what
+        # Generate() and the theta search do with a zero-driver node, so it
+        # belongs in this fingerprint rather than that one.
         'external_input_mode': cfg['EXTERNAL_INPUT_MODE'],
         'code_fingerprint': code_fingerprint,
         'stage': 'theta_search',
@@ -159,10 +156,9 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
                                target_ranking_window_rows=1000, min_pred_events=20,
                                max_window_rows=30000,
                                ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800)):
-    '''Everything that determines one group's network-construction outcome
-    -- ported from simple-mde-gmn.py, TSLS scoring/CCM-calibration knobs
-    folded in. Computable *before* that construction runs, since the whole
-    point is deciding whether to skip it. `observable_columns` here is
+    '''Everything that determines one group's network-construction outcome.
+    Computable BEFORE that construction runs, since the whole point is deciding
+    whether it can be skipped. `observable_columns` here is
     already the CCM-pre-filtered pool (main() runs the pre-filter, and its
     own threshold/E/libSize-ratio knobs, before this fingerprint is ever
     computed -- see build_network()'s own docstring), so -- matching this
@@ -182,8 +178,7 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
     mde_results.
 
     `target_ranking_window_rows`/`min_pred_events`/`max_window_rows`/
-    `ccm_lib_sizes_rows` (window-sizing fix, docs/review-findings.md):
-    MODE='MDE-GMN' only -- `build_nested_mde_network()`'s own per-node
+    `ccm_lib_sizes_rows`: MODE='MDE-GMN' only -- `build_nested_mde_network()`'s own per-node
     calls now resolve their own ranking window from these, decoupled from
     `ccm_window_rows`/`ccm_lib_size_pcts` (which stay exactly what they
     always were, MODE='GMN'-only, via `build_interaction_matrix()`). Real
@@ -234,8 +229,7 @@ def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_r
                                      data_file, data_file_sha256, code_fingerprint,
                                      cache_stage='stage1', max_e=None):
     '''Everything that determines one run_mde_for_target() call's outcome,
-    computable before that call runs -- ported from simple-mde-gmn.py, TSLS
-    scoring/CCM-calibration knobs folded in. `candidate_pool` is kept in
+    computable before that call runs. `candidate_pool` is kept in
     order rather than sorted -- forward selection can tie-break on column
     order, so the same columns in a different order aren't guaranteed to
     select the same result. `max_e` (the raw MDE_D-derived auto-select
@@ -246,8 +240,8 @@ def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_r
     the fingerprint too: a run with a different max_e can select a
     different E, hence different candidates, for the same everything else.
 
-    Window-sizing fix (docs/review-findings.md): `window_rows`/
-    `pred_event_count` are the RESOLVED, data-dependent outputs of
+    `window_rows`/`pred_event_count` are the RESOLVED, data-dependent outputs
+    of
     _resolve_target_ranking_window() for this specific node -- not just the
     config-level knobs (`target_ranking_window_rows`/`min_pred_events`/
     `max_window_rows`) that produced them. All must be in the
@@ -299,9 +293,8 @@ def build_multi_mde_selection_fingerprint(targets, candidate_pool, mde_d, tp, em
     place of a single `node`, plus `E`/`target_aggregate`
     (multi_proper_mde's own extra required/optional arguments, with no
     proper_mde equivalent -- see run_multi_mde_for_targets()'s docstring).
-    `window_rows` (window-sizing fix, docs/review-findings.md): the
-    resolved window itself, not just the `target_ranking_window_rows`
-    constant that produced it -- kept as its own field for the same A5
+    `window_rows`: the resolved window itself, not just the
+    `target_ranking_window_rows` constant that produced it -- for the same
     reason build_mde_selection_fingerprint() records both.'''
     return {
         'targets': list(targets),
@@ -339,8 +332,7 @@ def _load_pickle_cache_entry(path):
         return pickle.load(f)
 
 def find_cached(prev_runs_dir, filename, fingerprint, load_one=_load_json_cache_entry):
-    '''Generic cross-job cache lookup -- ported unchanged from
-    simple-mde-gmn.py, shared by every cacheable stage.'''
+    '''Generic cross-job cache lookup, shared by every cacheable stage.'''
     if not prev_runs_dir.exists():
         return None
     candidates = sorted(
@@ -357,7 +349,7 @@ def find_cached(prev_runs_dir, filename, fingerprint, load_one=_load_json_cache_
     return None
 
 def _save_to_cache(filename, results_dir, run_cache_dir, write_one):
-    '''Ported unchanged from simple-mde-gmn.py -- writes once per unique
+    '''writes once per unique
     directory in {results_dir, run_cache_dir}, deduplicated.'''
     written = []
     for directory in dict.fromkeys([results_dir, run_cache_dir]):
@@ -395,7 +387,7 @@ def save_best_params(results_dir, run_cache_dir, network_id, fingerprint, best_n
 def build_start_sweep_fingerprint(network_fingerprint, node_theta, start_offsets,
                                    generate_length, exclusion_radius):
     '''Everything that determines one network's start-point sweep outcome
-    -- ported unchanged from simple-mde-gmn.py. network_fingerprint already
+   . network_fingerprint already
     embeds every TSLS-specific scoring/CCM-calibration knob (via
     build_search_fingerprint()), so nothing TSLS-specific needs adding
     here.'''

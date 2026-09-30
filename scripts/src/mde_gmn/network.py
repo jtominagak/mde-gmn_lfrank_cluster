@@ -80,8 +80,7 @@ from mde_gmn.tsls_data import _metric_for, _preview_window_rows
 
 def _accept_mde_result_edges(graph, edges, node, result, raw_columns):
     '''Shared MDE-edge-acceptance rules -- self-loop guard, NaN
-    marginal-gain rejection, eager cycle rejection -- ported unchanged from
-    simple-mde-gmn.py (see that file's build_nested_mde_network() docstring
+    marginal-gain rejection, eager cycle rejection (see that file's build_nested_mde_network() docstring
     for the full rationale on each). Applied to every column
     mde.run_mde_for_target() selected for `node`. Mutates `graph` in place and
     appends accepted rows to `edges`.
@@ -201,63 +200,34 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     _accept_mde_result_edges()). Stage 2 cannot extend the backbone and
     does not recurse, so `nested_m` applies to Stage 1 alone.
 
-    Stage 1 runs to completion before Stage 2 starts (R12, 2026-08-27).
+    Stage 1 runs to completion before Stage 2 starts. That ordering matters:
+    Stage 2 attaches leaves to the nodes Stage 1 found, so it cannot run until
+    the backbone is final.
 
-    This is a deliberate, explicit un-doing of the 2026-08-25 unification,
-    per review action R12: that revision fixed a real bug (the historical
-    dead-end-leaf problem, Sec 5.3 -- attach_lag_embeddings() ran ONCE
-    over Stage 1's final node set, non-recursively, so a Stage-2-selected
-    real observable could never itself become a nested-MDE target) but
-    serialization and recursion are orthogonal properties, and the fix
-    conflated them. What had to be restored is the sequencing (Stage 1
-    complete, THEN Stage 2); what had to be kept is Stage 2's own
-    recursion (added 2026-08-25, not reverted here). Neither this
-    function's Stage 1 phase nor its Stage 2 phase flattens into a single
-    non-recursive sweep.
+    DEPTH. A node's depth is its distance from the nearest target, whichever
+    stage discovered it. `nested_m` caps it: a node at depth d expands further
+    only while `nested_m == 0 or d < nested_m` (0 means no cap). Because Stage 1
+    runs to its full depth first, a branch already carried to the cap simply
+    stops -- that is the budget working, not a broken recursion.
 
-    Depth accounting is joint across both phases -- a node's depth is its
-    distance from the target regardless of which phase discovered it (see
-    `node_depth` below), and the same nested_m budget check
-    (`nested_m == 0 or depth < nested_m`, depth = the discovering node's
-    OWN depth, unchanged arithmetic from the prior revision -- R13 does
-    not touch this) gates further recursion in EITHER phase. A
-    consequence documented in the review (R12/R15's own interaction
-    note, R15 itself out of scope here): because Stage 1 now runs to full
-    depth before Stage 2 ever sees a node, a real-observable Stage 2
-    selects on a branch Stage 1 already carried out to the depth cap is
-    beyond budget and terminates immediately -- correct budget-bound
-    termination, not a broken recursion. Distinguishing that from Stage 2
-    simply finding zero real-observable drivers on a branch (driver-
-    exhausted termination) in the run log is R15 step 4's own job, not
-    done by this revision.
+    WAVES, AND WHY DEPTH IS TRACKED AS A MINIMUM. Nodes are processed in waves,
+    all nodes of one wave in parallel. A wave can contain nodes at different
+    depths, and two parents in one wave can both propose the same new driver at
+    different depths. Such a driver is recorded at the SHALLOWEST proposed
+    depth (the dict-of-minimums below), so its depth does not depend on
+    iteration order.
 
-    Stage 2's initial wave seeds every node Stage 1 visited, at whatever
-    depth Stage 1 discovered it at -- these depths are NOT uniform within
-    that first Stage 2 wave (Stage 1's own BFS produced them one wave per
-    depth; Stage 2 processes them all at once for maximum parallelism, the
-    same "single sweep over Stage 1's final node set" shape the historical
-    §5.3 bug had -- the difference is this sweep recurses further whereas
-    that one didn't). Because a wave can therefore mix depths, a brand-new
-    driver proposed by more than one same-wave parent takes the SHALLOWEST
-    proposed depth (see the next_wave dict-of-mins pattern below), not an
-    arbitrary iteration-order-dependent one -- this is a strict
-    correctness improvement over the prior revision's plain-list next_wave
-    (harmless there, since every wave was single-depth by construction, so
-    plain-list and min-tracked next_wave picked the same result).
+    WITHIN-WAVE RACE. A wave's candidate pools are built before any of that
+    wave's results come back, so two nodes in one wave can select each other and
+    neither pool could have known. Whichever is accepted second is recomputed
+    serially with the other's edges in place -- see _recomputed_stage1_result().
 
-    Differences from simple-mde-gmn.py, both pre-existing (not new to
-    this revision): (1) neither pool passes `initializer=` -- simple-
-    mde-gmn.py's own _mde_wave_worker_init() reapplies dimx.Run
-    monkeypatches inside every worker, which has no TSLS-side equivalent
-    (no dimx.Run to monkeypatch at all); (2) the outer/inner split is
-    computed the same way (outer_workers = min(node count, cores),
-    inner_workers = cores // outer_workers, recomputed fresh per phase
-    per wave from that phase's own real node count) but fed to a
-    different layer than simple-mde-gmn.py's dx.MDE(cores=...) -- here
-    inner_workers becomes a ThreadPoolExecutor opened once per node
-    inside mde.run_mde_for_target() itself (see that function's own INNER
-    POOL docstring), since proper_mde has no multiprocessing of its own
-    to hand a bare core count to.'''
+    HOW THE CORES ARE SPLIT. Per wave: outer_workers = min(nodes in the wave,
+    cores), inner_workers = cores // outer_workers. The outer pool runs one
+    process per node; the inner count becomes a thread pool opened inside
+    mde.run_mde_for_target() (see its INNER POOL docstring), because proper_mde
+    has no parallelism of its own to hand a core count to. The product never
+    exceeds `cores`, and is logged so that can be checked.'''
     graph = nx.MultiDiGraph()
     graph.add_nodes_from(targets)
 
@@ -353,7 +323,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         if to_compute:
             outer_workers = min(len(to_compute), max(1, cores))
             inner_workers = max(1, cores // outer_workers)
-            # R5 (docs/review-actions-v1.md): product logged explicitly so
+            # product logged explicitly so
             # a run's own log can be checked for outer*inner <= cores
             # without re-deriving it by hand.
             print(f'nested MDE (Stage 1): wave of {len(to_compute)} node(s) at depth '
@@ -383,8 +353,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                         node, expanded_df, delay_set, prediction_start, prediction_length, tp,
                         is_behav, target_ranking_window_rows, min_pred_events, max_window_rows,
                     )
-                    # Metric-routing fix (found while verifying R22's own
-                    # E-engine-swap effect): `node` here is virtually never
+                    # `node` here is virtually never
                     # one of `targets` (Stage 1 discovers real-observable
                     # DRIVERS) -- passing the closed-over `target_metric`
                     # unconditionally would score this node's own ranking
@@ -524,7 +493,8 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         wave_depths = sorted({d for _, d in wave_nodes})
         outer_workers2 = min(len(wave_nodes), max(1, cores))
         inner_workers2 = max(1, cores // outer_workers2)
-        # R5: product logged explicitly, same reasoning as Stage 1's own print above.
+        # Product logged explicitly so the core budget can be checked from
+        # the log, same as Stage 1's print above.
         print(f'nested MDE (Stage 2): wave of {len(wave_nodes)} node(s) at depth(s) '
               f'{wave_depths} -- {outer_workers2} parallel worker(s) '
               f'x {inner_workers2} inner thread(s) each '
@@ -553,12 +523,11 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                     node, stage2_df, lag_set, prediction_start, prediction_length, tp,
                     is_behav, target_ranking_window_rows, min_pred_events, max_window_rows,
                 )
-                # Metric-routing fix -- see Stage 1's own identical comment
-                # above. `node` here is a Stage 1 backbone node (real
-                # observable) or a Stage-2-recursed real observable, never
-                # one of `targets` at this depth. All arguments from `tp`
-                # onward passed by keyword -- see Stage 1's own identical
-                # comment for why.
+                # Metric routing -- see Stage 1's identical comment above.
+                # `node` here is always a Stage 1 backbone node, since Stage 2
+                # only attaches leaves and never discovers new real nodes.
+                # Arguments from `tp` onward are passed by keyword for the
+                # reason Stage 1's comment gives.
                 fut = executor.submit(
                     mde.run_mde_for_target, node, stage2_df, candidate_pool,
                     prediction_start, prediction_length, effective_d,
@@ -636,7 +605,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
 
     edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
 
-    # R13: nested_m is a whole-network depth budget shared by both stages
+    # nested_m is a whole-network depth budget shared by both stages
     # (node_depth is one dict populated by whichever stage discovers a
     # node first, checked against the same nested_m in both phases' own
     # recursion above) -- realized_max_depth reports how deep that joint
@@ -653,7 +622,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     return graph, edges_df, nested_mde_results
 
 def partition_network(graph, targets, external_input_mode):
-    '''R14 (docs/review-actions-v1.md): partitions a MultiDiGraph built by
+    '''partitions a MultiDiGraph built by
     build_nested_mde_network() into interior nodes (>=1 discovered driver
     -- genuinely simulated, their embedding built from those in-edges only,
     see _embedding_spec_for()'s docstring) and external inputs (0 discovered
@@ -717,8 +686,8 @@ def _simulated_nodes(graph):
     return [n for n in graph.nodes if n not in external_inputs]
 
 def report_partition(graph, network_id, results_dir):
-    '''R14's own explicit reporting requirement: how many external inputs,
-    which observables and delays, and which interior nodes each feeds --
+    '''Report the partition: how many external inputs there are, which
+    observables and delays they stand for, and which interior nodes each feeds --
     printed to the run log and written to a per-network CSV in
     `results_dir` (partition_{network_id}.csv). Reads the classification
     partition_network() already stored on `graph.graph` rather than

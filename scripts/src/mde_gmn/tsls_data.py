@@ -91,11 +91,10 @@ def _ccm_window(df, lib_ratio, max_rows):
 def _resolve_target_ranking_window(target, full_df, usable_df, lib_ratio,
                                     is_behavioral_target, target_ranking_window_rows,
                                     min_pred_events, max_window_rows):
-    '''Window-sizing fix (found while verifying R22, docs/review-actions-v1.md
-    -- see docs/review-findings.md's own window-sizing section for the full
-    real-data investigation, including the two abandoned designs this
-    replaces): resolves the ranking-stage/E-auto-select window for one
-    node's own run_mde_for_target() call, decoupled from CCM_WINDOW_ROWS
+    '''How many rows of data one node's MDE call should score over.
+
+    Resolves the ranking-stage/E-auto-select window for a single
+    run_mde_for_target() call, decoupled from CCM_WINDOW_ROWS
     (which stays governing the CCM gate's own convergence-curve library
     sizing, now via absolute row counts -- see `ccm_lib_sizes_rows` in
     run_mde_for_target()'s own docstring -- not this function's own frame
@@ -119,11 +118,10 @@ def _resolve_target_ranking_window(target, full_df, usable_df, lib_ratio,
     `min_pred_events` is a plain, fixed integer (not a fraction of
     anything neuron-specific): it answers "how many matched events does
     f1 need before it is signal rather than noise", which is a property
-    of the metric, not of the neuron (see docs/review-findings.md for the
-    full reasoning behind abandoning the earlier
-    fraction-of-a-neuron's-own-total-events design, which made a busy
-    neuron face a stricter test than a quiet one for no stated reason, and
-    which -- checked against the WHOLE window rather than its pred
+    of the metric, not of the neuron. A fraction of each neuron's own total
+    event count was tried first and rejected: it made a busy neuron face a
+    stricter test than a quiet one for no stated reason, and -- checked against
+    the WHOLE window rather than its pred
     portion -- was later found on real data to pass while the pred
     portion itself still had too few events to score anything on).
 
