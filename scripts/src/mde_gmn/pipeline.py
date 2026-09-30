@@ -22,8 +22,8 @@ WHAT main() DOES
     all targets, or one network per target, per GMN_MODE.
 
 THE ONE ARGUMENT
-    main(entry_path, network_builder=None). `network_builder` is the only thing
-    the two entry scripts disagree about: the serial pipeline leaves it None
+    main(entry_path, network_builder=None, builder_config_keys=None).
+    `network_builder` is the only thing the two entry scripts disagree about: the serial pipeline leaves it None
     (network.build_nested_mde_network), and the GPU branch's parallel-MDE
     pipeline passes network_parallel.build_nested_mde_network. Everything else
     -- config, data, caching, GMN, scoring, output -- is shared, which is why
