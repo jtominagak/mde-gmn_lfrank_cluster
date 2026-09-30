@@ -64,7 +64,7 @@ def target_groups_for_mode(targets, gmn_mode):
     else:
         raise ValueError(f"Unknown GMN_MODE: {gmn_mode!r}")
 
-def main(entry_path, network_builder=None):
+def main(entry_path, network_builder=None, builder_config_keys=None):
     """Run the whole pipeline once.
 
     entry_path: the calling entry script's __file__. It goes into the code
@@ -78,6 +78,11 @@ def main(entry_path, network_builder=None):
     serial one (network.build_nested_mde_network); the GPU branch's
     parallel-MDE entry script passes network_parallel's instead. See this
     module's docstring.
+
+    builder_config_keys: {builder keyword: config key} for options only that
+    builder takes, e.g. {'parallel_mde_scope': 'PARALLEL_MDE_SCOPE'}. The
+    entry script names them, because it is the one that knows which builder it
+    chose; the values still come from load_config() like everything else.
     """
     cfg = load_config()
 
@@ -328,6 +333,8 @@ def main(entry_path, network_builder=None):
             mp_start_method=cfg['MP_START_METHOD'],
             use_gpu=cfg['GPU_ENABLED'],
             network_builder=network_builder,
+            network_builder_kwargs={kw: cfg[key]
+                                    for kw, key in (builder_config_keys or {}).items()},
         )
         draw_colored_network(
             net_result, cfg['TARGET_COLORS'],

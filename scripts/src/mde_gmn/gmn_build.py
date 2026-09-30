@@ -174,7 +174,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                    gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
                    external_input_mode='real_data', progress_log_path=None,
                    mp_start_method='fork', use_gpu=False,
-                   network_builder=None):
+                   network_builder=None, network_builder_kwargs=None):
     '''Build one network spanning `targets` and their driver candidates, via
     one of two unrelated constructions depending on `mode`.
 
@@ -185,6 +185,11 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
     computes the MDE results up front and then replays them. Both produce the
     same network; this argument is the only difference between the two
     pipelines at this level.
+
+    network_builder_kwargs: arguments only that builder understands, e.g. the
+    parallel one's parallel_mde_scope. Kept separate rather than added to this
+    signature so that a builder-specific option never has to be threaded
+    through code that does not use it.
 
     The two constructions, same mode-branch restructuring as
     simple-mde-gmn.py's own build_network():
@@ -267,6 +272,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                 progress_log_path=progress_log_path,
                 mp_start_method=mp_start_method,
                 use_gpu=use_gpu,
+                **(network_builder_kwargs or {}),
             )
         graph.graph['self_delay_set'] = sorted(set(lag_set) | {0}, reverse=True)
         partition_network(graph, targets, external_input_mode)

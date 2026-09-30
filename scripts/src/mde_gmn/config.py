@@ -567,6 +567,38 @@ def load_config():
     cfg['GPU_ENABLED'] = _env_bool('TSLS_MDE_GMN_GPU_ENABLED', False)
     cfg['MP_START_METHOD'] = 'spawn' if cfg['GPU_ENABLED'] else 'fork'
 
+    # ---- Parallelized-MDE scope (parallel-MDE pipeline only) -------------
+    # Read by both pipelines but used only by network_parallel.py; the serial
+    # builder takes no scope. Both values produce the
+    # IDENTICAL network -- this trades wall-clock against wasted compute,
+    # nothing else, which is why it is deliberately NOT part of
+    # build_network_fingerprint() (a cached network built under one scope is
+    # legitimately reusable by the other).
+    #
+    #   'union'  ONE MDE per node, over real AND lagged candidates together,
+    #            for the entire node universe, submitted to a single pool.
+    #            Exactly one barrier in the whole build, and real and lagged
+    #            candidates compete directly inside each forward selection.
+    #            This is NOT the same algorithm as the parent pipeline's two
+    #            stages, so it produces a different (not a wrong) network.
+    #   'staged' (recommended for comparability) -- the parent pipeline's
+    #            algorithm, minus the per-wave barriers: Stage 1 over the
+    #            whole universe, the instant Stage 1 replay, then Stage 2
+    #            (lagged-only) for exactly Stage 1's visited set. Builds the
+    #            SAME network as tsls-mde-gmn.py
+    #            (tests/test_parallel_mde_equivalence.py).
+    #
+    # Either scope may have to RECOMPUTE a node serially: Phase 0 cannot know
+    # which observables will end up upstream, so a precomputed result whose
+    # real picks turn out to be cycle-closing is discarded and recomputed
+    # with those candidates excluded -- see _mde_result_for_node().
+    cfg['PARALLEL_MDE_SCOPE'] = os.environ.get(
+        'TSLS_MDE_GMN_PARALLEL_MDE_SCOPE', 'union').strip().lower()
+    if cfg['PARALLEL_MDE_SCOPE'] not in ('union', 'staged'):
+        raise ValueError(
+            f"TSLS_MDE_GMN_PARALLEL_MDE_SCOPE must be 'union' or 'staged', got "
+            f"{cfg['PARALLEL_MDE_SCOPE']!r}")
+
     cfg['TARGET_COLORS'] = {t: plt.get_cmap('tab10')(i % 10) for i, t in enumerate(cfg['TARGETS'])}
 
     return cfg

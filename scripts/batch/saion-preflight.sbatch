@@ -96,6 +96,11 @@ import sitecustomize; print('sitecustomize:', sitecustomize.__file__)
 import gmn, pyEDM, networkx, sklearn, matplotlib, pydiffmap, pandas, numpy
 from apps.CreateNetwork import CreateNetwork
 import cleaned_helper_functions, gpu_edm
+# The pipeline itself: importing pipeline pulls in every stage module, and
+# importing network_parallel covers the builder this job actually uses. This is
+# the check that catches a package the sbatch forgot to stage, or a module that
+# no longer imports, before a 7-day job dies at startup.
+import mde_gmn.pipeline, mde_gmn.network_parallel
 assert gpu_edm.is_available(), 'gpu_edm.is_available() is False'
 print('all imports OK; gpu_edm.is_available() = True')
 "

@@ -16,7 +16,10 @@ SRC_DIR = REPO_ROOT / 'scripts' / 'src'
 
 # The order the mde_gmn package itself documents (see its __init__.py). Used
 # only to assemble the namespace below; a later module wins a name clash, of
-# which there are none today.
+# which there are none today. network_parallel is deliberately ABSENT: it
+# defines build_nested_mde_network too, and adding it would make the namespace
+# hand back the parallel builder to every test that wants the serial one.
+# tests/test_parallel_mde_equivalence.py imports both modules by name instead.
 _PACKAGE_MODULES = (
     'columns', 'progress', 'tsls_data', 'caching', 'mde', 'network',
     'gmn_embedding', 'gmn_build', 'theta', 'generate', 'plots', 'diagnostics',

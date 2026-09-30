@@ -22,12 +22,14 @@ it is, and explains the idea before the mechanics.
     6. generate       free-run the network, score it against held-out data
     7. diagnostics    optional figures and baseline comparisons
 
-Supporting modules: columns (delay-suffixed column names), caching (the
-cross-job result cache and its fingerprints), progress (the heartbeat log),
-plots (network figures).
+network_parallel (GPU branch only) is an alternative to step 3: the same
+network, built by computing every MDE call up front instead of one wave at a
+time. Its docstring explains the trade-off.
 
-Still living in the entry scripts, pending Phase 2 step 4: load_config() and
-main().
+Supporting modules: config (every environment knob), pipeline (main(), the run
+step by step), columns (delay-suffixed column names), caching (the cross-job
+result cache and its fingerprints), progress (the heartbeat log), plots
+(network figures).
 
 DEPENDENCY DIRECTION -- a module only imports from the ones above it, so this
 list is also a safe reading order. Verified against the imports, not aspirational.

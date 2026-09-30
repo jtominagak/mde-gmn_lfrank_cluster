@@ -44,8 +44,9 @@ from _pipeline_test_utils import (  # noqa: E402
 )
 from types import SimpleNamespace  # noqa: E402
 
+# Loaded only to set up sys.path and the gmn patches; the builders themselves
+# come from mde_gmn.network / mde_gmn.network_parallel (see main()).
 PARENT_FILE = 'tsls-mde-gmn.py'
-FORK_FILE = 'no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py'
 
 TARGETS = ['T']
 RAW_COLUMNS = ['A', 'B', 'C', 'D', 'E']
@@ -229,8 +230,14 @@ def test_cycle_closing_pick_forces_a_recompute(fork, staged_calls):
 
 
 def main():
-    parent = load_pipeline_module(PARENT_FILE, '_test_parent_tsls_mde_gmn')
-    fork = load_pipeline_module(FORK_FILE, '_test_fork_parallel_mde')
+    # Both pipelines are the same package now (Phase 2); the entry scripts
+    # differ only in which builder they pass. So load one entry script -- that
+    # puts scripts/src on sys.path and applies the gmn patches -- and then
+    # compare the two builder MODULES directly, which is what "the parent" and
+    # "the fork" actually mean.
+    load_pipeline_module(PARENT_FILE, '_test_parent_tsls_mde_gmn')
+    from mde_gmn import network as parent           # noqa: E402 -- needs the sys.path above
+    from mde_gmn import network_parallel as fork    # noqa: E402
 
     _ref_graph, _ref_edges, staged_calls = test_staged_matches_the_parent(parent, fork)
     test_union_is_one_combined_call_per_node(fork)
