@@ -70,33 +70,26 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
                         data_file=None, data_file_sha256=None, code_fingerprint=None,
                         cache_stage='stage1', max_e=None, inner_workers=1, raw_columns=None,
                         use_gpu=False):
-    '''Run cleaned_helper_functions.proper_mde's forward selection for a
-    single target variable -- TSLS-flavored equivalent of
-    simple-mde-gmn.py's own run_mde_for_target() (dimx.MDE), matching that
-    function's return shape (a 'm' namespace exposing MDEcolumns/MDErho/
-    MDEOut/args.lib/args.pred/args.tau/args.Tp) exactly, so every downstream
-    consumer ported from simple-mde-gmn.py (_accept_mde_result_edges(),
-    _failed_mde_result(), plot_mde_rho_vs_dimension(),
-    run_tp_vs_rho_sweep(), run_univariate_e_tau_grid()) works completely
-    unchanged. `mde_d` here is already the *effective* dimension count (see
+    '''Forward selection for one target: which candidates best predict it?
+
+    Runs cleaned_helper_functions.proper_mde and returns its result wrapped in
+    an 'm' namespace (MDEcolumns/MDErho/MDEOut/args.lib/args.pred/args.tau/
+    args.Tp). Every consumer -- _accept_mde_result_edges(),
+    _failed_mde_result(), plot_mde_rho_vs_dimension(), run_tp_vs_rho_sweep(),
+    run_univariate_e_tau_grid() -- expects that exact shape, which is why
+    _failed_mde_result() has to produce it too.
+
+    `mde_d` here is already the *effective* dimension count (see
     effective_mde_dimension()) -- NOT what `max_e` should be capped at (see
     below), since Stage 2 inflates `mde_d` by num_delays for a completely
     unrelated reason (candidate-pool breadth, not per-candidate embedding
     depth).
 
-    E/tau are no longer hardcoded at this call site (previously E=3,
-    tau=-1, a workaround for proper_mde's E<=0 auto-select path being
-    blocked for non-'correlation' metrics -- see
-    cleaned_helper_functions.proper_mde's own E docstring for the fix:
-    proper_embed_dimension, a metric-aware EmbedDimension replacement,
-    already existed in that file but proper_mde's own E<=0 branch never
-    called it). Now: E=0 (auto-select per candidate, per dimension, scored
-    with whichever metric that call already uses -- matching
-    simple-mde-gmn.py's own dx.MDE call, which never overrides E/tau
-    either and lets dimx.MDE auto-select natively) and maxE=`max_e`, the
-    RAW (un-scaled-by-num_delays) TSLS_MDE_GMN_MDE_D value -- the per-node
-    driver-count budget this pipeline already exposes, reused here rather
-    than inventing a separate hardcoded ceiling, per explicit direction.
+    E AND TAU ARE NOT FIXED HERE. E=0 means proper_mde auto-selects the
+    embedding dimension per candidate, scored with whichever metric that call
+    uses, capped at maxE=`max_e`. `max_e` is the RAW (un-scaled-by-num_delays)
+    MDE_D value: the per-node driver budget the pipeline already exposes,
+    reused rather than inventing a second ceiling.
     tau is simply no longer passed -- proper_mde's own default (-1) applies,
     same numeric value as before, just not redundantly re-pinned here.
 
@@ -110,14 +103,11 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     Callers are responsible for resolving `target_metric` correctly for
     whatever `target` actually is here (`_metric_for(target, targets,
     metric, target_metric)` at the depth>=1 call sites -- see the
-    metric-routing fix in docs/review-findings.md for why this call site
-    previously got it wrong for every neuron node).
+    _metric_for() resolves it correctly for a neuron node, which needs 'f1'
+    rather than the targets' 'correlation').
 
-    WINDOW SIZING (docs/review-findings.md's own window-sizing section --
-    found and fixed alongside the metric-routing bug above, since fixing
-    that bug alone made `f1`-scored ranking degenerate under the previous
-    fixed CCM_WINDOW_ROWS=800 window): the ranking-stage/E-auto-select
-    window is no longer CCM_WINDOW_ROWS -- it is resolved per node by
+    WINDOW SIZING. The ranking-stage/E-auto-select window is NOT
+    CCM_WINDOW_ROWS; it is resolved per node by
     `_resolve_target_ranking_window()` (see that function's own docstring),
     decoupled entirely from the CCM gate's own convergence-curve library
     sizing (`ccm_lib_sizes_rows`, absolute row counts, never a percentage
@@ -130,16 +120,14 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     least `min_pred_events` (default 20, empirically calibrated -- see
     load_config()'s own docstring) real reset events, capped at
     `max_window_rows` (default 30000, a plain compute ceiling, not
-    calibrated) -- see `_resolve_target_ranking_window()`'s own docstring
-    for the full reasoning and the two earlier designs this replaces.
+    calibrated) -- see `_resolve_target_ranking_window()`'s own docstring.
 
-    LEAKAGE (see load_config()'s three-way A/B/end window docstring,
-    identical rationale to simple-mde-gmn.py's own run_mde_for_target()):
+    LEAKAGE (see config.py's three-way A/B/end window entry):
     `prediction_start`/`prediction_length` here are always A and B-A. The
     row range handed to proper_mde is trimmed twice before being resolved
     to this node's own ranking window (see _resolve_target_ranking_window()
     and _ccm_window()): `warmup` rows are skipped at the front (delay-
-    expansion NaN warm-up, same as simple-mde-gmn.py) and `tp` rows are
+    expansion NaN warm-up) and `tp` rows are
     trimmed from the back (B - tp, not B, so the last validated row's own
     t+tp target label can never land at or past B) -- both applied BEFORE
     the window is resolved, so neither the fixed depth-0 window nor the
@@ -147,12 +135,10 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     Forecast validation segment [B, end), regardless of how large either
     grows.
 
-    CACHE (reuse_cache, gated by TSLS_MDE_GMN_REUSE_BEST_PARAMS): ported
-    unchanged from simple-mde-gmn.py -- a cache hit reconstructs the same
-    'm' namespace shape from a pickled dict instead of calling proper_mde
-    at all. `cache_stage` ('stage1' default, 'stage2' from
-    build_nested_mde_network()'s own Stage 2 pass) keeps the two stages'
-    cache files distinct, same as simple-mde-gmn.py.
+    CACHE (reuse_cache, gated by TSLS_MDE_GMN_REUSE_BEST_PARAMS): a cache hit
+    reconstructs the same 'm' namespace from a pickled dict instead of calling
+    proper_mde at all. `cache_stage` ('stage1' by default, 'stage2' from the
+    builder's Stage 2 pass) keeps the two stages' cache files distinct.
 
     INNER POOL (inner_workers, default 1 -- no pool at all): this call's
     own proper_mde() forward-selection is otherwise entirely single-core
@@ -167,16 +153,15 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     (build_nested_mde_network()'s own Stage 1 and Stage 2 passes) size
     this as `max(1, cores // outer_workers)`, recomputed fresh per wave
     from that wave's own actual size -- see that function's own docstring
-    -- which is what keeps outer_workers * inner_workers <= cores always: the same
-    invariant that kept simple-mde-gmn.py's own outer x inner CCM
-    parallelism (see that file's own module docstring's FIXED section)
-    from repeating the pool-squaring blowup apps.InteractionMatrix x
-    pyEDM.CCM's nested pools caused once, before that fix. No TSLS-side
+    -- which is what keeps outer_workers * inner_workers <= cores always. That
+    invariant matters: nested pools that each claim all the cores multiply
+    rather than share, and this pipeline has been brought down that way before.
+    No TSLS-side
     equivalent of that bug ever existed here (proper_mde never had any
     multiprocessing at all until this parameter) -- this inner pool is
     new, sized the same careful way from the start.
 
-    `raw_columns` (R21, docs/review-actions-v1.md): when given, builds a
+    `raw_columns`: when given, builds a
     `{column: delay}` lookup via `observable_and_delay()` for every column
     in `observable_columns` and passes it to `proper_mde` as
     `column_delay`, enabling that function's own dynamic per-dimension
@@ -185,33 +170,26 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     real-only, so there is no delay to look up) -> `column_delay=None` ->
     proper_mde's own no-op default. `build_nested_mde_network()`'s Stage 1
     and Stage 2 calls both pass `raw_columns=raw_columns` (their
-    `observable_columns`/`candidate_pool` can genuinely contain
-    delay-suffixed synthetic names, confirmed on real data this session).
+    `observable_columns`/`candidate_pool` genuinely can contain delay-suffixed
+    synthetic names).
 
-    `use_gpu` (docs/no-kEDM-gpu-optimization-plan.md section 8): threaded
-    straight through to `proper_mde`'s own `use_gpu` -- see that
-    function's docstring. `False` (default) is byte-for-byte today's
-    behaviour; `True` only actually changes anything on a machine with a
-    visible CUDA device (transparent CPU fallback otherwise). Callers
-    pass `cfg['GPU_ENABLED']` down this same chain that carries
-    `mp_start_method` (main() -> build_network() ->
-    build_nested_mde_network() -> here), not a separate flag of its own.
+    `use_gpu`: passed straight through to `proper_mde`. False (the default)
+    behaves exactly as before the GPU path existed; True changes anything only
+    on a machine with a visible CUDA device, and falls back to the CPU
+    transparently otherwise. It arrives via cfg['GPU_ENABLED'], down the same
+    chain that carries `mp_start_method` (main -> build_network -> the builder
+    -> here) rather than a flag of its own.
 
-    `ccm_lib_sizes_rows` (window-sizing fix, docs/review-findings.md):
-    explicit, absolute row counts for the CCM gate's own convergence-curve
+    `ccm_lib_sizes_rows`: explicit, absolute row counts for the CCM gate's own convergence-curve
     library sweep, passed to `proper_mde` as `libSizes` (bypassing its own
     `pLibSizes`-as-percentage-of-window computation entirely). Deliberately
     NOT a percentage of this node's own (now node-specific, potentially
-    much larger) ranking window: R9's own empirical calibration
-    (docs/review-findings.md) found the "rising, then plateauing"
-    convergence shape is a property of the *absolute* library size, not
-    its ratio to the surrounding frame -- confirmed by re-running that same
-    calibration at both an 800-row frame (R9's own original scale) and an
-    8000-row frame (a realistic neuron-target scale under this fix): the
-    same absolute values showed the same qualitative shape at both scales.
-    See load_config()'s own CCM_LIB_SIZES_ROWS docstring for the exact
-    calibrated default and the reasoning behind extending R9/R17's own
-    6-value grid with one more point.'''
+    much larger) ranking window. The CCM convergence curve's characteristic
+    "rising, then plateauing" shape turns out to be a property of the ABSOLUTE
+    library size, not of its ratio to the surrounding frame: calibrating at an
+    800-row frame and at an 8000-row frame gave the same qualitative shape for
+    the same absolute values. See config.py's CCM_LIB_SIZES_ROWS entry for the
+    calibrated default.'''
     # Fallback only -- every real call site (main()'s depth-0 seed, and
     # both of build_nested_mde_network()'s per-wave passes) passes this
     # explicitly as the raw TSLS_MDE_GMN_MDE_D value. Falls back to mde_d
@@ -231,10 +209,9 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     usable_df = mde_df.iloc[warmup:usable_end].reset_index(drop=True)
     lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
 
-    # Window-sizing fix (docs/review-findings.md) -- resolved BEFORE the
-    # cache fingerprint below, since both the resolved window size and (for
-    # a neuron target) pred_event_count are real, data-dependent inputs to
-    # this call's own outcome and must be part of it (A5).
+    # Resolved BEFORE the cache fingerprint below: both the window size and
+    # (for a neuron target) pred_event_count are real, data-dependent inputs to
+    # this call's outcome, so they have to be part of its cache key.
     window_rows, pred_event_count = _resolve_target_ranking_window(
         target, df, usable_df, lib_ratio,
         is_behavioral_target, target_ranking_window_rows, min_pred_events, max_window_rows,
@@ -302,7 +279,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
         ThreadPoolExecutor(max_workers=inner_workers) if inner_workers > 1
         else nullcontext()
     )
-    # R21 (docs/review-actions-v1.md): column_delay lookup for proper_mde's
+    # column_delay lookup for proper_mde's
     # own dynamic per-dimension exclusion radius -- only meaningful when
     # `observable_columns` can contain delay-suffixed synthetic names
     # (build_nested_mde_network()'s Stage 1/Stage 2 candidate pools; see
@@ -314,8 +291,8 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
         {c: observable_and_delay(c, raw_columns)[1] for c in observable_columns}
         if raw_columns is not None else None
     )
-    # Diagnostic only (found while investigating a real, very slow Stage 2
-    # call, docs/review-findings.md) -- same raw_columns-gated pattern as
+    # Diagnostic only, added while investigating a very slow Stage 2 call --
+    # same raw_columns-gated pattern as
     # column_delay above, just the observable half of observable_and_delay()'s
     # own return value instead of the delay half. Lets proper_mde's own
     # verbose log show how many *distinct* real observables a long run has
@@ -426,8 +403,7 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
     usable_df = mde_df.iloc[warmup:usable_end].reset_index(drop=True)
     lib_ratio = (prediction_start - warmup) / max(1, usable_end - warmup)
 
-    # Window-sizing fix (docs/review-findings.md): every target here is
-    # always behavioral (GMN_MODE='combined''s depth-0 seed only, per this
+    # Every target here is always behavioural (GMN_MODE='combined''s depth-0 seed only, per this
     # function's own docstring) -- no per-node event-count extension, just
     # the same fixed constant _resolve_target_ranking_window() uses for a
     # single behavioral target, applied once for the whole joint call.
@@ -571,8 +547,7 @@ def plot_3d_mde_projection(target, second_target, mde_results, df, raw_columns,
 
 def _failed_mde_result(target):
     '''Fallback run_mde_for_target()-shaped result for a node/target whose
-    MDE call raised, instead of returning normally -- ported unchanged from
-    simple-mde-gmn.py (job 37946756: dimx's own internal EmbedDimension hit
+    MDE call raised, instead of returning normally (job 37946756: dimx's own internal EmbedDimension hit
     an all-NaN rho column; proper_mde has its own analogous internal
     failure modes against degenerate candidate data, not something this
     pipeline's own gates catch or control). Shaped to be indistinguishable,
@@ -636,13 +611,14 @@ def ccm_prefilter_observables(df, candidate_columns, targets, prediction_start,
                                rho_min, e, tp, metric, target_metric, gamma_delta,
                                exclusion_radius, ccm_window_rows, ccm_sample,
                                libsize_ratios, cores):
-    '''TSLS-flavored counterpart of simple-mde-gmn.py's own
-    ccm_prefilter_observables() -- see that function's docstring for the
-    full rationale (identical here: cheap CCM(observable -> target)
-    pre-filter, run once per target_groups_for_mode() group right before
-    either nested-MDE stage, covering both Stage 1's real observables and
-    Stage 2's lags in one pass since Stage 2 draws from this same filtered
-    list).
+    '''Drop candidates that cannot be causal, before selection starts.
+
+    A cheap CCM(observable -> target) screen, run once per target group rather
+    than once per node, right before either nested-MDE stage. It covers Stage 1
+    and Stage 2 in one pass, because Stage 2's lagged candidates are drawn from
+    this same filtered list of observables. Anything that fails the screen
+    cannot be driving the target, so paying for it in every later forward
+    selection is wasted.
 
     Every CCM-call parameter here is either reused from an existing config
     value used elsewhere in this pipeline (Tp, metric/target_metric/
@@ -652,10 +628,9 @@ def ccm_prefilter_observables(df, candidate_columns, targets, prediction_start,
     no longer passed -- proper_mde's own default (-1) applies",
     run_mde_for_target()'s own docstring) or is its own new, deliberately
     pipeline-specific parameter (`e`, from CCM_PREFILTER_E -- NOT a reuse of
-    MULTI_MDE_E: this pipeline's 40 Hz-sampled data needs a genuinely
-    different static E than simple-mde-gmn.py's 1 Hz data for a comparable
-    real-time embedding window at the same tau=-1 -- see
-    load_config()'s own CCM_PREFILTER_E docstring for the full reasoning).
+    MULTI_MDE_E, because 40 Hz data needs a different static E from 1 Hz data
+    to cover a comparable span of real time at the same tau=-1 -- see config.py's
+    CCM_PREFILTER_E entry).
 
     `windowed` mirrors build_interaction_matrix()'s own windowing exactly:
     `df.iloc[:prediction_start]` (the same leakage-safe MDE library slice
@@ -678,7 +653,7 @@ def ccm_prefilter_observables(df, candidate_columns, targets, prediction_start,
     in original order; `scores` is {candidate: mean_rho} for every
     candidate considered (including dropped ones), for diagnostics.
 
-    R2 (docs/review-actions-v1.md): audited main()'s call site and traced
+    audited main()'s call site and traced
     every column this function ever sees back to convert_to_tsls()'s own
     `f'{n}_tsls'` construction -- real channel names, never containing
     DELAY_MARKER, and expand_delay_columns() (the only place a

@@ -105,10 +105,10 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
     tsls_df_full, obs_cols = convert_to_tsls(df_raw, neuron_columns, cfg['TARGETS'], cfg['RESULTS_DIR'])
     df = burn_in_trim(tsls_df_full, obs_cols, cfg['RESULTS_DIR'])
 
-    # Three-way A/B/end split -- see load_config()'s docstring for the full
-    # rationale (identical to simple-mde-gmn.py, ported here), computed
-    # against the TSLS-converted, burn-in-trimmed row count (len(df)), not
-    # the raw file's row count.
+    # Three-way A/B/end split -- see config.py's LIB_RATIO entry. Computed
+    # against the TSLS-converted, burn-in-trimmed row count (len(df)), not the
+    # raw file's row count, because the trim is what decides how much data is
+    # actually usable.
     cfg['PREDICTION_START'] = int(round(len(df) * cfg['LIB_RATIO']))                          # A
     post_lib_remainder = len(df) - cfg['PREDICTION_START']
     cfg['PREDICTION_LENGTH'] = int(round(post_lib_remainder * cfg['MDE_VALIDATION_RATIO']))   # B - A
@@ -137,15 +137,13 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
         cfg['GENERATE_LENGTH'], cfg['PREDICTION_START'],
     )
 
-    # VERIFY (see this pipeline's own design-decision record for why this
-    # guard exists here and not in simple-mde-gmn.py): Stage 2's lag-
-    # embedding depth must fit within PREDICTION_START (A), the MDE library
-    # segment -- an implicit assumption in simple-mde-gmn.py too, but
-    # TSLS's own PREDICTION_START is data-driven (burn_in_trim() shrinks
-    # the usable row count depending on which channel fires slowest, unlike
-    # simple-mde-gmn.py's fixed-length 1 Hz input), so this fails fast with
-    # a clear message instead of a confusing downstream all-NaN/shape
-    # error deep inside proper_mde or gmn's own SMap calls.
+    # Stage 2's lag-embedding depth has to fit inside PREDICTION_START (A),
+    # the MDE library segment -- otherwise every lagged candidate column is
+    # all-NaN across the whole library. Checked here because PREDICTION_START
+    # is data-driven: burn_in_trim() shrinks the usable row count by however
+    # long the slowest channel takes to fire. Failing here gives a clear
+    # message instead of a confusing all-NaN or shape error deep inside
+    # proper_mde or gmn's SMap calls.
     max_lag_depth = max((abs(d) for d in cfg['LAG_SET']), default=0)
     if max_lag_depth >= cfg['PREDICTION_START']:
         raise ValueError(
@@ -154,8 +152,7 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
             f"({cfg['PREDICTION_START']} rows, the MDE library segment) -- every "
             f"lagged candidate column would be all-NaN across the entire library. "
             f"This is data-driven for TSLS (burn-in trim shrinks the usable row "
-            f"count depending on which channel fires slowest), unlike "
-            f"simple-mde-gmn.py's fixed-length input. Narrow "
+            f"count depending on which channel fires slowest). Narrow "
             f"TSLS_MDE_GMN_LAG_MODE/LAG_STEP, shrink TSLS_MDE_GMN_GENERATE_LENGTH, "
             f"or raise TSLS_MDE_GMN_LIB_RATIO to fix."
         )
@@ -431,39 +428,40 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
 
     # ---- MDE-only diagnostics -------------------------------------------
     if cfg['MODE'] == 'MDE-GMN' and cfg['RUN_MDE_DIAGNOSTICS']:
-        _log_progress(progress_log_path, 'R7 diagnostics START (tp-vs-rho sweep, E/tau grid)')
-        r7_start = time.perf_counter()
+        _log_progress(progress_log_path,
+                      'diagnostics START (tp-vs-rho sweep, E/tau grid)')
+        diagnostics_start = time.perf_counter()
         run_tp_vs_rho_sweep(mde_results, cfg['TARGETS'], cfg['MAX_TP'], cfg['TARGET_COLORS'],
                              cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'])
         run_univariate_e_tau_grid(mde_results, cfg['TARGETS'], cfg['E_RANGE'], cfg['TAU_RANGE'],
                                    cfg['GRID_RHO_THRESHOLD'], cfg['RESULTS_DIR'],
                                    cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'])
-        _log_progress(progress_log_path,
-                      f'R7 diagnostics END -- {time.perf_counter() - r7_start:.1f}s')
-        # R19 (docs/review-actions-v1.md): per constructed network -- needs
-        # net_result['network']['Graph'] for D (direct-driver count), which
-        # mde_results (depth-0-only) doesn't carry. Gated on its own
-        # RUN_MDE_EVALUATE, deliberately separate from RUN_MDE_DIAGNOSTICS
-        # above (see that config's own docstring) -- R7's two diagnostics
-        # just above are unaffected and always run when RUN_MDE_DIAGNOSTICS
-        # is set, regardless of this toggle.
+        _log_progress(
+            progress_log_path,
+            f'diagnostics END -- {time.perf_counter() - diagnostics_start:.1f}s')
+        # The MDE-vs-baselines comparison runs per constructed network, because
+        # it needs net_result['network']['Graph'] for D (the target's
+        # direct-driver count) and mde_results only covers depth 0. It has its
+        # own toggle, separate from RUN_MDE_DIAGNOSTICS above, because its
+        # baselines can hang (see diagnostics.py) -- the two sweeps above are
+        # unaffected by it either way.
         if cfg['RUN_MDE_EVALUATE']:
             for network_id, run in gmn_runs.items():
-                r19_start = time.perf_counter()
-                _log_progress(progress_log_path, f'{network_id}: R19 run_mde_evaluate START')
+                evaluate_start = time.perf_counter()
+                _log_progress(progress_log_path, f'{network_id}: run_mde_evaluate START')
                 run_mde_evaluate(run['net_result'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
                                   cfg['RESULTS_DIR'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
                                   exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
                 _log_progress(progress_log_path,
-                              f'{network_id}: R19 run_mde_evaluate END -- '
-                              f'{time.perf_counter() - r19_start:.1f}s')
+                              f'{network_id}: run_mde_evaluate END -- '
+                              f'{time.perf_counter() - evaluate_start:.1f}s')
         else:
-            # Logged once per run, unconditionally -- a skipped diagnostic
-            # that never appears anywhere is exactly how §18.6's swallowed
-            # exception went unnoticed for so long (docs/review-findings.md).
-            msg = ("R19 run_mde_evaluate SKIPPED by configuration "
-                   "(RUN_MDE_EVALUATE=false) -- see docs/review-findings.md's "
-                   "'diffusion-map crash and hang' finding for why this defaults off")
+            # Logged once per run, unconditionally. A diagnostic that is
+            # skipped silently is how a swallowed exception went unnoticed here
+            # for weeks; a skip has to be visible in the log.
+            msg = ("run_mde_evaluate SKIPPED by configuration "
+                   "(RUN_MDE_EVALUATE=false) -- it defaults off because its "
+                   "diffusion-map baseline can hang; see diagnostics.py")
             print(msg, flush=True)
             _log_progress(progress_log_path, msg)
     else:

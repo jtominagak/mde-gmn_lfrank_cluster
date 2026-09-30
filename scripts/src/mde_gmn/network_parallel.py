@@ -232,7 +232,8 @@ def precompute_all_mde(tasks, stage_specs, common, cores, mp_start_method,
 
     Worker sizing follows the parent pipeline's own convention exactly --
     outer_workers = min(task count, cores), inner_workers = cores //
-    outer_workers, product logged for the R5 invariant check. Because this
+    outer_workers, and the product is logged so the "never oversubscribe the
+    cores we were given" invariant can be checked from the log. Because this
     phase's task count is the whole node universe rather than one BFS
     wave, outer_workers is normally pinned at `cores` and inner_workers at
     1: the parallelism has moved from inside each node (the inner
@@ -414,9 +415,8 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     over `wave_nodes`, same _accept_mde_result_edges() call sequence, same
     dict-of-mins shallowest-depth rule, same shared nested_m budget
     arithmetic (`nested_m == 0 or depth < nested_m`, depth = the
-    discovering node's OWN depth), same R15 termination counters, same
-    joint `node_depth` across both phases. That is load-bearing, not
-    laziness: _accept_mde_result_edges()'s cycle guard rejects an edge
+    discovering node's OWN depth), same termination counters, same joint
+    `node_depth` across both phases. That is load-bearing, not laziness: _accept_mde_result_edges()'s cycle guard rejects an edge
     against the graph AS BUILT SO FAR, so if node C selects F and node F
     selects C, which edge survives depends on which node the loop reaches
     first. Copying the loop preserves that tie-break by construction. The
@@ -431,25 +431,20 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     cap) and the unreachable case (an observable nothing ever selects)
     are handled by the identical BFS code that handled them in the parent.
 
-    Stage 2's own recursion is preserved exactly as R12 left it: a delay=0
-    real-observable driver Stage 2 selects is enqueued for a further STAGE 2
-    round, never a Stage 1 round.
+    STAGE ORDER, AND WHY test_r12_stage_serialization.py IS NOT POINTED HERE.
+    The serial pipeline guarantees Stage 1 finishes before Stage 2 begins. That
+    still holds: the Stage 1 replay completes before the Stage 2 replay starts,
+    so no Stage 2 node can be reached before Stage 1 finished discovering it.
 
-    R12 NOTE, read this before pointing tests/test_r12_stage_serialization.py
-    at this file: R12 restored the sequencing "Stage 1 complete, THEN Stage
-    2", and that property still holds here for the thing R12 was actually
-    about -- the BFS. Phase 1's BFS finishes entirely before Phase 2's
-    begins, so no Stage 2 wave can ever see a node Stage 1 had not yet
-    finished discovering. What scope='union' does NOT preserve is the
-    ordering of the MDE CALLS themselves: Stage 1 and Stage 2 calls
-    interleave freely in the one pool. That ordering was a CONSEQUENCE of
-    the per-wave barriers, not an input to the algorithm -- a Stage 2 call
-    for a node cannot observe anything a Stage 1 call produced, since
-    neither reads the graph. R12's test asserts the call ordering (it is a
-    proxy for the sequencing, and an exact one in the parent), so it fails
-    here by construction and correctly so; scope='staged' does preserve it.
-    tests/test_parallel_mde_equivalence.py asserts the property that
-    actually matters instead: the same network, edges in the same order.
+    What scope='union' does not preserve is the order of the MDE CALLS. They
+    all go into one pool and interleave freely. That order was a CONSEQUENCE of
+    the serial pipeline's per-wave barriers, never an input to the algorithm: no
+    MDE call reads the graph, so a Stage 2 call cannot observe anything a Stage
+    1 call produced. test_r12_stage_serialization.py asserts the call order as a
+    proxy for the stage order -- exact in the serial pipeline, so it stays
+    pointed there. tests/test_parallel_mde_equivalence.py asserts the property
+    that actually matters here instead: the same network, edges in the same
+    order. scope='staged' does preserve the call order as well.
 
     `parallel_mde_scope`:
       'union'  (default) -- one pool, both stages, whole universe. Exactly
@@ -665,7 +660,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
 
     edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
 
-    # R13: nested_m is a whole-network depth budget shared by both stages
+    # nested_m is a whole-network depth budget shared by both stages
     # (node_depth is one dict populated by whichever stage discovers a node
     # first, checked against the same nested_m in both phases' own recursion
     # above) -- realized_max_depth reports how deep that joint budget

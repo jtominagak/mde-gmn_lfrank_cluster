@@ -49,20 +49,16 @@ from sklearn.linear_model import LinearRegression
 
 def run_tp_vs_rho_sweep(mde_results, targets, max_tp, target_colors, results_dir,
                          target_metric, gamma_delta):
-    '''Both TARGETS' own self-predictability -- always target_metric
-    (continuous), never metric (see load_config()'s TARGET_METRIC
-    docstring). Reads r['m'].args.lib/pred/tau -- the 'm' namespace shape
-    every run_mde_for_target() result carries (see that function's own
-    docstring).
+    '''How far ahead can each behavioural target predict itself?
 
-    R7 (docs/review-actions-v1.md): previously called fig.savefig()
-    unconditionally, even when every target hit the `if not cols`
-    skip below (all zero-driver, or all _failed_mde_result()'s own
-    mde_df=None case, which also carries SELECTED_COLUMNS=[] -- see
-    _failed_mde_result()'s own docstring) -- an empty axes with no data
-    and a legend with nothing to show, written to disk as if it were a
-    real result. Now skips the write entirely in that case (figure is
-    still closed either way, so no resource leak).'''
+    Always scored with target_metric, never `metric`: TARGETS are continuous
+    (see config.py's TARGET_METRIC entry). Reads r['m'].args.lib/pred/tau, the
+    namespace shape every run_mde_for_target() result carries.
+
+    If every target hits the `if not cols` skip below -- all zero-driver, or all
+    failed -- no figure is written at all. Writing one anyway produced an empty
+    axes with an empty legend, saved to disk looking like a real result. The
+    figure is closed either way, so nothing leaks.'''
     fig, ax = plt.subplots(figsize=(8, 5))
     annotation_lines = []
     for target in targets:
@@ -98,21 +94,19 @@ def run_tp_vs_rho_sweep(mde_results, targets, max_tp, target_colors, results_dir
 
 def run_univariate_e_tau_grid(mde_results, targets, e_range, tau_range, rho_threshold, results_dir,
                                target_metric, gamma_delta):
-    '''R7 (docs/review-actions-v1.md): unlike run_tp_vs_rho_sweep() above,
-    this is a UNIVARIATE self-predictability grid (columns=target,
-    target=target) -- it needs no MDE-selected drivers at all, so it
-    deliberately does NOT skip on SELECTED_COLUMNS being empty (a
-    legitimate zero-driver target, e.g. Run A's own head_position_y, still
-    gets a real, informative grid here). It DOES need `mde_df` to be a
-    real DataFrame, though: a target whose depth-0 MDE call itself raised
-    (not "selected zero drivers", a different case -- see
-    _failed_mde_result()'s own docstring) gets mde_df=None, which would
-    otherwise crash proper_simplex() below outright, and take down every
-    remaining target's own (unrelated, otherwise-computable) figure with
-    it, since the exception would propagate out of this whole function.
-    Guarded per-target instead, matching this codebase's own established
-    "one degenerate item dead-ends cleanly, it doesn't crash the batch"
-    convention (_failed_mde_result()'s own docstring).'''
+    '''How well does each target predict itself from its OWN history alone?
+
+    A univariate grid over E and tau (columns=target, target=target). Unlike
+    run_tp_vs_rho_sweep() above it needs no MDE-selected drivers, so it does NOT
+    skip a target with an empty SELECTED_COLUMNS -- a genuinely zero-driver
+    target still gets a real, informative grid.
+
+    It does need `mde_df` to be a real DataFrame. A target whose MDE call RAISED
+    (a different case from "selected nothing" -- see _failed_mde_result()) has
+    mde_df=None, which would crash proper_simplex() and, because the exception
+    would propagate out of this function, take every remaining target's figure
+    down with it. Guarded per target instead, following this codebase's rule
+    that one degenerate item dead-ends cleanly rather than failing the batch.'''
     e_vals, tau_vals = list(e_range), list(tau_range)
 
     for target in targets:
@@ -154,11 +148,9 @@ def run_univariate_e_tau_grid(mde_results, targets, e_range, tau_range, rho_thre
         plt.close(fig)
 
 def _cae(x, y):
-    '''Cumulative absolute error -- recovered verbatim from dimx.Evaluate's
-    own CAE() (.venv/.../dimx/Evaluate.py:503-506: `sum(abs(x - y))`), per
-    R19 (docs/review-actions-v1.md)'s explicit instruction to read the
-    source and replicate the exact definition rather than reimplementing
-    from the name. Unnormalized -- not a mean, not a fraction -- and, for
+    '''Cumulative absolute error, defined exactly as dimx.Evaluate's own CAE()
+    defines it (dimx/Evaluate.py: `sum(abs(x - y))`), so the numbers here are
+    comparable with that tool's. Unnormalized -- not a mean, not a fraction -- and, for
     a 2-column (x, y) array (GMN_MODE='combined'), sums the absolute error
     over BOTH columns at once (numpy's own `abs`/`sum` broadcast this way
     with no axis given), which is the natural generalization used for the
@@ -221,10 +213,9 @@ def _dmap_baseline_worker(queue, pool_lib, pool_pred, target_lib, D, dmap_k, dma
 def _run_baseline_with_timeout(worker_fn, args, timeout_seconds=MDE_EVALUATE_BASELINE_TIMEOUT_SECONDS):
     '''Runs worker_fn(queue, *args) in a genuinely separate process,
     force-killed if it exceeds timeout_seconds -- the wall-clock bound
-    run_mde_evaluate()'s own PCA/diffusion-map guards need underneath
-    their existing exception handling (docs/review-findings.md's
-    "diffusion-map crash and hang" finding: a try/except plus a
-    signal-based "soft" timeout is not enough here, since pydiffmap's own
+    run_mde_evaluate()'s PCA/diffusion-map guards need underneath their
+    exception handling. A try/except plus a signal-based "soft" timeout is not
+    enough, because pydiffmap's own
     KD-tree/BLAS calls can run for a long time without ever returning
     control to the Python interpreter -- a signal fires but its handler
     can't actually run until the call returns on its own, which is
@@ -268,52 +259,42 @@ def run_mde_evaluate(net_result, prediction_start, prediction_length, results_di
                       target_metric, gamma_delta, exclusion_radius=0,
                       dmap_k=15, dmap_epsilon='bgh_generous', max_traces_shown=7,
                       figsize=(8, 8)):
-    '''R19 (docs/review-actions-v1.md): TSLS-side counterpart of
-    simple-mde-gmn.py's dx.Evaluate()-based run_mde_evaluate() -- see the
-    NOTE above this function for why this pipeline had no such comparison
-    until now. Reimplements dx.Evaluate's own MDE-vs-PCA-vs-diffusion-map
-    comparison directly against proper_simplex (MDE) and sklearn.PCA /
-    pydiffmap.diffusion_map (the same two libraries dx.Evaluate itself
-    wraps, confirmed by reading dimx/Evaluate.py in full) rather than
-    reusing dx.Evaluate, which has no _metric_for()/_score() awareness and
-    depends on a dimx.MDE result object this pipeline no longer
-    constructs.
+    '''Is MDE's driver selection better than generic dimensionality reduction?
+
+    Compares three ways of reconstructing the target from the same pool of
+    candidates: MDE's chosen drivers (proper_simplex), the first D principal
+    components (sklearn.PCA), and the first D diffusion-map coordinates
+    (pydiffmap). Same comparison dimx.Evaluate makes, against the same two
+    libraries, but built directly here: dimx.Evaluate has no awareness of this
+    pipeline's TSLS metrics and needs a result object this pipeline does not
+    construct.
 
     D = the number of *direct* drivers of the target in the COMPLETE
     nested-MDE network (both stages) -- graph.predecessors(target), read
     from net_result['network']['Graph'] (built by build_network() /
     build_nested_mde_network()), NOT a depth-0-only SELECTED_COLUMNS list.
     PCA and diffusion-map each fit their first D components on the same
-    pool, so all three methods compare at equal dimensionality (R19's own
-    requirement). That pool is every non-target column in
+    pool, so all three methods are compared at equal dimensionality -- without
+    that, MDE could look better simply by using more coordinates. That pool is
+    every non-target column in
     net_result['DATA_AFTER_MDE'] -- i.e. every observable nested-MDE kept
     anywhere in the whole network (a superset of the target's own direct
     drivers whenever Stage 2 chains through an intermediate node), the
-    TSLS-side analog of dx.Evaluate's own FilterData()-selected column
-    subset (confirmed: simple-mde-gmn.py's own run_mde_evaluate() passes
-    `columns_range=[1, mde_df.shape[1]]` against `mde_df = df[[target] +
-    observable_columns]` -- i.e. every candidate column except the target
-    itself, never the full pre-CCM-prefilter universe, which isn't
-    serialized anywhere after build_network() returns).
+    analog of dx.Evaluate's FilterData()-selected column subset: every
+    candidate column except the target itself, never the full pre-pre-filter
+    universe, which is not serialized anywhere after build_network() returns.
 
     net_result['targets'] has one entry (GMN_MODE='separate') -> a
     standard single-target figure, panel 1 an actual-vs-predicted time
-    series, matching docs/reference/mde-evaluate-reference-plot.png's
-    layout exactly. Two entries (GMN_MODE='combined') -> ONE joint figure
-    for the pair: panel 1 is a spatial (x, y) trajectory instead (explicit
-    user direction -- R19's own "ask before implementing" gate: "the
-    instruction reads as [a spatial plot]" -- confirmed against the
-    reference plot's own single-target case, which does not settle it).
-    D for this joint figure is the union of each target's own
-    direct-driver set (this pipeline's own reading, documented here since
-    R19's text only defines D for a single target -- "how many distinct
-    driver nodes feed the target(s) this figure is about," the natural
-    generalization once there is more than one target to be a direct
-    driver of). PCA/diffusion-map's own linear-regression step predicts
-    both target columns at once (sklearn's LinearRegression natively
-    supports a 2-column y) -- R19's own "PCA and diffusion-map extract
-    components of the multivariate target" -- rather than two independent
-    single-target Evaluate runs; MDE still reconstructs each target
+    series, matching docs/reference/mde-evaluate-reference-plot.png. Two
+    entries (GMN_MODE='combined') -> ONE joint figure for the pair, whose first
+    panel is a spatial (x, y) trajectory instead.
+
+    D for that joint figure is the UNION of each target's direct-driver set:
+    "how many distinct driver nodes feed the targets this figure is about".
+    PCA and the diffusion map predict both target columns at once in their
+    regression step (sklearn's LinearRegression takes a 2-column y), rather than
+    running two independent single-target comparisons; MDE still reconstructs each target
     separately (proper_simplex predicts one column at a time) and the two
     reconstructions are combined into one (x, y) trajectory for the
     spatial panel, since there is no multivariate Simplex call to make
@@ -328,11 +309,10 @@ def run_mde_evaluate(net_result, prediction_start, prediction_length, results_di
 
     Every target in net_result['targets'] is guaranteed to have D >= 1 by
     the time this runs: build_network() already calls partition_network()
-    on this same graph, which raises if any target has zero drivers (R14)
+    on this same graph, which raises if any target has zero drivers
     -- so there is no zero-driver-target case to guard here.
 
-    Scoring (R19's own "scoring routes through _metric_for" acceptance
-    criterion): TARGETS are always continuous, so _metric_for() always
+    Scoring: TARGETS are always continuous, so _metric_for() always
     resolves to target_metric here regardless of which node is being
     scored -- reported per method via tsls._score(), alongside CAE (which
     stays the reference figure's own display convention, not replaced by

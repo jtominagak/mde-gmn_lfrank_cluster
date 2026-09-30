@@ -109,9 +109,8 @@ def build_interaction_matrix(data_lib, nodes, targets, ccm_E, ccm_tau, metric, t
                               ccm_slope):
     '''NxN interaction matrix via cleaned_helper_functions.proper_ccm,
     replacing apps.InteractionMatrix's CLI subprocess -- MODE='GMN' only.
-    No multiprocessing-pool-nesting concern at all here (unlike
-    simple-mde-gmn.py's own MODE='GMN' branch): proper_ccm has no pool of
-    its own to nest inside an outer one.
+    Safe to call from inside a worker pool: proper_ccm has no pool of its own,
+    so there is no nested-pool deadlock to avoid here.
 
     Per-pair metric selection via _metric_for(): `nodes` mixes TSLS-
     converted neuron columns with the (continuous, non-TSLS) TARGETS
@@ -191,15 +190,12 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
     signature so that a builder-specific option never has to be threaded
     through code that does not use it.
 
-    The two constructions, same mode-branch restructuring as
-    simple-mde-gmn.py's own build_network():
-      - mode == 'MDE-GMN': two-stage nested-MDE, both stages unified into
-        build_nested_mde_network()'s own BFS, no apps.CreateNetwork() call
-        -- see simple-mde-gmn.py's own build_network() docstring for the
-        full rationale (identical here). `observable_columns` is already
-        the CCM-pre-filtered pool -- main() runs the pre-filter once per
-        target_groups_for_mode() group before this function is ever
-        called, so this function no longer runs it itself.
+    The two constructions:
+      - mode == 'MDE-GMN': two-stage nested-MDE, both stages inside the
+        builder's own breadth-first walk, no apps.CreateNetwork() call at all
+        -- the graph the builder returns IS the network handed to GMN.
+        `observable_columns` arrives already CCM-pre-filtered: main() runs the
+        pre-filter once per target group, before this function is called.
         observable_columns/nested_n/nested_m/embed_dim_rho_min/
         cross_map_rho_min/lag_set are required in this mode.
       - mode == 'GMN': the interaction matrix via
@@ -249,15 +245,11 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
             # `observable_columns` is already the CCM-pre-filtered pool --
             # main() runs ccm_prefilter_observables() once per
             # target_groups_for_mode() group before this function is ever
-            # called, so depth-0 itself only ever searches already-
-            # filtered observables too (see main()'s own depth-0
-            # docstring for why the pre-filter had to move there rather
-            # than staying here). Both stages, fully serial (Stage 1 runs
-            # to completion, then Stage 2), in one call -- see
-            # build_nested_mde_network()'s own docstring (revised
-            # 2026-08-27, R12: Stage 2's own real-observable selections
-            # still recurse exactly like Stage 1's, just after Stage 1
-            # completes rather than interleaved with it wave-by-wave).
+            # called, so depth-0 searches the same already-filtered pool
+            # every other node does. One call builds both stages: Stage 1
+            # (real observables, recursive) runs to completion, then Stage 2
+            # (lagged leaves, one pass, no recursion). See the builder's own
+            # docstring.
             graph, _, _ = (network_builder or build_nested_mde_network)(
                 targets, df, observable_columns, observable_columns,
                 prediction_start, prediction_length,

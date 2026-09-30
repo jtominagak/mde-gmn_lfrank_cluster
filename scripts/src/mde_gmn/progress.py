@@ -26,10 +26,9 @@ def _log_progress(log_path, message):
     load_config()'s own PROGRESS_LOG_PATH -- flash, not bucket, so it's
     readable while a job is still running, and survives independently of
     the bucket-archival step). Every write is flushed and fsynced
-    immediately -- this is a diagnostic log for a pipeline with a real
-    history of runs that never finish (see JOB_LOG.md), so a line must
-    survive a crash/OOM/timeout the instant after it's written, not just
-    on a clean close. `log_path=None` is a silent no-op (callers that
+    immediately. Jobs here do sometimes fail to finish at all, so a line has
+    to survive a crash, an out-of-memory kill or a timeout the instant after it
+    is written, not just on a clean close. `log_path=None` is a silent no-op (callers that
     don't have one, e.g. tests, never need to guard every call site with
     an `if`).
 

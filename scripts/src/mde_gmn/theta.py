@@ -53,11 +53,12 @@ from mde_gmn.tsls_data import _metric_for
 def proper_predict_nonlinear(dataFrame, columns, target, theta, lib, pred,
                               E=1, Tp=1, knn=0, tau=-1, exclusionRadius=0,
                               embedded=False, metric='correlation', gamma_delta=2):
-    '''R20 (docs/review-actions-v1.md): TSLS-aware replacement for
-    pyEDM.PredictNonlinear's own theta-selection sweep -- NOT a new S-map
-    engine. R10 found no native S-map in cleaned_helper_functions.py, but
-    reading pyEDM's own source (pyEDM/API.py's PredictNonlinear;
-    pyEDM/PoolFunc.py's PredictNLSMapFunc worker) shows PredictNonlinear
+    '''Sweep theta for one node and score each value with a TSLS-aware metric.
+
+    A replacement for pyEDM.PredictNonlinear's theta sweep, NOT a new S-map
+    engine -- the S-map itself is still pyEDM's. Reading pyEDM's source
+    (API.py's PredictNonlinear; PoolFunc.py's PredictNLSMapFunc worker) shows
+    PredictNonlinear
     already does nothing more than call pyEDM.SMap(...) once per
     candidate theta and score it via `ComputeError(obs, pred)['rho']` --
     the SAME compiled S-map gmn's own Forecast()/Generate() already calls
@@ -66,8 +67,8 @@ def proper_predict_nonlinear(dataFrame, columns, target, theta, lib, pred,
     sweep chose it). `ComputeError`'s own `rho = corrcoef(obs, pred)[0,1]`
     is the identical formula `cleaned_helper_functions._score(kind=
     'correlation')` uses, so this function reproduces PredictNonlinear's
-    own selection exactly at metric='correlation' (see
-    tests/test_r20_predict_nonlinear.py's own equivalence check) while
+    selection exactly at metric='correlation' -- asserted by
+    tests/test_r20_predict_nonlinear.py -- while
     also supporting 'f1'/'gamma'/'mae' for non-target (neuron) nodes,
     which PredictNonlinear itself can never score.
 
@@ -103,13 +104,11 @@ def proper_predict_nonlinear(dataFrame, columns, target, theta, lib, pred,
 def retune_theta_for_all_nodes(data_lib, graph, nodes, targets, theta_range, cores,
                                 metric, target_metric, gamma_delta, min_pred_rows=20,
                                 progress_log_path=None):
-    '''Finds each node's own best theta via proper_predict_nonlinear() (R20,
-    docs/review-actions-v1.md) on a 70/30 lib/pred split of that node's own
-    generalized embedding. Previously scored via pyEDM.PredictNonlinear's
-    own internal Pearson rho regardless of METRIC -- the one stage in this
-    pipeline that didn't route through _metric_for() (confirmed against
-    source before this change, per A1). Now scores each node via
-    _metric_for(node, targets, metric, target_metric) -- 'f1' for neuron
+    '''Finds each node's best theta via proper_predict_nonlinear(), on a 70/30
+    train/test split of that node's own embedding.
+
+    Scores each node with _metric_for(node, targets, metric, target_metric) --
+    'f1' for neuron
     nodes, 'correlation' (target_metric) for TARGETS, matching every
     other scoring call site in this file. `cores` is no longer used here
     (proper_predict_nonlinear() is deliberately sequential -- see its own
@@ -170,11 +169,9 @@ def evaluate_smap_candidate(net_result, prediction_start, prediction_length,
                              generate_validation_start=None):
     '''Runs one Generate() call and scores it as mean rho, across
     `net_result['targets']` only, between the simulated and real held-out
-    series -- ported from simple-mde-gmn.py, scored via
-    tsls._score(metric=target_metric) instead of pyEDM's plain
-    ComputeError rho (TARGETS are continuous, so target_metric is always
-    'correlation' by default -- see load_config()'s TARGET_METRIC
-    docstring). This is "generative skill" as this pipeline defines it
+    series. Scored with tsls._score(metric=target_metric) rather than pyEDM's
+    plain ComputeError rho; TARGETS are continuous, so target_metric defaults to
+    'correlation' (see config.py's TARGET_METRIC entry). This is "generative skill" as this pipeline defines it
     everywhere -- run_theta_search() and sweep_generate_start() both call
     this same function, at the same objective, so a search over either axis
     is comparable to the other.
@@ -212,8 +209,8 @@ def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range,
                       run_cache_dir=None, fingerprints=None, exclusion_radius=0,
                       generate_validation_start=None, progress_log_path=None):
     '''Retunes each network's per-node theta once, then scores the result
-    with a single Generate() call -- ported from simple-mde-gmn.py. E and
-    each driver's delay are no longer search parameters at all: for
+    with a single Generate() call. E and each driver's delay are not search
+    parameters at all: for
     MODE='MDE-GMN' they come directly from nested-MDE's own discovered
     network; for MODE='GMN' they still come from that mode's own CCM E/tau
     grid search (fallback_E/fallback_tau, set in build_network()).'''
@@ -221,8 +218,8 @@ def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range,
     for network_id, run in gmn_runs.items():
         net_result = run['net_result']
         graph = net_result['network']['Graph']
-        # R14: exclude real-data-mode external inputs -- they have no
-        # embedding to retune theta for (see _simulated_nodes()'s docstring).
+        # External inputs fed from real data have no embedding, so there is no
+        # theta to retune for them (see _simulated_nodes()'s docstring).
         all_nodes = _simulated_nodes(graph)
         data_after_mde_lib = pd.read_csv(net_result['DATA_AFTER_MDE']).iloc[:prediction_start]
 
