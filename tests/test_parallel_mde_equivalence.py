@@ -39,7 +39,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _pipeline_test_utils import (  # noqa: E402
-    FakeProcessPoolExecutor,
+    install_fake_mde,
     load_pipeline_module,
 )
 from types import SimpleNamespace  # noqa: E402
@@ -127,8 +127,10 @@ def _pool_aware_fake(call_log):
 
 def _run(module, extra_kwargs=None):
     call_log = []
-    module.run_mde_for_target = _pool_aware_fake(call_log)
-    module.ProcessPoolExecutor = FakeProcessPoolExecutor
+    # install_fake_mde() follows the builder to wherever it is defined: the
+    # parent's now lives in mde_gmn/network.py and calls MDE through the mde
+    # module, the fork's is still in its own entry script.
+    install_fake_mde(module, _pool_aware_fake(call_log))
     graph, edges_df, nested_mde_results = module.build_nested_mde_network(
         targets=list(TARGETS),
         expanded_df=_toy_df(),

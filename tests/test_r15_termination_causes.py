@@ -26,7 +26,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _pipeline_test_utils import (  # noqa: E402
-    FakeProcessPoolExecutor,
+    install_fake_mde,
     load_pipeline_module,
     make_fake_run_mde_for_target_simple,
     make_fake_run_mde_for_target_tsls,
@@ -50,8 +50,7 @@ def _toy_df():
 
 def _run(module, fake_run_mde_for_target, extra_kwargs, stage2_kwargs):
     call_log = []
-    module.run_mde_for_target = fake_run_mde_for_target(PLAN, call_log)
-    module.ProcessPoolExecutor = FakeProcessPoolExecutor
+    install_fake_mde(module, fake_run_mde_for_target(PLAN, call_log))
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

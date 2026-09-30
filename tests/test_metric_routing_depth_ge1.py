@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _pipeline_test_utils import load_pipeline_module  # noqa: E402
+from _pipeline_test_utils import install_fake_mde, load_pipeline_module  # noqa: E402
 
 CFG_METRIC = 'f1'
 CFG_TARGET_METRIC = 'correlation'
@@ -98,8 +98,7 @@ def test_target_metric_resolved_per_node():
     calls = []
     fake = _make_fake_run_mde_for_target(plan, calls)
 
-    module.ProcessPoolExecutor = _FakeExecutor
-    module.run_mde_for_target = fake
+    install_fake_mde(module, fake, executor=_FakeExecutor)
 
     targets = ['T']
     df = pd.DataFrame({'Time': range(10), 'T': range(10), 'A': range(10), 'B': range(10)})

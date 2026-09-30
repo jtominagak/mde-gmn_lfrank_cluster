@@ -13,6 +13,12 @@ import os
 from datetime import datetime
 
 
+# How often a stage logs "still working" while its nodes are all still
+# running. Motivated by a concrete failure: job 38976891 timed out after 4+
+# hours on a single depth-1 wave of 3 nodes, doing real work the whole time
+# but producing no output, with nothing to say which node was slow or how
+# close to done it was. Frequent enough to show liveness on a run that used
+# to go silent for hours, not so frequent that it adds I/O or log noise.
 HEARTBEAT_SECONDS = 300
 
 def _log_progress(log_path, message):
