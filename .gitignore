@@ -15,3 +15,7 @@ results/
 
 # Scratch output from tests/test_rN_*.py's real gmn.GMN / real-dataframe runs
 tests/_scratch_r*/
+
+# Stray MDE output written when a test runs the real run_mde_for_target()
+# with results_dir=Path(".")
+mde_output_*.csv
