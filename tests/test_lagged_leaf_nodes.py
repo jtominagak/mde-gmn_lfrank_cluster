@@ -32,7 +32,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _pipeline_test_utils import (  # noqa: E402
-    FakeProcessPoolExecutor,
+    install_fake_mde,
     load_pipeline_module,
     _fake_result,
 )
@@ -85,8 +85,7 @@ def _fake_with_pools(plan, call_log, pool_log):
 def run_network():
     module = load_pipeline_module('tsls-mde-gmn.py', '_test_tsls_lagged_leaves')
     call_log, pool_log = [], {}
-    module.run_mde_for_target = _fake_with_pools(PLAN, call_log, pool_log)
-    module.ProcessPoolExecutor = FakeProcessPoolExecutor
+    install_fake_mde(module, _fake_with_pools(PLAN, call_log, pool_log))
 
     graph, edges_df, _ = module.build_nested_mde_network(
         targets=['T'],

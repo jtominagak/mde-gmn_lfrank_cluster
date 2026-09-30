@@ -80,6 +80,35 @@ def make_fake_run_mde_for_target_simple(plan, call_log):
     return fake
 
 
+def install_fake_mde(module, fake, executor=None):
+    '''Install `fake` (and a fake process pool) where `module`'s network
+    builder will actually look them up, and return the module patched.
+
+    This is not the same place for both pipelines. tsls-mde-gmn.py's
+    build_nested_mde_network() now lives in mde_gmn/network.py and calls MDE
+    as `mde.run_mde_for_target(...)` through the module object, so the fake
+    belongs on mde_gmn.mde -- assigning to the loaded entry script would
+    rebind a name nothing reads, and the test would silently run real MDE
+    against real pyEDM. simple-mde-gmn.py still defines its builder in the
+    entry script itself, so there the entry module IS the right target.
+
+    Rather than hard-code either case, follow the builder to wherever it is
+    defined and ask whether it reaches MDE through a module: patch
+    <builder module>.mde if so, the builder module itself otherwise. That
+    keeps working if more code moves into the package later.
+    '''
+    builder_module = sys.modules[module.build_nested_mde_network.__module__]
+    mde_home = getattr(builder_module, 'mde', builder_module)
+    if mde_home is not builder_module and 'run_mde_for_target' in vars(builder_module):
+        raise AssertionError(
+            f'{builder_module.__name__} imports run_mde_for_target directly as well as '
+            'through the mde module; the direct binding would shadow this fake and the '
+            'test would run real MDE. Call it as mde.run_mde_for_target(...) only.')
+    mde_home.run_mde_for_target = fake
+    builder_module.ProcessPoolExecutor = executor or FakeProcessPoolExecutor
+    return builder_module
+
+
 class FakeProcessPoolExecutor:
     '''Drop-in for concurrent.futures.ProcessPoolExecutor that runs every
     submitted call synchronously, in the calling process, at submit()
