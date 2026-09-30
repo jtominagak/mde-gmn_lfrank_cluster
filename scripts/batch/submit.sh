@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Submits a pipeline's .sbatch script (default: simple-mde-gmn.sbatch;
 # pass another scripts/batch/*.sbatch basename as $1 -- e.g.
-# `submit.sh tsls-mde-gmn.sbatch` -- to submit a different pipeline) and
+# `submit.sh tsls-mde-gmn.sbatch` -- to submit a different pipeline; an
+# optional 2nd argument names the .py when it differs from the sbatch name) and
 # immediately generates that job's entry in JOB_LOG.md (parameter table +
 # code/design diffs against the most recent earlier job from the SAME
 # pipeline -- generate_job_description.sh keys that on the source
@@ -24,7 +25,12 @@ set -euo pipefail
 PROJ_DIR="$HOME/pao_rotation"
 SBATCH_NAME="${1:-simple-mde-gmn.sbatch}"
 SBATCH_SCRIPT="$PROJ_DIR/scripts/batch/$SBATCH_NAME"
-PY_SRC="$PROJ_DIR/scripts/src/${SBATCH_NAME%.sbatch}.py"
+# Optional $2: the scripts/src/*.py basename, for sbatch files that don't
+# share their pipeline's name (e.g. saion-<pipeline>.sbatch runs <pipeline>.py).
+PY_NAME="${2:-${SBATCH_NAME%.sbatch}.py}"
+PY_SRC="$PROJ_DIR/scripts/src/$PY_NAME"
+[ -f "$SBATCH_SCRIPT" ] || { echo "No such sbatch script: $SBATCH_SCRIPT" >&2; exit 1; }
+[ -f "$PY_SRC" ] || { echo "No such pipeline source: $PY_SRC (pass its basename as the 2nd argument)" >&2; exit 1; }
 
 job_id="$(sbatch --parsable "$SBATCH_SCRIPT")"
 echo "Submitted batch job $job_id ($SBATCH_NAME)"

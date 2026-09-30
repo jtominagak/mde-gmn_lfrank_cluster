@@ -883,3 +883,162 @@ real hardware, for both `GMN_MODE` values now.**
    confirm both `tests/test_gpu_ccm_equivalence.py` and `tests/test_gpu_multi_ccm_equivalence.py`
    actually PASS (not skip) there. This session still has no GPU and no Saion SSH credentials, so
    this is handed to the user as a command block (see the chat turn this entry corresponds to).
+
+---
+
+## 2026-09-16 — Saion restricted partitions: job scripts + runbook for the parallel-MDE fork
+
+**Status: built, NOT yet run. The user now has `gpu-p100` + `gpu-v100` access. Scripts to run
+`no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py` there within the SCDA rules are written;
+the next step is the user running the preflight job. Procedure:
+`docs/saion-parallelized-mde-runbook.md`.**
+
+### Rules that shaped it (scda-guide.oist.jp: saion-system, saion-restrict, saion-open)
+36 cores + 4 GPUs per partition, 7-day max; nodes are 36 cores / 512 GB / 4×16 GB. P100 nodes
+support CUDA ≤ 12.8 (cu126 torch runs on both partitions). `/bucket` is read-only on compute
+nodes, so results go back via scp to the login node. `/work/<Unit>` is per-job scratch that must
+be cleaned. No `/flash` on Saion. `#!/bin/bash -l` required.
+
+### What the fork's existing Deigo-style sbatch would have hit on Saion
+1. `/flash` for Slurm logs/outputs/tempdir (doesn't exist) and direct `/bucket` writes
+   (read-only): the job fails before running.
+2. `.venv-gpu` missing `gmn`/`dimx`/`pydiffmap`/`statsmodels` AND the pyEDM Pool-fix
+   `sitecustomize.py`: the pipeline fails at import. The earlier
+   `tsls-mde-gmn-gpu-*.sbatch` A/B files share this; they have never run.
+3. No stage-out window on timeout.
+
+### Built
+- `scripts/saion/saion_env.sh`: paths + `stage_dir` (rsync or tar-over-ssh via the `saion`
+  login node).
+- `scripts/saion/setup_gpu_venv.sh`: pins `.venv-gpu` to `.venv`'s versions, torch 2.14.0+cu126,
+  copies `sitecustomize.py`.
+- `scripts/batch/saion-preflight.sbatch`: CUDA, imports, storage, a real stage-out round trip,
+  the two GPU equivalence suites (skips count as FAIL), fork safety, parallel-MDE equivalence,
+  and `scripts/saion/gpu_capacity_probe.py`.
+- `gpu_capacity_probe.py`: 1/9/18/36 spawn workers on ONE GPU running the real
+  `gpu_edm.batched_crossmap_predict` at production CCM size; reports per-context MiB, peak MiB,
+  errors and the per-sweep slowdown. **User decision (2026-09-16): no per-worker multi-GPU
+  assignment until this probe says one GPU doesn't fit (or contention is bad).**
+- `scripts/batch/saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch`: the fork's
+  parameter block verbatim, plus:
+  - Saion runtime: `/work` scratch; PREV_RUNS_DIR read from `/bucket`; hourly + exit cache sync.
+  - Outputs to `tsls_mde_gmn_outputs/job_<id>/`, or `job_<id>_FAIL/` + `STATUS.txt` (user
+    decision); `/work` removed only after both copies succeed.
+  - `--signal=B:USR1@1800` graceful stop. Also FAIL when Python exits 0 but the log has CUDA
+    errors (a GPU OOM inside a worker is otherwise silently a zero-driver node).
+  - Trap/wait/exit-status logic tested in isolation on a Deigo compute node (normal non-zero
+    exit, and USR1 stop including child processes).
+- `submit.sh`: optional 2nd argument naming the `.py`.
+
+### Scale: "half production" (user request), from the documented defaults
+`REGION_CHANNEL_CAP` 999→**78** (234 of 468 channels), `MDE_D` 20→**10**, `NESTED_M` 1 (already
+minimal), `GENERATE_LENGTH` kept at **400**: halving the 0 = full-window default would give
+~830 lags/channel, ~8× the Stage 2 pool of any run so far. `PARALLEL_MDE_SCOPE=staged`.
+
+Sizing evidence, Deigo job 40684253 (CAP=30 → 48/90 observables kept by the pre-filter,
+MDE_D=6, 101 delays, 44,449 rows, completed in 2d18h):
+- Stage 1 nodes < 1 s; Stage 2 nodes 11 s to **132,219 s**.
+- Batch MaxRSS 20.7 GB with 7 fork workers.
+
+Extrapolated: ~4.5 GB Stage 2 DataFrame; each spawn worker holds its own copy →
+~300 GB at 36 workers → `--mem=400G`.
+
+Open risks:
+- Single Stage 2 nodes at this scale may exceed the 7-day limit. Resubmission resumes finished
+  nodes but restarts in-flight ones.
+- The memory estimate is an extrapolation, not a measurement.
+
+### Next
+1. User: one-time SSH key + venv setup, then the preflight (runbook steps 1-4).
+2. Decide multi-GPU from the capacity verdict; then submit the half-scale job (step 5).
+
+**Follow-up (2026-09-16, user correction): path scope.** Bare `/work` was too broad. All Saion
+scripts now use literal roots with no `$USER`/`$HOME`/unit indirection or env overrides:
+`/work/FukaiU/j-tominaga`, `/bucket/FukaiU/tominaga/pao_rotation`,
+`/home/j/j-tominaga/{pao_rotation,saion_slurm_logs}`.
+- `saion_env.sh` gains `path_under`/`safe_rm_work`. `stage_dir`, every `rm -rf` and the
+  preflight's remote delete refuse paths outside those roots. Tested on a Deigo compute node:
+  the root itself, `/work`, `/bucket`, sibling-prefix, `..` and empty paths are all refused.
+- The `/work` mount check now checks `/work/FukaiU`.
+- `TMPDIR`/`MPLCONFIGDIR` point inside the job's own dir, not the node-wide `/tmp`.
+- `setup_gpu_venv.sh`'s temp requirements file now lives inside `.venv-gpu`.
+- Input data now read directly from `/bucket/FukaiU/tominaga/pao_rotation/data/` (copied there
+  from `data/` on 2026-09-16, sha256 3a49f1c2...a467 verified), per the guide's "keep data on
+  Bucket, read directly from Bucket"; no longer staged from home.
+- `setup_gpu_venv.sh` is now run on a gpu-p100 compute node via `srun` (guide: build on a GPU
+  compute node), with a login-node fallback if that node has no internet.
+
+
+---
+
+## 2026-09-17 — On Saion: venv completed, partition choice fixed, preflight run (job 4724497)
+
+**Status: every GPU/code/storage check PASSES on a real P100. Stage-out over SSH still fails
+because the stage-out key isn't set up yet. The capacity probe shows the one-GPU design is
+GPU-bound: total GPU throughput stays flat from 1 to 36 workers. The pipeline job is NOT
+submitted yet: it needs the key (the user has to add it) and a sizing decision (below).**
+
+### Found and fixed
+1. **`-p gpu-p100,gpu-v100` is rejected** at submission for this account ("Multiple partition job
+   request not supported when a partition is set in the association"). The allocation is attached
+   to each partition separately. New `scripts/saion/submit_saion.sh` runs `sbatch --test-only -p`
+   on each partition and submits to the earlier estimated start. It overrides the partition
+   through `SBATCH_PARTITION`, so `submit.sh` is unchanged. Your own jobs filling a partition's
+   36-CPU/4-GPU allocation push its start to their expected end (`--test-only` ignores that limit).
+   Both sbatch files now default to `gpu-p100` for a plain `sbatch`. At submission time
+   `gpu-p100` could start immediately, while `gpu-v100` estimated 2026-09-18 14:41 even with idle
+   nodes. Both partitions have `PreemptMode=OFF` or the top `PriorityTier`, so neither preempts
+   this job.
+2. **`.venv-gpu` completed** by `setup_gpu_venv.sh` on a gpu-p100 node through `srun`. Compute
+   nodes do have internet access.
+3. **Stage-out SSH:** from a compute node, the bare name `saion` does not resolve and host-based
+   auth to `saion.oist.jp` is refused. Runbook step 1 (key + `~/.ssh/config` alias) is therefore
+   required. Claude's attempt to add the key was blocked by the permission classifier, so the
+   user has to run it. The runbook now scopes the key with `from="10.210.16.0/20"` (compute and
+   login nodes share that subnet) and disables forwarding and terminals for it.
+4. `gpu_capacity_probe.py` verdict math: it sized from the idle context (288 MiB) and printed
+   "about 44 workers" while the 36-worker level itself was already over threshold. It now uses
+   memory per loaded worker (~420 MiB) and reserves one slot for the main process, which gives 31.
+
+### Preflight 4724497 (saion-gpu11, Tesla P100-SXM2-16GB, 8 min 25 s)
+PASS: nvidia-smi, torch 2.14.0+cu126 CUDA, all pipeline imports + `sitecustomize`,
+`/work/FukaiU/j-tominaga` writable, Bucket readable and read-only, input CSV. Also
+`test_gpu_ccm_equivalence` and `test_gpu_multi_ccm_equivalence`, which ran on real GPU hardware
+for the first time (not skipped), `test_gpu_fork_safety` and `test_parallel_mde_equivalence`.
+FAIL: ssh to `saion` and the stage-out round trip (item 3). Batch MaxRSS was 44 GB.
+
+| workers | ctx MiB | peak MiB / 16384 | s/sweep | per-sweep slowdown | total sweeps/s |
+|---|---|---|---|---|---|
+| 1 | 288 | 423 | 0.017 | 1.00× | 58.0 |
+| 9 | 288 | 3785 | 0.156 | 9.05× | 57.7 |
+| 18 | 288 | 7569 | 0.312 | 18.11× | 57.6 |
+| 36 | 288 | 15135 | 0.626 | 36.27× | 57.5 |
+
+What it means:
+- **Memory:** 36 workers ran with 0 errors, but at 92% of device memory. The pipeline's main
+  process adds another context, which leaves under 1 GB of headroom. The safe count on one card
+  is ~31.
+- **Contention:** per-sweep time scales exactly with worker count, so one GPU delivers ~58 CCM
+  sweeps/s no matter how many workers share it. Extra workers only parallelize the CPU-side
+  work (ranking stage and so on). This meets the 2026-09-16 condition for reconsidering
+  per-worker multi-GPU assignment ("or contention is bad"). The allocation allows
+  `--gres=gpu:4`, which would give up to ~4× CCM-gate throughput. That needs code the pipeline
+  doesn't have yet.
+
+### Next
+1. User: runbook step 1 (stage-out key).
+2. User decision: submit single-GPU at `--cpus-per-task≈30`, or build per-worker GPU assignment
+   first and use 4 GPUs.
+3. Submit with `scripts/saion/submit_saion.sh saion-no-kedm-...sbatch no-kedm-...py`.
+
+**Correction (2026-09-30): `PARALLEL_MDE_SCOPE='staged'` buys nothing at this configuration.**
+The Saion sbatch was set to 'staged' on the claim that it computes Stage 2 only for BFS-reachable
+nodes. `_stage2_precompute_nodes()` returns that exact set ONLY when
+`STAGE2_ALLOW_REAL_OBSERVABLES=false` or when no Stage 1 node is still under the `NESTED_M`
+budget. At half production (real observables allowed, depth-0 targets at depth 0 < NESTED_M=1) it
+falls through to `list(universe)` -- the same Stage 2 task list as 'union', split across a second
+pool with an extra barrier. Reverted to 'union'. The only knob that actually shrinks Stage 2's
+task list is `STAGE2_ALLOW_REAL_OBSERVABLES=false`, which changes the science (Stage 2 stops
+recursing into real observables -- see [[nested_mde_stage2_recursion]]). The 7-day-limit risk from
+the earlier entry therefore stands undiminished.
+

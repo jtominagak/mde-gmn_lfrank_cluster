@@ -295,6 +295,8 @@ inefficiency — see above). Both earlier recommendations are kept below for the
    needed — but is explicitly choosing to defer requesting it until a working GPU-optimized
    pipeline exists to justify the request. Do not block on this; `test-gpu` remains available and
    sufficient for all the validation/development work in steps 1, 5, and 6.
+   **UPDATE 2026-09-16: access granted to `gpu-p100` and `gpu-v100`** (not `gpu-a100`). Running
+   the parallel-MDE fork there: `docs/saion-parallelized-mde-runbook.md`.
 5. **Resolved — see §7**: torch/CUDA fork-safety (confirmed hazard, same class as kEDM's, concrete
    fix identified) and how a single shared GPU interacts with this pipeline's existing
    `ProcessPoolExecutor`/`ThreadPoolExecutor` parallelism model. This reasoning was done with both
