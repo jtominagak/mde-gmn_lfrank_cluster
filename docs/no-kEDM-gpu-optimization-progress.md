@@ -1042,3 +1042,40 @@ task list is `STAGE2_ALLOW_REAL_OBSERVABLES=false`, which changes the science (S
 recursing into real observables -- see [[nested_mde_stage2_recursion]]). The 7-day-limit risk from
 the earlier entry therefore stands undiminished.
 
+
+## 2026-09-30 — Phase 2 refactor complete on both branches; one real bug fixed
+
+`docs/phase2-refactor-handoff.md` is the record; `docs/mde-gmn-architecture.md` is the
+orientation. Relevant to this track specifically:
+
+**The fork is no longer a fork.** Its entry script went from 5,415 lines to 50. Of its 61
+definitions, 48 were byte-identical copies of the parent's and are gone; the 8 that are its own
+live in `mde_gmn/network_parallel.py`. Both pipelines now run the same `mde_gmn` package and
+differ only in which builder they hand to `main()`. The GPU threading (`use_gpu`,
+`mp_start_method`, `GPU_ENABLED`, `MP_START_METHOD`, `PARALLEL_MDE_SCOPE`) moved into the
+package with it, count-verified unchanged across each merge.
+
+**A real bug in this branch, fixed by the consolidation.** Phase 1 (`fa804e8`) taught
+`build_network` to export one data column per lagged leaf node, because `partition_network`
+classifies leaves as external inputs and gmn feeds those from the exported frame BY NODE NAME.
+`eb2a42c` ported Phase 1's algorithm changes to the fork but not that export. The parallel
+pipeline therefore created lagged leaf nodes and then handed gmn a frame with no columns for
+them — broken for any network containing a lagged pick, which is essentially all of them. Had
+the Saion job been submitted before this, it would have failed at GMN time after paying for the
+whole MDE phase. Sharing `build_network` removes the divergence that allowed it.
+
+**Preflight now imports the package** (`mde_gmn.pipeline`, `mde_gmn.network_parallel`), so a
+package the sbatch failed to stage, or a module that stopped importing, is caught in preflight
+rather than days into a 7-day job.
+
+**Also stale, now corrected in code:** two comments still claimed Stage 2's real-observable
+selections recurse. Phase 1 made Stage 2 lagged-only and non-recursive. Since Stage 2 is now
+genuinely non-recursive, the 'staged' scope's node set IS Stage 1's visited set, so the
+correction above ("staged buys nothing") no longer applies — `staged` is exact, which is why
+both fork sbatch files use it.
+
+### Next (unchanged)
+1. User: runbook step 1 (stage-out key).
+2. User decision: single-GPU at `--cpus-per-task≈30`, or per-worker GPU assignment first and 4
+   GPUs. Also still open: 9 cores + 120 GB vs 36 cores + 400 GB.
+3. Submit with `scripts/saion/submit_saion.sh saion-no-kedm-...sbatch no-kedm-...py`.
