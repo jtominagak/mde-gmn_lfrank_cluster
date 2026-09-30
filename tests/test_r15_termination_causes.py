@@ -48,7 +48,7 @@ def _toy_df():
                           'C': rng.normal(size=20), 'D': rng.normal(size=20)})
 
 
-def _run(module, fake_run_mde_for_target, extra_kwargs):
+def _run(module, fake_run_mde_for_target, extra_kwargs, stage2_kwargs):
     call_log = []
     module.run_mde_for_target = fake_run_mde_for_target(PLAN, call_log)
     module.ProcessPoolExecutor = FakeProcessPoolExecutor
@@ -72,13 +72,14 @@ def _run(module, fake_run_mde_for_target, extra_kwargs):
             delay_set=[],
             tp=1,
             lag_set=[-1],
-            stage2_allow_real_observables=True,
+            **stage2_kwargs,
             **extra_kwargs,
         )
     return buf.getvalue()
 
 
 def _check(name, log_text):
+    # simple-mde-gmn.py only -- see test_tsls() for why tsls has no counters.
     m = re.search(
         r'real-observable recursion terminations -- (\d+) budget-bound, (\d+) driver-exhausted',
         log_text,
@@ -100,14 +101,24 @@ def test_tsls():
          'target_ranking_window_rows': 200, 'min_pred_events': 5, 'max_window_rows': 30000,
          'ccm_lib_sizes_rows': (10, 50), 'ccm_sample': 2,
          'ccm_slope': 0.01, 'cores': 2},
+        {},
     )
-    _check('tsls-mde-gmn.py', log_text)
+    # tsls-mde-gmn.py (2026-09-30): Stage 2 no longer selects real
+    # observables and never recurses, so there are no recursion terminations
+    # to classify. The counters -- and the log line R15 added -- are gone by
+    # design; assert their ABSENCE so this test fails if they creep back.
+    assert 'real-observable recursion terminations' not in log_text, (
+        'tsls-mde-gmn.py still reports Stage 2 recursion terminations, but Stage 2 '
+        'must not recurse any more'
+    )
+    print('tsls-mde-gmn.py: PASS (no Stage 2 recursion, so no termination counters)')
 
 
 def test_simple():
     log_text = _run(
         load_pipeline_module('simple-mde-gmn.py', '_test_simple_mde_gmn_r15'),
         make_fake_run_mde_for_target_simple, {'cores': 2},
+        {'stage2_allow_real_observables': True},
     )
     _check('simple-mde-gmn.py', log_text)
 

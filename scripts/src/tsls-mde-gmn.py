@@ -308,7 +308,13 @@ def _embedding_spec_for(graph, node_name):
     (E, tau) can't express a per-driver, per-delay embedding.'''
     if isinstance(graph, nx.MultiDiGraph):
         spec = [(node_name, 0)]
-        spec += [(u, data['delay']) for u, v, data in graph.in_edges(node_name, data=True)]
+        # An in-edge from a lagged LEAF node carries that leaf's own name
+        # (e.g. 'CA1_3_tsls::delay-9'), but an embedding coordinate has to
+        # name a real data column, so resolve it back to the raw observable
+        # (the delay is already on the edge). Real-observable in-edges pass
+        # through unchanged. See _accept_mde_result_edges().
+        for u, _v, data in graph.in_edges(node_name, data=True):
+            spec.append((graph.nodes[u].get('lagged_of', u), data['delay']))
     else:
         E = graph.graph.get('fallback_E', 3)
         tau = graph.graph.get('fallback_tau', -1)
@@ -1045,19 +1051,21 @@ def load_config():
     cfg['REGION_CHANNEL_CAP'] = int(os.environ.get('TSLS_MDE_GMN_REGION_CHANNEL_CAP', 999))
 
     # ---- Two-stage nested-MDE network construction (MODE='MDE-GMN' only) --
-    # Ported from simple-mde-gmn.py -- see build_nested_mde_network() for the
-    # full serial two-stage algorithm (Stage 1 real-observable-only BFS run
-    # to completion, then Stage 2 lagged-embedding attachment, itself
-    # recursive), and that file's own load_config() docstrings for STAGE2_ALLOW_REAL_
-    # OBSERVABLES/DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP/DELAY_SET's full
-    # rationale (identical here -- this is all pure column-name/DataFrame
-    # machinery with no TSLS-specific behavior). R15 (docs/review-actions-v1.md):
-    # default flipped to True -- confirmed end-to-end (not inferred) that Stage 2's
-    # own real-observable picks genuinely recurse into further Stage 2 rounds
-    # (tests/test_r12_stage_serialization.py), bounded by the R13 shared depth
-    # budget (tests/test_r13_shared_depth_budget.py), so the step 1 condition for
-    # flipping the default holds.
-    cfg['STAGE2_ALLOW_REAL_OBSERVABLES'] = _env_bool('TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES', True)
+    # See build_nested_mde_network() for the algorithm: Stage 1 builds the
+    # real-observable backbone recursively (NESTED_M rounds), then Stage 2
+    # attaches lagged drivers as leaf nodes in a single non-recursive pass.
+    # DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP/DELAY_SET below define which
+    # lags Stage 2 may choose from.
+    #
+    # TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES is retired (2026-09-30): Stage
+    # 2 considers lagged columns only, so there is nothing for it to select
+    # recursively. The env var is rejected rather than ignored, so an sbatch
+    # still setting it fails loudly instead of silently doing something else.
+    if 'TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES' in os.environ:
+        raise ValueError(
+            'TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES is retired: Stage 2 now considers '
+            'lagged columns only and never recurses (see build_nested_mde_network). '
+            'Remove it from the sbatch script.')
 
     # R14 (docs/review-actions-v1.md): a zero-driver leaf is partitioned out
     # of the simulated network as an "external input" (partition_network())
@@ -2424,38 +2432,93 @@ def _accept_mde_result_edges(graph, edges, node, result, raw_columns):
     run_mde_for_target() selected for `node`. Mutates `graph` in place and
     appends accepted rows to `edges`.
 
-    Returns the list of (driver, delay) pairs actually accepted as edges
-    into `node` (in selection order).'''
+    Returns the list of (driver_node, delay) pairs actually accepted as
+    edges into `node` (in selection order). `driver_node` is the graph node
+    name, which for a lagged pick is the delayed column name, not the raw
+    observable -- callers deciding what to recurse into should test
+    `delay == 0`, never the name.'''
     accepted = []
     cols = result['SELECTED_COLUMNS']
     gains = np.diff(np.concatenate(([0.0], result['m'].MDErho)))
 
     for col, gain in zip(cols, gains):
-        driver, delay = observable_and_delay(col, raw_columns)
+        observable, delay = observable_and_delay(col, raw_columns)
 
-        if driver == node:
+        if observable == node and delay == 0:
             continue  # explicit self-loop guard (belt-and-suspenders)
 
         if np.isnan(gain):
-            print(f'MDE edge accept: rejected {driver} (delay {delay}) -> {node} '
+            print(f'MDE edge accept: rejected {observable} (delay {delay}) -> {node} '
                   f'(marginal MDE rho gain is NaN -- treating as a dead-end edge)', flush=True)
             continue
 
-        graph.add_node(driver)
-        key = graph.add_edge(driver, node, delay=delay, weight=gain)
+        if delay == 0:
+            # Real observable: one graph node per observable, which may
+            # itself acquire drivers when a later round recurses into it.
+            driver_node = observable
+            graph.add_node(driver_node)
+        else:
+            # Lagged observable: ITS OWN LEAF NODE, never an edge out of
+            # the raw observable's node. Two consequences, both intended:
+            #   * a leaf never has in-edges, so it can never take part in
+            #     a cycle -- which is what makes a lagged copy of an
+            #     UPSTREAM observable a legal driver (the value it carries
+            #     is that observable's past, so there is no circularity);
+            #   * it has zero drivers by construction, so
+            #     partition_network() classifies it as an external input,
+            #     i.e. a purely exogenous driver of the network.
+            # `lagged_of`/`lag` let consumers recover (observable, delay)
+            # without re-parsing the name -- see _embedding_spec_for().
+            driver_node = _delayed_column_name(observable, delay)
+            graph.add_node(driver_node, lagged_of=observable, lag=delay)
 
-        if not nx.is_directed_acyclic_graph(graph):
-            graph.remove_edge(driver, node, key=key)
-            if graph.degree(driver) == 0:
-                graph.remove_node(driver)
-            print(f'MDE edge accept: rejected {driver} (delay {delay}) -> {node} '
-                  f'(would create a cycle)', flush=True)
+        key = graph.add_edge(driver_node, node, delay=delay, weight=gain)
+
+        if delay == 0 and not nx.is_directed_acyclic_graph(graph):
+            # Should be unreachable: every stage excludes observables
+            # upstream of `node` from its candidate pool BEFORE the MDE
+            # call (see _real_candidate_pool()), so no accepted real
+            # driver can close a cycle. Kept as a loud guard rather than
+            # deleted -- if it ever fires, the exclusion is wrong.
+            graph.remove_edge(driver_node, node, key=key)
+            if graph.degree(driver_node) == 0:
+                graph.remove_node(driver_node)
+            print(f'MDE edge accept: rejected {driver_node} -> {node} (would create a cycle -- '
+                  f'UNEXPECTED, upstream observables are excluded before MDE runs)', flush=True)
             continue
 
-        edges.append({'driver': driver, 'node': node, 'delay': delay, 'weight': gain})
-        accepted.append((driver, delay))
+        edges.append({'driver': driver_node, 'node': node, 'delay': delay, 'weight': gain})
+        accepted.append((driver_node, delay))
 
     return accepted
+
+
+def _real_candidate_pool(graph, node, real_columns, raw_columns):
+    '''Stage 1's candidate pool for `node`: every real (delay=0) observable
+    except `node` itself and except any observable UPSTREAM of `node` in the
+    network built so far.
+
+    Upstream observables are excluded here, before the MDE call, rather than
+    having their edges rejected after selection. Selecting one would close a
+    cycle, so the edge could never be kept -- and forward selection is
+    greedy, so a candidate that gets picked and then thrown away has still
+    consumed one of the node's driver slots and skewed every later round it
+    conditioned.
+
+    The blocked set is `nx.descendants(graph, node)`, NOT `nx.ancestors`:
+    edges run driver -> node (from a driver to the thing it drives), so
+    accepting candidate C adds C -> node, which closes a cycle exactly when
+    node already reaches C. Those are node's descendants in edge direction
+    -- which are the nodes between it and the behavioural targets, i.e.
+    "upstream of this node" in the causal sense the network describes.
+
+    Lagged candidates need no such filter (see _accept_mde_result_edges():
+    they become leaves and cannot cycle), which is why Stage 2 does not use
+    this function. A lagged leaf can never appear in this blocked set
+    either, since a leaf has no in-edges and so is reachable from nothing.'''
+    blocked = {node} | (nx.descendants(graph, node) if node in graph else set())
+    return [c for c in real_columns
+            if observable_and_delay(c, raw_columns)[0] not in blocked]
 
 
 def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns,
@@ -2465,25 +2528,28 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                               metric, target_metric, gamma_delta,
                               target_ranking_window_rows, min_pred_events, max_window_rows,
                               ccm_lib_sizes_rows, ccm_sample, ccm_slope, cores,
-                              lag_set, stage2_allow_real_observables,
+                              lag_set,
                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                               data_file=None, data_file_sha256=None, code_fingerprint=None,
                               progress_log_path=None):
-    '''Two-stage nested-MDE network construction, MODE='MDE-GMN' only --
-    FULLY SERIAL between stages (R12, 2026-08-27: reverted from the
-    2026-08-25 unified-per-wave-BFS design -- see JOB_LOG.md for that
-    design and why it's being replaced here). Stage 1's own real-
-    observable BFS runs to completion, over every depth the shared
-    nested_m budget allows, before Stage 2 ever starts. Stage 2 then runs
-    its own separate BFS -- seeded with EVERY node Stage 1 discovered (so
-    every backbone node still gets a lagged/real embedding attached, the
-    same guarantee the old unified design gave one wave at a time) --
-    and Stage 2 selections are themselves recursive: a delay=0 (real-
-    observable) driver Stage 2 selects (only reachable when
-    stage2_allow_real_observables=True) is enqueued for its own further
-    Stage 2 round, exactly like Stage 1 nodes recurse into further Stage
-    1 rounds, NOT a Stage 1 round -- Stage 2 never triggers a fresh
-    Stage-1-style (real-observable-only) call on anything.
+    '''Two-stage nested-MDE network construction, MODE='MDE-GMN' only.
+
+    STAGE 1 builds the backbone out of REAL (delay=0) observables. It starts
+    at the behavioural targets, runs one MDE call per node, turns that
+    node's selected drivers into edges, and recurses into each selected
+    driver -- up to `nested_m` further rounds. A node's candidate pool
+    excludes itself and every observable upstream of it, so no selected
+    driver can close a cycle (see _real_candidate_pool()).
+
+    STAGE 2 then runs ONCE over every node Stage 1 discovered, with the
+    LAGGED columns as candidates (every observable's lag embeddings,
+    whether or not Stage 1 selected that observable). Each lagged pick
+    becomes its own LEAF node -- zero drivers, therefore a purely external
+    input to the network, and structurally unable to create a cycle (see
+    _accept_mde_result_edges()). Stage 2 cannot extend the backbone and
+    does not recurse, so `nested_m` applies to Stage 1 alone.
+
+    Stage 1 runs to completion before Stage 2 starts (R12, 2026-08-27).
 
     This is a deliberate, explicit un-doing of the 2026-08-25 unification,
     per review action R12: that revision fixed a real bug (the historical
@@ -2545,12 +2611,14 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
 
     stage1_num_delays = len(expanded_columns) // len(raw_columns)
 
+    # Stage 2's candidates are the LAGGED columns only -- every observable's
+    # lag embeddings (its own, other backbone nodes', and observables Stage 1
+    # never selected). Real (delay=0) observables are Stage 1's business, so
+    # they are dropped from this pool: expand_delay_columns() returns the raw
+    # columns first, then one column per nonzero delay.
     stage2_df, stage2_expanded_columns = expand_delay_columns(expanded_df, raw_columns, lag_set)
-    stage2_lag_only_columns = stage2_expanded_columns[len(raw_columns):]
-    stage2_candidate_universe = (
-        stage2_expanded_columns if stage2_allow_real_observables else stage2_lag_only_columns
-    )
-    stage2_num_delays = len(lag_set) + (1 if stage2_allow_real_observables else 0)
+    stage2_candidate_universe = stage2_expanded_columns[len(raw_columns):]
+    stage2_num_delays = len(lag_set)
 
     edges = []
     nested_mde_results = {}
@@ -2605,8 +2673,10 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                 futures = {}
                 node_window_estimate = {}
                 for node, depth in to_compute:
-                    candidate_pool = [c for c in expanded_columns
-                                       if observable_and_delay(c, raw_columns)[0] != node]
+                    # Upstream observables excluded BEFORE the MDE call --
+                    # see _real_candidate_pool()'s docstring for why this
+                    # is not equivalent to rejecting their edges afterwards.
+                    candidate_pool = _real_candidate_pool(graph, node, expanded_columns, raw_columns)
                     effective_d = effective_mde_dimension(nested_n, candidate_pool, stage1_num_delays)
                     is_behav = (node in targets)
                     # Monitoring-log ETA input only -- see _preview_window_rows()'s
@@ -2728,28 +2798,20 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
           f'backbone, Stage 2 starts now', flush=True)
 
     # =====================================================================
-    # PHASE 2 -- Stage 2: lagged (+ optionally real) BFS. Seeded with EVERY
-    # node Stage 1 discovered (so every backbone node still gets a lagged
-    # embedding attached), then its own delay=0 (real-observable)
-    # selections recurse into further Stage 2 rounds -- never a Stage 1
-    # round -- subject to the same shared nested_m budget/depth.
+    # PHASE 2 -- Stage 2: attach lagged drivers. ONE non-recursive pass over
+    # every node Stage 1 discovered, so each backbone node gets its lagged
+    # embedding coordinates. Stage 2 cannot grow the backbone: its
+    # candidates are lagged columns only, and every lagged pick becomes a
+    # LEAF node (see _accept_mde_result_edges()), which by definition has no
+    # drivers of its own to recurse into. There is therefore no depth budget
+    # to apply here -- nested_m governs Stage 1's recursion alone.
     # =====================================================================
     visited2 = set()
     current_wave = [(node, node_depth[node]) for node in visited1]
-    # R15: distinguishable termination causes for Stage 2's own real-
-    # observable recursion -- budget_bound counts an accepted delay=0 pick
-    # that would have recursed except the shared nested_m budget already
-    # stopped at this depth; driver_exhausted counts a node whose own
-    # depth was still within budget but whose Stage 2 call simply
-    # selected zero real-observable drivers, so there was nothing to
-    # recurse into regardless of budget. See build_nested_mde_network()'s
-    # own final summary print for where these get reported.
-    stage2_budget_bound = 0
-    stage2_driver_exhausted = 0
     stage2_start = time.perf_counter()
     stage2_durations = []
     stage2_rates = []
-    _log_progress(progress_log_path, 'STAGE 2 START (lagged/real BFS)')
+    _log_progress(progress_log_path, 'STAGE 2 START (lagged-driver attachment)')
 
     while current_wave:
         wave_nodes, seen = [], set()
@@ -2770,8 +2832,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
               f'{wave_depths} -- {outer_workers2} parallel worker(s) '
               f'x {inner_workers2} inner thread(s) each '
               f'(product={outer_workers2 * inner_workers2}, cores={cores}), candidate pool size '
-              f'{len(stage2_candidate_universe)} (lag_set={lag_set}, '
-              f'stage2_allow_real_observables={stage2_allow_real_observables})', flush=True)
+              f'{len(stage2_candidate_universe)} (lagged columns only, lag_set={lag_set})', flush=True)
         wave_start = time.perf_counter()
         _log_progress(progress_log_path,
                       f'stage2 wave START -- {len(wave_nodes)} node(s) at depth(s) '
@@ -2862,41 +2923,20 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                       f'stage2 wave END -- {len(wave_nodes)} node(s), '
                       f'{time.perf_counter() - wave_start:.1f}s total')
 
-        next_wave = {}
         for node, depth in wave_nodes:
             visited2.add(node)
             node_depth.setdefault(node, depth)
             result2 = stage2_results[node]
-            accepted2 = _accept_mde_result_edges(graph, edges, node, result2, raw_columns)
-            under_budget = nested_m == 0 or depth < nested_m
+            nested_mde_results.setdefault(f'stage2:{node}', result2)
+            # Every accepted pick here is a lagged leaf, so nothing is
+            # enqueued: Stage 2 is a single pass by construction.
+            _accept_mde_result_edges(graph, edges, node, result2, raw_columns)
 
-            real_picks = [(driver, delay) for driver, delay in accepted2 if delay == 0]
-            if under_budget and not real_picks:
-                # Budget wasn't the constraint here -- Stage 2 genuinely
-                # found no real-observable driver for this node at all.
-                stage2_driver_exhausted += 1
-
-            for driver, delay in real_picks:
-                # A delay=0 (real-observable) pick here recurses into its
-                # own further Stage 2 round -- NOT a Stage 1 round -- same
-                # nested_m budget as Stage 1's own recursion above.
-                if under_budget:
-                    if driver not in visited2:
-                        next_wave[driver] = min(next_wave.get(driver, depth + 1), depth + 1)
-                else:
-                    stage2_budget_bound += 1
-                # delay != 0: leaf -- edge already added above.
-
-        current_wave = list(next_wave.items())
+        current_wave = []
 
     _log_progress(progress_log_path,
                   f'STAGE 2 END -- {len(visited2)} node(s), '
                   f'{time.perf_counter() - stage2_start:.1f}s total')
-
-    if stage2_allow_real_observables:
-        print(f'nested MDE (Stage 2): real-observable recursion terminations -- '
-              f'{stage2_budget_bound} budget-bound, {stage2_driver_exhausted} driver-exhausted',
-              flush=True)
 
     edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
 
@@ -3136,7 +3176,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                    ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
                    observable_columns=None, nested_n=None, nested_m=None,
                    embed_dim_rho_min=None, cross_map_rho_min=None, exclusion_radius=None,
-                   lag_set=None, stage2_allow_real_observables=False, tp=1,
+                   lag_set=None, tp=1,
                    threshold=0, fallback_node_dimension=4, max_node_dimension=15,
                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                    data_file=None, data_file_sha256=None, code_fingerprint=None,
@@ -3179,7 +3219,6 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
             metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
             ccm_sample, ccm_slope,
             data_file, data_file_sha256, code_fingerprint,
-            stage2_allow_real_observables=stage2_allow_real_observables,
             gmn_mode=gmn_mode, multi_mde_e=multi_mde_e,
             multi_mde_target_aggregate=multi_mde_target_aggregate,
             target_ranking_window_rows=target_ranking_window_rows,
@@ -3219,7 +3258,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                 metric, target_metric, gamma_delta,
                 target_ranking_window_rows, min_pred_events, max_window_rows,
                 ccm_lib_sizes_rows, ccm_sample, ccm_slope, cores,
-                lag_set, stage2_allow_real_observables,
+                lag_set,
                 reuse_cache, prev_runs_dir, run_cache_dir, data_file, data_file_sha256,
                 code_fingerprint,
                 progress_log_path=progress_log_path,
@@ -3228,6 +3267,10 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
         partition_network(graph, targets, external_input_mode)
         report_partition(graph, network_id, results_dir)
         selected_union = [n for n in graph.nodes if n not in targets]
+        # {leaf node name: (raw observable, delay)} for every lagged leaf in
+        # the network -- see the data_after_mde block below for why.
+        lagged_leaves = {n: (graph.nodes[n]['lagged_of'], graph.nodes[n]['lag'])
+                          for n in selected_union if 'lagged_of' in graph.nodes[n]}
         edges_file = results_dir / f'edges_nestedMDE_N{nested_n}_M{nested_m}_{network_id}.csv'
         edges_rows = [{'driver': u, 'node': v, 'delay': d['delay'], 'weight': d['weight']}
                       for u, v, d in graph.edges(data=True)]
@@ -3243,12 +3286,24 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
             for c in mde_results[t]['SELECTED_COLUMNS']:
                 if c not in selected_union:
                     selected_union.append(c)
+        lagged_leaves = {}   # MODE='GMN' has no nested-MDE graph, so no leaves
 
+    # Lagged leaf nodes are graph nodes in their own right, and
+    # partition_network() classifies them as external inputs -- which gmn
+    # feeds from real data BY NODE NAME (see _generalized_node_generate()).
+    # So the exported frame needs one column per leaf, holding that
+    # observable's value abs(delay) rows in the past, exactly as
+    # expand_delay_columns() builds it for the MDE candidate pool.
+    node_columns = targets + selected_union
     data_after_mde = (
-        df[targets + selected_union]
+        df[[n for n in node_columns if n not in lagged_leaves]]
         .iloc[:len(df)]
         .reset_index(drop=True)
     )
+    for leaf, (observable, lag) in lagged_leaves.items():
+        data_after_mde[leaf] = (
+            df[observable].shift(-lag).iloc[:len(df)].reset_index(drop=True))
+    data_after_mde = data_after_mde[node_columns]   # restore graph-node order
     data_after_mde.insert(0, 'Time', np.arange(len(data_after_mde)))
     data_after_mde_file = results_dir / f'data_after_mde_{network_id}.csv'
     data_after_mde.to_csv(data_after_mde_file, index=False)
@@ -3887,7 +3942,6 @@ def build_search_fingerprint(cfg, net_result, data_file_sha256, code_fingerprint
         'cross_map_rho_min': cfg['CROSS_MAP_RHO_MIN'],
         'exclusion_radius': cfg['EXCLUSION_RADIUS_VALUE'],
         'gmn_exclusion_radius': cfg['GMN_EXCLUSION_RADIUS'],
-        'stage2_allow_real_observables': cfg['STAGE2_ALLOW_REAL_OBSERVABLES'],
         'nested_m': cfg['NESTED_M'],
         'region_channel_cap': cfg['REGION_CHANNEL_CAP'],
         'lib_ratio': cfg['LIB_RATIO'],
@@ -3924,7 +3978,6 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
                                prediction_length, metric, target_metric, gamma_delta,
                                ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
                                data_file, data_file_sha256, code_fingerprint,
-                               stage2_allow_real_observables=False,
                                gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
                                target_ranking_window_rows=1000, min_pred_events=20,
                                max_window_rows=30000,
@@ -3973,7 +4026,6 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
         'cross_map_rho_min': cross_map_rho_min,
         'exclusion_radius': exclusion_radius,
         'delay_set': list(delay_set) if delay_set is not None else None,
-        'stage2_allow_real_observables': stage2_allow_real_observables,
         'e_vals': list(e_range),
         'tau_vals': list(tau_range),
         'metric': metric,
@@ -5533,8 +5585,7 @@ def main():
             nested_n=cfg['MDE_D'], nested_m=cfg['NESTED_M'],
             embed_dim_rho_min=cfg['EMBED_DIM_RHO_MIN'], cross_map_rho_min=cfg['CROSS_MAP_RHO_MIN'],
             exclusion_radius=cfg['EXCLUSION_RADIUS_VALUE'],
-            lag_set=cfg['LAG_SET'], stage2_allow_real_observables=cfg['STAGE2_ALLOW_REAL_OBSERVABLES'],
-            tp=cfg['TP'],
+            lag_set=cfg['LAG_SET'], tp=cfg['TP'],
             reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],
             run_cache_dir=cfg['RUN_CACHE_DIR'],
             data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,

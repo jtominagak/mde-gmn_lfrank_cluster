@@ -58,7 +58,7 @@ def _toy_df():
                           'C': rng.normal(size=20), 'D': rng.normal(size=20)})
 
 
-def _run(module, fake_run_mde_for_target, extra_kwargs):
+def _run(module, fake_run_mde_for_target, extra_kwargs, stage2_kwargs):
     call_log = []
     module.run_mde_for_target = fake_run_mde_for_target(PLAN, call_log)
     module.ProcessPoolExecutor = FakeProcessPoolExecutor
@@ -80,7 +80,7 @@ def _run(module, fake_run_mde_for_target, extra_kwargs):
         delay_set=[],
         tp=1,
         lag_set=[-1],
-        stage2_allow_real_observables=True,
+        **stage2_kwargs,
         **extra_kwargs,
     )
     return graph, edges_df, call_log
@@ -136,6 +136,7 @@ def test_tsls():
          'target_ranking_window_rows': 200, 'min_pred_events': 5, 'max_window_rows': 30000,
          'ccm_lib_sizes_rows': (10, 50), 'ccm_sample': 2,
          'ccm_slope': 0.01, 'cores': 2},
+        {},
     )
     _check('tsls-mde-gmn.py', graph, edges_df, call_log)
 
@@ -144,6 +145,7 @@ def test_simple():
     module = load_pipeline_module('simple-mde-gmn.py', '_test_simple_mde_gmn_r13')
     graph, edges_df, call_log = _run(
         module, make_fake_run_mde_for_target_simple, {'cores': 2},
+        {'stage2_allow_real_observables': True},
     )
     _check('simple-mde-gmn.py', graph, edges_df, call_log)
 
