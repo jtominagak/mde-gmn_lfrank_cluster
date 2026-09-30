@@ -2,6 +2,7 @@
 importable via a plain `import` statement) as modules for testing, and for
 faking run_mde_for_target() so build_nested_mde_network()'s BFS/recursion
 logic can be exercised without real MDE/CCM computation or real data.'''
+import importlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -13,19 +14,61 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = REPO_ROOT / 'scripts' / 'src'
 
 
+# The order the mde_gmn package itself documents (see its __init__.py). Used
+# only to assemble the namespace below; a later module wins a name clash, of
+# which there are none today.
+_PACKAGE_MODULES = (
+    'columns', 'progress', 'tsls_data', 'caching', 'mde', 'network',
+    'gmn_embedding', 'gmn_build', 'theta', 'generate', 'plots', 'diagnostics',
+    'config', 'pipeline',
+)
+
+
 def load_pipeline_module(filename, module_name):
-    '''Loads scripts/src/<filename> as a fresh module named `module_name`
-    (must be unique per test process -- re-loading under the same name
-    would reuse the cached sys.modules entry). Safe to call for
-    tsls-mde-gmn.py / simple-mde-gmn.py: both only monkeypatch gmn.Node
-    and define names at import time, no env-var-dependent top-level code
-    (that's all inside load_config()/main(), guarded by
-    `if __name__ == "__main__"`).'''
+    '''Loads scripts/src/<filename> so a test can reach the pipeline's
+    functions as attributes of one object.
+
+    For simple-mde-gmn.py that object is the module itself: that pipeline is
+    still one file, and every name it defines is on it.
+
+    For tsls-mde-gmn.py it is a namespace assembled from the mde_gmn package.
+    Phase 2 moved that pipeline's code into one module per stage and left the
+    entry script as four lines, so there is no longer a single module holding
+    build_nested_mde_network, _metric_for and run_mde_evaluate at once -- but
+    the tests are written against both pipelines with the same attribute
+    access, and the point of the tests is the behaviour, not which file a
+    function sits in. The namespace holds the real objects from the real
+    modules, so `ns.build_nested_mde_network.__module__` still names
+    mde_gmn.network, which is how install_fake_mde() finds where to patch.
+
+    It is a snapshot taken at load time, so patch the module (see
+    install_fake_mde) rather than the namespace. `module_name` must be unique
+    per test process: re-loading under a name already in sys.modules would
+    hand back the cached module instead of a fresh one.
+    '''
     spec = importlib.util.spec_from_file_location(module_name, SRC_DIR / filename)
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
-    return module
+    if hasattr(module, 'build_nested_mde_network'):
+        return module                       # one-file pipeline, nothing to assemble
+    return _package_namespace()
+
+
+def _package_namespace():
+    '''Every top-level name in the mde_gmn package, flattened onto one object.
+
+    Includes the modules' own imports (`gmn`, `tsls`, `np`), which is
+    deliberate: tests read those through the pipeline module too, and they are
+    the same objects the pipeline itself uses.
+    '''
+    namespace = SimpleNamespace()
+    for name in _PACKAGE_MODULES:
+        module = importlib.import_module(f'mde_gmn.{name}')
+        for attr, value in vars(module).items():
+            if not attr.startswith('__'):
+                setattr(namespace, attr, value)
+    return namespace
 
 
 def _fake_result(plan, call_log, cache_stage, target):

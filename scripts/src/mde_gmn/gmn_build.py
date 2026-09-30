@@ -172,10 +172,21 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                    reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                    data_file=None, data_file_sha256=None, code_fingerprint=None,
                    gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
-                   external_input_mode='real_data', progress_log_path=None):
+                   external_input_mode='real_data', progress_log_path=None,
+                   network_builder=None):
     '''Build one network spanning `targets` and their driver candidates, via
-    one of two unrelated constructions depending on `mode` -- same
-    mode-branch restructuring as simple-mde-gmn.py's own build_network():
+    one of two unrelated constructions depending on `mode`.
+
+    network_builder: which nested-MDE implementation to use for
+    mode == 'MDE-GMN'. Defaults to network.build_nested_mde_network (one MDE
+    call at a time, in breadth-first waves). The GPU branch's parallel-MDE
+    pipeline passes network_parallel.build_nested_mde_network instead, which
+    computes the MDE results up front and then replays them. Both produce the
+    same network; this argument is the only difference between the two
+    pipelines at this level.
+
+    The two constructions, same mode-branch restructuring as
+    simple-mde-gmn.py's own build_network():
       - mode == 'MDE-GMN': two-stage nested-MDE, both stages unified into
         build_nested_mde_network()'s own BFS, no apps.CreateNetwork() call
         -- see simple-mde-gmn.py's own build_network() docstring for the
@@ -241,7 +252,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
             # 2026-08-27, R12: Stage 2's own real-observable selections
             # still recurse exactly like Stage 1's, just after Stage 1
             # completes rather than interleaved with it wave-by-wave).
-            graph, _, _ = build_nested_mde_network(
+            graph, _, _ = (network_builder or build_nested_mde_network)(
                 targets, df, observable_columns, observable_columns,
                 prediction_start, prediction_length,
                 nested_n, nested_m, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
