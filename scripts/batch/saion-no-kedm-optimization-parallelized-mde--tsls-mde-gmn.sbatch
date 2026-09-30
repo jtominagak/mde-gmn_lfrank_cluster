@@ -668,11 +668,15 @@ trap cleanup EXIT
 # gpu_edm.py must be staged: the pipeline puts its own directory at the head
 # of sys.path, and a missing gpu_edm would turn every GPU MDE call into an
 # ImportError-recorded dead end (an empty network, not a crash).
+# The mde_gmn/ PACKAGE is staged too, not just the entry script: the pipeline
+# is split across its modules (see scripts/src/mde_gmn/__init__.py). Without
+# it the entry script fails at import.
 cp -a \
     "$PROJ_DIR/scripts/src/$PY_NAME" \
     "$PROJ_DIR/scripts/src/cleaned_helper_functions.py" \
     "$PROJ_DIR/scripts/src/gpu_edm.py" \
-    "$STAGE_SRC"/ || die "staging source files failed"
+    "$STAGE_SRC"/
+cp -a "$PROJ_DIR/scripts/src/mde_gmn" "$STAGE_SRC"/ || die "staging source files failed"
 [ -r "$BUCKET_DATA_DIR/${DATA_FILE}" ] || die "input data not found on Bucket: $BUCKET_DATA_DIR/${DATA_FILE}"
 cd "$STAGE_SRC" || die "cd $STAGE_SRC failed"
 

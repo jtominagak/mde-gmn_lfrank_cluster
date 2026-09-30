@@ -313,6 +313,22 @@ from pydiffmap import diffusion_map as dmap
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cleaned_helper_functions as tsls  # noqa: E402 -- import after sys.path edit above
 
+# ---- this pipeline's own package (see mde_gmn/__init__.py for the
+# module map and dependency direction) ----------------------------------
+from mde_gmn.caching import (
+    _hash_file, _load_pickle_cache_entry, build_code_fingerprint,
+    build_mde_selection_fingerprint, build_multi_mde_selection_fingerprint,
+    build_network_fingerprint, build_search_fingerprint, build_start_sweep_fingerprint,
+    find_cached, find_cached_best_params, save_best_params, save_json_to_cache,
+    save_pickle_to_cache)
+from mde_gmn.columns import (
+    DELAY_MARKER, _delayed_column_name, derive_lag_set, effective_mde_dimension,
+    expand_delay_columns, observable_and_delay)
+from mde_gmn.progress import HEARTBEAT_SECONDS, _format_eta, _log_progress
+from mde_gmn.tsls_data import (
+    _ccm_window, _metric_for, _preview_window_rows, _resolve_target_ranking_window,
+    burn_in_trim, convert_to_tsls, raw_neuron_columns)
+
 
 # =============================================================================
 # Generalized per-driver-delay embedding -- ported UNCHANGED from
@@ -1502,227 +1518,20 @@ def load_config():
 # cell for the full rationale)
 # =============================================================================
 
-def region_neuron_columns(df, prefix, n):
-    candidates = [f'{prefix}{i}' for i in range(n)]
-    return [c for c in candidates if c in df.columns]
 
 
-def raw_neuron_columns(df, cap):
-    return (
-        region_neuron_columns(df, 'CA1_', cap)
-        + region_neuron_columns(df, 'mPFC_', cap)
-        + region_neuron_columns(df, 'OFC_', cap)
-    )
 
 
-def convert_to_tsls(df_raw, neuron_columns, targets, results_dir):
-    '''Spike counts -> TSLS for every candidate channel; behavioral TARGETS
-    columns pass through untouched (they are already continuous, not spike
-    counts). Returns the full (not yet burn-in-trimmed) TSLS DataFrame and
-    the list of its _tsls-suffixed observable columns.'''
-    time_grid = df_raw['time_bin_center'].to_numpy()
-
-    data = {'time_bin_center': time_grid}
-    for t in targets:
-        data[t] = df_raw[t].to_numpy()
-
-    for i, neuron in enumerate(neuron_columns):
-        spike_times = df_raw.loc[df_raw[neuron] > 0, 'time_bin_center'].to_numpy()
-        data[f'{neuron}_tsls'] = tsls.compute_time_since_previous_spike(spike_times, time_grid)
-        if (i + 1) % 100 == 0 or i + 1 == len(neuron_columns):
-            print(f'  TSLS-converted {i + 1}/{len(neuron_columns)} channels', flush=True)
-
-    tsls_df_full = pd.DataFrame(data)
-    tsls_df_full.to_csv(results_dir / 'tsls_data_full.csv', index=False)
-    observable_columns = [f'{n}_tsls' for n in neuron_columns]
-    print(f'-> tsls_data_full.csv  shape={tsls_df_full.shape}', flush=True)
-    return tsls_df_full, observable_columns
 
 
-def burn_in_trim(tsls_df_full, observable_columns, results_dir):
-    '''Drop leading rows until every observable_columns entry is non-NaN
-    (see module docstring for why this is a correctness requirement for the
-    gmn.Node Generate()/Forecast() handoff, not just cleanliness). Raises
-    if any candidate channel never fires at all in this window.'''
-    first_valid_idx = tsls_df_full[observable_columns].notna().idxmax()
-    never_valid = [c for c in observable_columns if not tsls_df_full[c].notna().any()]
-    if never_valid:
-        raise ValueError(
-            f'{len(never_valid)} channel(s) never fire in this window, TSLS is '
-            f'all-NaN: {never_valid} -- widen the window or drop these channels.'
-        )
-
-    burn_in_rows = int(first_valid_idx.max())
-    slowest_channel = first_valid_idx.idxmax()
-    df = tsls_df_full.iloc[burn_in_rows:].reset_index(drop=True)
-
-    df.to_csv(results_dir / 'tsls_data_trimmed.csv', index=False)
-    print(f'Burn-in: dropped first {burn_in_rows}/{len(tsls_df_full)} rows '
-          f'({burn_in_rows / len(tsls_df_full):.1%}) -- slowest channel to fire: {slowest_channel}',
-          flush=True)
-    print(f'-> tsls_data_trimmed.csv  shape={df.shape}', flush=True)
-    return df
 
 
-def _ccm_window(df, lib_ratio, max_rows):
-    '''Bound the row count fed into any percentage-based CCM libSize sweep
-    to max_rows, preserving lib_ratio's proportion within that smaller
-    window. See load_config()'s CCM_WINDOW_ROWS docstring for why this is
-    necessary (not optional) for CCM's convergence gate to mean anything at
-    this pipeline's row counts.'''
-    n = min(len(df), max_rows)
-    windowed = df.iloc[:n].reset_index(drop=True)
-    lib_end = max(1, int(round(n * lib_ratio)))
-    return windowed, lib_end
 
 
-def _resolve_target_ranking_window(target, full_df, usable_df, lib_ratio,
-                                    is_behavioral_target, target_ranking_window_rows,
-                                    min_pred_events, max_window_rows):
-    '''Window-sizing fix (found while verifying R22, docs/review-actions-v1.md
-    -- see docs/review-findings.md's own window-sizing section for the full
-    real-data investigation, including the two abandoned designs this
-    replaces): resolves the ranking-stage/E-auto-select window for one
-    node's own run_mde_for_target() call, decoupled from CCM_WINDOW_ROWS
-    (which stays governing the CCM gate's own convergence-curve library
-    sizing, now via absolute row counts -- see `ccm_lib_sizes_rows` in
-    run_mde_for_target()'s own docstring -- not this function's own frame
-    size at all).
-
-    BEHAVIORAL TARGETS (`is_behavioral_target=True`, always true at the
-    depth-0 seed): no TSLS reset-event concept applies (the target is a
-    genuine continuous trace, correlation-scored) -- window is simply
-    `min(target_ranking_window_rows, len(usable_df))`, a fixed constant
-    (default 1000), unrelated to firing rate. `min_pred_events` is not
-    used, `max_window_rows` is not used, and the returned event count is
-    always `None`.
-
-    NEURON TARGETS (`is_behavioral_target=False`, virtually every Stage 1/
-    Stage 2 node): grow the window W (in rows); within W, the PRED portion
-    is its own last `1 - lib_ratio` fraction of ROWS (the same split
-    `_ccm_window()` will later carve out of this exact W for the CCM
-    gate -- see that function). Count `target`'s real reset events that
-    fall in that row range -- never by events, only ever by rows -- and
-    stop at the smallest W where that count is >= `min_pred_events`.
-    `min_pred_events` is a plain, fixed integer (not a fraction of
-    anything neuron-specific): it answers "how many matched events does
-    f1 need before it is signal rather than noise", which is a property
-    of the metric, not of the neuron (see docs/review-findings.md for the
-    full reasoning behind abandoning the earlier
-    fraction-of-a-neuron's-own-total-events design, which made a busy
-    neuron face a stricter test than a quiet one for no stated reason, and
-    which -- checked against the WHOLE window rather than its pred
-    portion -- was later found on real data to pass while the pred
-    portion itself still had too few events to score anything on).
-
-    The search never grows W past `min(max_window_rows, len(usable_df))`
-    -- `max_window_rows` is a plain compute ceiling (not calibrated; see
-    load_config()'s own docstring), `len(usable_df)` is the leakage-safe
-    boundary this function's own caller has already trimmed to (see
-    run_mde_for_target()'s own LEAKAGE docstring). ALL event counting here
-    happens strictly within `usable_df` (i.e. `[0, B)`) -- never using
-    `full_df` rows at or past B, since sizing a search parameter from
-    held-out data is the same class of leakage the B boundary exists to
-    prevent (`full_df` is accepted only for signature symmetry with the
-    behavioral branch and is not read in this branch).
-
-    Returns (window_rows, pred_event_count). On success, `pred_event_count`
-    is the achieved count in the resolved window's own pred portion
-    (>= min_pred_events). On failure (`min_pred_events` unreachable
-    anywhere within the cap), returns (None, pred_event_count) where
-    pred_event_count is the best (largest) count achieved at ANY window
-    size tried, not necessarily at the cap itself -- the pred portion's
-    own event count is not guaranteed monotonic in W (both its edges only
-    ever move forward as W grows, but an event row can age out of the
-    portion's left edge in the same step before any new event row enters
-    at the right, so the count can dip locally) -- the caller can and
-    should report the shortfall as `min_pred_events - pred_event_count`
-    rather than silently scoring the node on too few events.'''
-    n_usable = len(usable_df)
-    if is_behavioral_target:
-        return min(target_ranking_window_rows, n_usable), None
-
-    cap = min(max_window_rows, n_usable)
-    if cap < 1:
-        return None, 0
-
-    usable_vals = usable_df[target].to_numpy()[:cap]
-    near_zero_threshold = tsls.infer_near_zero_threshold_from_true_tsls(
-        full_df[target].to_numpy())
-    # detect_reset_events_from_tsls classifies each row from only that row
-    # and the one before it (np.diff(..., prepend=x[0])), so truncating the
-    # input to `cap` rows first cannot change any detection within [0, cap).
-    event_indices = tsls.detect_reset_events_from_tsls(
-        usable_vals, near_zero_threshold=near_zero_threshold, drop_threshold=0.0)
-
-    # event_indices is sorted, so searchsorted gives the exact cumulative
-    # count up to any row bound with no explicit loop. pred_start[i] is the
-    # first row of the pred portion for window size w_candidates[i] -- the
-    # same `round(w * lib_ratio)` formula _ccm_window() uses for its own
-    # lib_end, so the final resolved window's pred portion here is exactly
-    # what the CCM gate will later carve out of it too.
-    w_candidates = np.arange(1, cap + 1)
-    pred_start = np.round(w_candidates * lib_ratio).astype(int)
-    lo = np.searchsorted(event_indices, pred_start, side='left')
-    hi = np.searchsorted(event_indices, w_candidates, side='left')
-    pred_events_up_to_w = hi - lo
-
-    passing = pred_events_up_to_w >= min_pred_events
-    if not passing.any():
-        # Best count seen at ANY window size tried, not just at the cap --
-        # see this function's own docstring for why the two can differ.
-        return None, int(pred_events_up_to_w.max())
-    first = int(np.argmax(passing))
-    return int(w_candidates[first]), int(pred_events_up_to_w[first])
 
 
-def _preview_window_rows(node, full_df, delay_set, prediction_start, prediction_length, tp,
-                          is_behavioral_target, target_ranking_window_rows,
-                          min_pred_events, max_window_rows):
-    '''Speculative, read-only resolve of one node's own expected ranking-
-    window size, called from the progress-monitoring log's own ETA
-    estimate (see _format_eta()'s per-window-row mode) BEFORE that node's
-    real run_mde_for_target() call -- independent of, and without any
-    effect on, the real resolve that call performs later. Node cost scales
-    roughly with resolved window size (see _resolve_target_ranking_window()
-    itself), so this gives the monitoring log a real cost signal per
-    pending node instead of treating every node as equally expensive.
-
-    Mirrors run_mde_for_target()'s own usable_df/lib_ratio derivation
-    exactly (see that function's own LEAKAGE docstring), narrowed to just
-    `node`'s own column -- cheap relative to the real MDE call it is
-    estimating (a single-column slice plus one vectorized event-count
-    search, not the full candidate-pool ranking sweep). Returns 0 (not a
-    real window size) if the node turns out unreachable -- an unreachable
-    node fails fast in the real call regardless, so weighting it as
-    negligible cost for the ETA is reasonable, not misleading.
-
-    Behavioral targets short-circuit before touching `full_df` at all:
-    `_resolve_target_ranking_window()`'s own behavioral branch never reads
-    the target's column either (the window is the fixed
-    `target_ranking_window_rows`, capped by available rows) -- mirroring
-    that here avoids requiring `full_df` to even contain this node's own
-    column for a case where the real resolve never looks at it.'''
-    warmup = max((abs(d) for d in delay_set), default=0)
-    usable_end = prediction_start + prediction_length - tp
-    n_usable = usable_end - warmup
-    if is_behavioral_target:
-        return min(target_ranking_window_rows, n_usable)
-    usable_df = full_df[[node]].iloc[warmup:usable_end].reset_index(drop=True)
-    lib_ratio = (prediction_start - warmup) / max(1, n_usable)
-    window_rows, _ = _resolve_target_ranking_window(
-        node, full_df, usable_df, lib_ratio,
-        is_behavioral_target, target_ranking_window_rows, min_pred_events, max_window_rows,
-    )
-    return window_rows or 0
 
 
-def _metric_for(column, targets, metric, target_metric):
-    '''TARGETS (continuous behavioral traces) always score via
-    target_metric ('correlation'); everything else (TSLS-converted neuron
-    columns) uses metric ('f1' by default) -- see load_config()'s
-    TARGET_METRIC docstring for why this split is required, not cosmetic.'''
-    return target_metric if column in targets else metric
 
 
 # =============================================================================
@@ -1732,131 +1541,18 @@ def _metric_for(column, targets, metric, target_metric):
 # `_tsls`-suffixed column names.
 # =============================================================================
 
-DELAY_MARKER = '::delay'
 
 
-def _delayed_column_name(observable, delay):
-    return f'{observable}{DELAY_MARKER}{delay}'
 
 
-def _parse_delayed_column_name(name):
-    observable, _, delay_str = name.rpartition(DELAY_MARKER)
-    return observable, int(delay_str)
 
 
-def observable_and_delay(column_name, raw_columns):
-    '''Maps a (possibly delay-expanded) candidate column name back to its
-    underlying (observable, delay) pair. Delay=0 candidates are just the
-    raw observable name itself (see expand_delay_columns()'s docstring for
-    why that delay isn't also given a suffixed alias) -- checked against
-    `raw_columns` FIRST rather than by string shape alone, in case a real
-    channel name were ever to collide with the delay-suffix marker
-    (membership is the authoritative signal whenever available).
-
-    Falls back to a marker-presence check (bug found 2026-08-25, job
-    39605472/39605473 -- ported from simple-mde-gmn.py's own identical
-    fix) when `column_name` isn't in `raw_columns` at all. Originally this
-    triggered on every run, because depth-0's mde_results entry used to be
-    computed in main() against the *full*, unfiltered candidate pool,
-    before ccm_prefilter_observables() ever ran -- main() now runs the
-    pre-filter first and seeds depth-0 from the *same* filtered pool
-    build_nested_mde_network() itself uses, so that original mismatch no
-    longer happens on a normal run. The fallback stays as a cache-reuse
-    safety net: with REUSE_BEST_PARAMS, a reused mde_results entry can come
-    from an earlier job that used a different CCM_PREFILTER_RHO_MIN/E (or
-    predates the pre-filter feature entirely), so its SELECTED_COLUMNS can
-    still legitimately reference an observable absent from *this* run's
-    (filtered) `raw_columns`. Without this fallback,
-    _parse_delayed_column_name() crashes on any such name (confirmed:
-    `ValueError: invalid literal for int() with base 10: 'CA1_12_tsls'`)
-    since it has no delay marker to parse. Residual risk is unchanged from
-    before this fallback existed: only a real channel name that is BOTH
-    missing from `raw_columns` AND happens to contain the literal
-    `DELAY_MARKER` substring would still be misclassified -- this
-    codebase's actual naming scheme never produces that.'''
-    if column_name in raw_columns:
-        return column_name, 0
-    if DELAY_MARKER not in column_name:
-        return column_name, 0
-    return _parse_delayed_column_name(column_name)
 
 
-def expand_delay_columns(df, columns, delay_set):
-    '''Adds one new column per (observable, delay) pair in `columns` x
-    `delay_set` (delay=0 excluded -- the observable's own raw column
-    already IS that pair, no separate alias needed) to a copy of `df`, each
-    holding that observable's value abs(delay) rows in the past
-    (pandas .shift() -- every delay is <= 0). This is what lets forward
-    selection treat each (observable, delay) combination as its own
-    independent candidate driver, instead of being stuck with one fixed lag
-    applied uniformly to every column -- see build_nested_mde_network()'s
-    docstring for how the selected pairs become graph edges.
-
-    Returns (expanded_df, expanded_columns) -- expanded_columns is
-    `columns` (representing delay=0) plus one new name per nonzero delay,
-    in the format observable_and_delay() parses back.'''
-    expanded = df.copy()
-    expanded_columns = list(columns)
-    for observable in columns:
-        for delay in delay_set:
-            if delay == 0:
-                continue
-            name = _delayed_column_name(observable, delay)
-            expanded[name] = df[observable].shift(-delay)
-            expanded_columns.append(name)
-    return expanded, expanded_columns
 
 
-def derive_lag_set(delay_source, explicit_delay_set, lag_mode, lag_density, lag_step,
-                    generate_length, mde_lib_size, min_lib_rows=50):
-    '''Resolves the nonzero-delay set used for Stage 2's lagged-driver
-    candidate pool (build_nested_mde_network()'s own Stage-2 pass) and,
-    unioned with {0}, every node's unconditional self_delay_set -- see
-    load_config()'s DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP docstrings
-    for the parameter semantics. Ported unchanged from simple-mde-gmn.py.
-
-    delay_source='explicit': just the hand-picked delay_set list, stripped
-    of any 0 entry.
-
-    delay_source='lag_mode': auto-derived --
-      lag_mode='generation_length_adjusted': bound = generate_length.
-      lag_mode='every_lag_possible': bound = mde_lib_size - min_lib_rows
-        (clamped to >= 1) -- as deep as the MDE library segment [0, A)
-        structurally allows while reserving min_lib_rows real rows so MDE's
-        own forward-selection still has a meaningful library left after the
-        deepest lag's warm-up NaN rows are skipped.
-    Either bound is then sampled every lag_step rows (lag_density='strided')
-    or every single integer lag (lag_density='dense').
-
-    Returns a sorted-descending list of negative ints -- no 0 entry, same
-    convention as the explicit-source path above.'''
-    if delay_source == 'explicit':
-        return sorted((d for d in explicit_delay_set if d != 0), reverse=True)
-
-    if lag_mode == 'generation_length_adjusted':
-        bound = max(1, generate_length)
-    elif lag_mode == 'every_lag_possible':
-        bound = max(1, mde_lib_size - min_lib_rows)
-    else:
-        raise ValueError(f"Unknown lag_mode: {lag_mode!r}")
-
-    step = lag_step if lag_density == 'strided' else 1
-    if lag_density not in ('strided', 'dense'):
-        raise ValueError(f"Unknown lag_density: {lag_density!r}")
-
-    return list(range(-1, -bound - 1, -step))
 
 
-def effective_mde_dimension(mde_d, candidate_columns, num_delays):
-    '''MDE_D names the desired count of distinct *real* observables MDE
-    should be able to select -- not delay-expanded columns. Each real
-    observable occupies `num_delays` separate candidate columns (one per
-    delay), so the D actually handed to proper_mde is scaled up by
-    num_delays -- see simple-mde-gmn.py's own docstring for the full
-    rationale (identical here). Capped at the number of real observables
-    actually present in this call's own candidate pool.'''
-    num_real_observables_available = len(candidate_columns) // num_delays
-    return min(mde_d, num_real_observables_available) * num_delays
 
 
 # =============================================================================
@@ -2501,66 +2197,10 @@ def build_interaction_matrix(data_lib, nodes, targets, ccm_E, ccm_tau, metric, t
 # still running, even if none of them have finished yet -- frequent enough
 # to show real liveness on a run that used to go silent for hours, not so
 # frequent it adds meaningful I/O overhead or log noise.
-HEARTBEAT_SECONDS = 300
 
 
-def _log_progress(log_path, message):
-    '''Appends one timestamped line to the progress-monitoring log (see
-    load_config()'s own PROGRESS_LOG_PATH -- flash, not bucket, so it's
-    readable while a job is still running, and survives independently of
-    the bucket-archival step). Every write is flushed and fsynced
-    immediately -- this is a diagnostic log for a pipeline with a real
-    history of runs that never finish (see JOB_LOG.md), so a line must
-    survive a crash/OOM/timeout the instant after it's written, not just
-    on a clean close. `log_path=None` is a silent no-op (callers that
-    don't have one, e.g. tests, never need to guard every call site with
-    an `if`).
-
-    Only ever called from the main process -- Stage 1/Stage 2 worker
-    processes (run inside ProcessPoolExecutor) are never given this path,
-    so there is no concurrent-writer question to solve here (see this
-    module's own docstring section on the monitoring log for why timing
-    is measured from the orchestrating process's own submit/as_completed
-    calls instead of from inside proper_mde itself).'''
-    if log_path is None:
-        return
-    with open(log_path, 'a') as f:
-        f.write(f'{datetime.now().isoformat()} {message}\n')
-        f.flush()
-        os.fsync(f.fileno())
 
 
-def _format_eta(durations, n_remaining, per_unit=None, unit_remaining=None):
-    '''Rough remaining-time estimate for a monitoring-log heartbeat/summary
-    line, from durations already observed *in this same run* (never across
-    jobs -- see load_config()'s own PROGRESS_LOG_PATH docstring for why).
-
-    Two modes:
-    - Flat per-task average: pass `durations` (list of completed task
-      durations, seconds) and `n_remaining` (how many more of that same
-      task type are left) -- estimate is `mean(durations) * n_remaining`.
-    - Per-window-row rate (used for Stage 1/Stage 2 nodes, whose own cost
-      scales roughly with resolved window size -- see
-      _resolve_target_ranking_window()): pass `per_unit` (list of
-      observed seconds-per-window-row, one entry per completed node) and
-      `unit_remaining` (total window rows still queued across pending
-      nodes) instead of/alongside durations -- estimate is
-      `mean(per_unit) * unit_remaining`. Falls back to the flat estimate
-      if `per_unit` has no observations yet (e.g. the very first node in
-      a wave).
-
-    Returns '' (not an estimate) when there is nothing completed yet to
-    base one on -- an ETA fabricated from zero observations would be
-    actively misleading, not just uninformative.'''
-    if per_unit and unit_remaining is not None and unit_remaining > 0:
-        rate = sum(per_unit) / len(per_unit)
-        return (f' (~{rate * unit_remaining:.0f}s remaining, based on {len(per_unit)} '
-                f'completed node(s) averaging {rate * 1000:.2f}ms/window-row)')
-    if durations and n_remaining and n_remaining > 0:
-        mean_s = sum(durations) / len(durations)
-        return (f' (~{mean_s * n_remaining:.0f}s remaining, based on {len(durations)} '
-                f'completed averaging {mean_s:.1f}s each)')
-    return ''
 
 
 def _failed_mde_result(target):
@@ -4238,369 +3878,38 @@ def build_gmn_config(net_result, prediction_start, prediction_length, results_di
 # fields simple-mde-gmn.py already fingerprints.
 # =============================================================================
 
-def _hash_file(path, chunk_size=1 << 20):
-    '''sha256 of a file's actual bytes -- ported unchanged from
-    simple-mde-gmn.py.'''
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(chunk_size), b''):
-            h.update(chunk)
-    return h.hexdigest()
 
 
-def _strip_docstrings(tree):
-    '''Removes every module/class/function docstring from an AST in place
-    -- ported unchanged from simple-mde-gmn.py.'''
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-            body = node.body
-            if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
-                    and isinstance(body[0].value.value, str)):
-                body.pop(0)
-    return tree
 
 
-def _pipeline_code_fingerprint():
-    '''SHA-256 of this file's own normalized AST (docstrings stripped) --
-    ported unchanged from simple-mde-gmn.py, applied to this file.'''
-    tree = ast.parse(Path(__file__).read_text())
-    _strip_docstrings(tree)
-    return hashlib.sha256(ast.dump(tree).encode()).hexdigest()
 
 
-def _environment_fingerprint():
-    '''Captures the installed numerical/algorithmic dependencies this
-    pipeline's cached stages actually run through. Unlike simple-mde-gmn.py:
-    no `dimx` (not imported at all in this pipeline) and no
-    `apps.InteractionMatrix` (MODE='GMN' here uses proper_ccm instead, no
-    subprocess); `cleaned_helper_functions` (this pipeline's own TSLS-aware
-    scoring engine, not an installed package) is content-hashed directly,
-    same approach as `apps.CreateNetwork` (still used for MODE='GMN''s own
-    network object).'''
-    versions = {}
-    for pkg in ('gmn', 'pyEDM', 'networkx', 'numpy', 'pandas'):
-        try:
-            versions[pkg] = importlib.metadata.version(pkg)
-        except importlib.metadata.PackageNotFoundError:
-            versions[pkg] = None
-    for mod_name in ('apps.CreateNetwork',):
-        mod = importlib.import_module(mod_name)
-        versions[mod_name] = _hash_file(Path(mod.__file__))
-    versions['cleaned_helper_functions'] = _hash_file(Path(tsls.__file__))
-    return versions
 
 
-def build_code_fingerprint():
-    '''Combines _pipeline_code_fingerprint() and _environment_fingerprint()
-    into the single value every cache fingerprint embeds -- ported
-    unchanged from simple-mde-gmn.py. Computed once per job in main()
-    (gated by TSLS_MDE_GMN_REUSE_BEST_PARAMS) and threaded down as a plain
-    argument rather than recomputed per call.'''
-    return {'source': _pipeline_code_fingerprint(), 'environment': _environment_fingerprint()}
 
 
-def build_search_fingerprint(cfg, net_result, data_file_sha256, code_fingerprint):
-    '''Everything that determines one network's theta search outcome
-    (run_theta_search()) -- ported from simple-mde-gmn.py, with TSLS's own
-    scoring/CCM-calibration knobs folded in (they shape the network's own
-    topology/selection outcome just as much as MDE_D/NESTED_M/etc. do) and
-    `exclusion_radius` simplified to the plain value directly (no 'auto'
-    mode to normalize against here, unlike simple-mde-gmn.py).'''
-    graph = net_result['network']['Graph']
-    return {
-        'mode': cfg['MODE'],
-        'gmn_mode': cfg['GMN_MODE'],
-        'targets': sorted(net_result['targets']),
-        'mde_d': cfg['MDE_D'],
-        'multi_mde_e': cfg['MULTI_MDE_E'],
-        'multi_mde_target_aggregate': cfg['MULTI_MDE_TARGET_AGGREGATE'],
-        'tp': cfg['TP'],
-        'embed_dim_rho_min': cfg['EMBED_DIM_RHO_MIN'],
-        'cross_map_rho_min': cfg['CROSS_MAP_RHO_MIN'],
-        'exclusion_radius': cfg['EXCLUSION_RADIUS_VALUE'],
-        'gmn_exclusion_radius': cfg['GMN_EXCLUSION_RADIUS'],
-        'nested_m': cfg['NESTED_M'],
-        'region_channel_cap': cfg['REGION_CHANNEL_CAP'],
-        'lib_ratio': cfg['LIB_RATIO'],
-        'mde_validation_ratio': cfg['MDE_VALIDATION_RATIO'],
-        'generate_length': cfg['GENERATE_LENGTH'],
-        'lag_set': list(cfg['LAG_SET']),
-        'e_vals': list(cfg['E_RANGE']),
-        'tau_vals': list(cfg['TAU_RANGE']),
-        'theta_vals': list(cfg['THETA_RANGE']),
-        'metric': cfg['METRIC'],
-        'target_metric': cfg['TARGET_METRIC'],
-        'gamma_delta': cfg['GAMMA_DELTA'],
-        'ccm_window_rows': cfg['CCM_WINDOW_ROWS'],
-        'ccm_lib_size_pcts': list(cfg['CCM_LIB_SIZE_PCTS']),
-        'ccm_sample': cfg['CCM_SAMPLE'],
-        'ccm_slope': cfg['CCM_SLOPE'],
-        'data_file': cfg['DATA_FILE'],
-        'data_file_sha256': data_file_sha256,
-        'prediction_start': cfg['PREDICTION_START'],
-        'prediction_length': cfg['PREDICTION_LENGTH'],
-        'network_nodes': sorted(graph.nodes),
-        # R14: doesn't change topology (build_network_fingerprint()'s own
-        # concern), but does change what Generate()/theta search actually
-        # do with a zero-driver node -- belongs here, not there.
-        'external_input_mode': cfg['EXTERNAL_INPUT_MODE'],
-        'code_fingerprint': code_fingerprint,
-        'stage': 'theta_search',
-    }
 
 
-def build_network_fingerprint(mode, targets, observable_columns, nested_n, nested_m, tp,
-                               embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
-                               delay_set, e_range, tau_range, prediction_start,
-                               prediction_length, metric, target_metric, gamma_delta,
-                               ccm_window_rows, ccm_lib_size_pcts, ccm_sample, ccm_slope,
-                               data_file, data_file_sha256, code_fingerprint,
-                               gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
-                               target_ranking_window_rows=1000, min_pred_events=20,
-                               max_window_rows=30000,
-                               ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800)):
-    '''Everything that determines one group's network-construction outcome
-    -- ported from simple-mde-gmn.py, TSLS scoring/CCM-calibration knobs
-    folded in. Computable *before* that construction runs, since the whole
-    point is deciding whether to skip it. `observable_columns` here is
-    already the CCM-pre-filtered pool (main() runs the pre-filter, and its
-    own threshold/E/libSize-ratio knobs, before this fingerprint is ever
-    computed -- see build_network()'s own docstring), so -- matching this
-    function's own original design philosophy, predating the pre-filter --
-    the resolved list alone captures everything a cache needs to
-    distinguish, the same way it already does for REGION_CHANNEL_CAP; no
-    separate pre-filter fields needed here.
-
-    gmn_mode/multi_mde_e/multi_mde_target_aggregate: this function itself
-    doesn't consume these (the depth-0 `mde_results` it's handed is already
-    computed upstream in main() -- see run_multi_mde_for_targets()'s
-    docstring), but they determine that upstream mde_results just as much
-    as mde_d/tp/embed_dim_rho_min/etc. below do, so they must be part of
-    this fingerprint too -- otherwise switching GMN_MODE (or its
-    multi_proper_mde knobs) between two REUSE_BEST_PARAMS runs wouldn't
-    invalidate a stale cached network built from the other mode's
-    mde_results.
-
-    `target_ranking_window_rows`/`min_pred_events`/`max_window_rows`/
-    `ccm_lib_sizes_rows` (window-sizing fix, docs/review-findings.md):
-    MODE='MDE-GMN' only -- `build_nested_mde_network()`'s own per-node
-    calls now resolve their own ranking window from these, decoupled from
-    `ccm_window_rows`/`ccm_lib_size_pcts` (which stay exactly what they
-    always were, MODE='GMN'-only, via `build_interaction_matrix()`). Real
-    topology inputs for MDE-GMN networks now, same reasoning as every
-    other knob here.'''
-    return {
-        'mode': mode,
-        'gmn_mode': gmn_mode,
-        'multi_mde_e': multi_mde_e,
-        'multi_mde_target_aggregate': multi_mde_target_aggregate,
-        'targets': sorted(targets),
-        'observable_columns': sorted(observable_columns),
-        'mde_d': nested_n,
-        'nested_m': nested_m,
-        'tp': tp,
-        'embed_dim_rho_min': embed_dim_rho_min,
-        'cross_map_rho_min': cross_map_rho_min,
-        'exclusion_radius': exclusion_radius,
-        'delay_set': list(delay_set) if delay_set is not None else None,
-        'e_vals': list(e_range),
-        'tau_vals': list(tau_range),
-        'metric': metric,
-        'target_metric': target_metric,
-        'gamma_delta': gamma_delta,
-        'ccm_window_rows': ccm_window_rows,
-        'ccm_lib_size_pcts': list(ccm_lib_size_pcts),
-        'target_ranking_window_rows': target_ranking_window_rows,
-        'min_pred_events': min_pred_events,
-        'max_window_rows': max_window_rows,
-        'ccm_lib_sizes_rows': list(ccm_lib_sizes_rows),
-        'ccm_sample': ccm_sample,
-        'ccm_slope': ccm_slope,
-        'prediction_start': prediction_start,
-        'prediction_length': prediction_length,
-        'data_file': data_file,
-        'data_file_sha256': data_file_sha256,
-        'code_fingerprint': code_fingerprint,
-        'stage': 'network',
-    }
 
 
-def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_rho_min,
-                                     cross_map_rho_min, exclusion_radius, delay_set,
-                                     prediction_start, prediction_length,
-                                     metric, target_metric, gamma_delta,
-                                     is_behavioral_target, target_ranking_window_rows,
-                                     min_pred_events, max_window_rows, window_rows, pred_event_count,
-                                     ccm_lib_sizes_rows, ccm_sample, ccm_slope,
-                                     data_file, data_file_sha256, code_fingerprint,
-                                     cache_stage='stage1', max_e=None):
-    '''Everything that determines one run_mde_for_target() call's outcome,
-    computable before that call runs -- ported from simple-mde-gmn.py, TSLS
-    scoring/CCM-calibration knobs folded in. `candidate_pool` is kept in
-    order rather than sorted -- forward selection can tie-break on column
-    order, so the same columns in a different order aren't guaranteed to
-    select the same result. `max_e` (the raw MDE_D-derived auto-select
-    ceiling proper_embed_dimension's own sweep is capped at, distinct from
-    `mde_d`'s possibly num_delays-scaled value -- see run_mde_for_target's
-    own docstring) is a real input to the outcome now that E is
-    auto-selected rather than a hardcoded constant, so it must be part of
-    the fingerprint too: a run with a different max_e can select a
-    different E, hence different candidates, for the same everything else.
-
-    Window-sizing fix (docs/review-findings.md): `window_rows`/
-    `pred_event_count` are the RESOLVED, data-dependent outputs of
-    _resolve_target_ranking_window() for this specific node -- not just the
-    config-level knobs (`target_ranking_window_rows`/`min_pred_events`/
-    `max_window_rows`) that produced them. All must be in the
-    fingerprint (A5): the resolved window is itself a real input to this
-    call's outcome, and a cache built before this fix (a different window,
-    a different -- previously wrong -- target_metric for every neuron
-    node) must not be silently reused.'''
-    return {
-        'node': node,
-        'candidate_pool': list(candidate_pool),
-        'mde_d': mde_d,
-        'max_e': max_e,
-        'tp': tp,
-        'embed_dim_rho_min': embed_dim_rho_min,
-        'cross_map_rho_min': cross_map_rho_min,
-        'exclusion_radius': exclusion_radius,
-        'delay_set': list(delay_set),
-        'metric': metric,
-        'target_metric': target_metric,
-        'gamma_delta': gamma_delta,
-        'is_behavioral_target': is_behavioral_target,
-        'target_ranking_window_rows': target_ranking_window_rows,
-        'min_pred_events': min_pred_events,
-        'max_window_rows': max_window_rows,
-        'window_rows': window_rows,
-        'pred_event_count': pred_event_count,
-        'ccm_lib_sizes_rows': list(ccm_lib_sizes_rows),
-        'ccm_sample': ccm_sample,
-        'ccm_slope': ccm_slope,
-        'prediction_start': prediction_start,
-        'prediction_length': prediction_length,
-        'data_file': data_file,
-        'data_file_sha256': data_file_sha256,
-        'code_fingerprint': code_fingerprint,
-        'stage': f'mde_selection_{cache_stage}',
-    }
 
 
-def build_multi_mde_selection_fingerprint(targets, candidate_pool, mde_d, tp, embed_dim_rho_min,
-                                           cross_map_rho_min, exclusion_radius, delay_set,
-                                           prediction_start, prediction_length,
-                                           metric, target_metric, gamma_delta,
-                                           target_ranking_window_rows, window_rows,
-                                           ccm_lib_sizes_rows, ccm_sample, ccm_slope,
-                                           data_file, data_file_sha256, code_fingerprint,
-                                           cache_stage='stage1', E=3, target_aggregate='mean'):
-    '''Multi-target counterpart of build_mde_selection_fingerprint() -- same
-    fields, `targets` (list, kept in the group's own order -- see that
-    function's own candidate_pool-ordering rationale, identical here) in
-    place of a single `node`, plus `E`/`target_aggregate`
-    (multi_proper_mde's own extra required/optional arguments, with no
-    proper_mde equivalent -- see run_multi_mde_for_targets()'s docstring).
-    `window_rows` (window-sizing fix, docs/review-findings.md): the
-    resolved window itself, not just the `target_ranking_window_rows`
-    constant that produced it -- kept as its own field for the same A5
-    reason build_mde_selection_fingerprint() records both.'''
-    return {
-        'targets': list(targets),
-        'candidate_pool': list(candidate_pool),
-        'mde_d': mde_d,
-        'E': E,
-        'target_aggregate': target_aggregate,
-        'tp': tp,
-        'embed_dim_rho_min': embed_dim_rho_min,
-        'cross_map_rho_min': cross_map_rho_min,
-        'exclusion_radius': exclusion_radius,
-        'delay_set': list(delay_set),
-        'metric': metric,
-        'target_metric': target_metric,
-        'gamma_delta': gamma_delta,
-        'target_ranking_window_rows': target_ranking_window_rows,
-        'window_rows': window_rows,
-        'ccm_lib_sizes_rows': list(ccm_lib_sizes_rows),
-        'ccm_sample': ccm_sample,
-        'ccm_slope': ccm_slope,
-        'prediction_start': prediction_start,
-        'prediction_length': prediction_length,
-        'data_file': data_file,
-        'data_file_sha256': data_file_sha256,
-        'code_fingerprint': code_fingerprint,
-        'stage': f'mde_selection_multi_{cache_stage}',
-    }
 
 
-def _load_json_cache_entry(path):
-    with open(path) as f:
-        return json.load(f)
 
 
-def _load_pickle_cache_entry(path):
-    with open(path, 'rb') as f:
-        return pickle.load(f)
 
 
-def find_cached(prev_runs_dir, filename, fingerprint, load_one=_load_json_cache_entry):
-    '''Generic cross-job cache lookup -- ported unchanged from
-    simple-mde-gmn.py, shared by every cacheable stage.'''
-    if not prev_runs_dir.exists():
-        return None
-    candidates = sorted(
-        prev_runs_dir.glob(f'**/{filename}'),
-        key=lambda p: p.stat().st_mtime, reverse=True,
-    )
-    for path in candidates:
-        try:
-            entry = load_one(path)
-        except (OSError, EOFError, json.JSONDecodeError, pickle.UnpicklingError):
-            continue
-        if entry.get('fingerprint') == fingerprint:
-            return entry, path
-    return None
 
 
-def _save_to_cache(filename, results_dir, run_cache_dir, write_one):
-    '''Ported unchanged from simple-mde-gmn.py -- writes once per unique
-    directory in {results_dir, run_cache_dir}, deduplicated.'''
-    written = []
-    for directory in dict.fromkeys([results_dir, run_cache_dir]):
-        path = directory / filename
-        write_one(path)
-        written.append(path)
-    return written[0]
 
 
-def save_json_to_cache(filename, payload, results_dir, run_cache_dir):
-    def write_one(path):
-        with open(path, 'w') as f:
-            json.dump(payload, f, indent=2)
-    return _save_to_cache(filename, results_dir, run_cache_dir, write_one)
 
 
-def save_pickle_to_cache(filename, payload, results_dir, run_cache_dir):
-    def write_one(path):
-        with open(path, 'wb') as f:
-            pickle.dump(payload, f)
-    return _save_to_cache(filename, results_dir, run_cache_dir, write_one)
 
 
-def find_cached_best_params(prev_runs_dir, network_id, fingerprint):
-    hit = find_cached(prev_runs_dir, f'best_params_{network_id}.json', fingerprint)
-    if hit is None:
-        return None
-    entry, path = hit
-    return entry['best_node_theta'], path
 
 
-def save_best_params(results_dir, run_cache_dir, network_id, fingerprint, best_node_theta, source):
-    return save_json_to_cache(
-        f'best_params_{network_id}.json',
-        {'fingerprint': fingerprint, 'best_node_theta': best_node_theta, 'source': source},
-        results_dir, run_cache_dir,
-    )
 
 
 # =============================================================================
@@ -4845,21 +4154,6 @@ def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range,
 # architecture at all.
 # =============================================================================
 
-def build_start_sweep_fingerprint(network_fingerprint, node_theta, start_offsets,
-                                   generate_length, exclusion_radius):
-    '''Everything that determines one network's start-point sweep outcome
-    -- ported unchanged from simple-mde-gmn.py. network_fingerprint already
-    embeds every TSLS-specific scoring/CCM-calibration knob (via
-    build_search_fingerprint()), so nothing TSLS-specific needs adding
-    here.'''
-    return {
-        'network_fingerprint': network_fingerprint,
-        'node_theta': {k: node_theta[k] for k in sorted(node_theta)},
-        'start_offsets': list(start_offsets),
-        'generate_length': generate_length,
-        'exclusion_radius': exclusion_radius,
-        'stage': 'start_sweep',
-    }
 
 
 def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, prediction_length,
@@ -5806,7 +5100,7 @@ def main():
     print('Config:', {k: v for k, v in cfg.items() if k != 'TARGET_COLORS'}, flush=True)
 
     data_file_sha256 = _hash_file(cfg['DATA_DIR'] / cfg['DATA_FILE']) if cfg['REUSE_BEST_PARAMS'] else None
-    code_fingerprint = build_code_fingerprint() if cfg['REUSE_BEST_PARAMS'] else None
+    code_fingerprint = build_code_fingerprint(__file__) if cfg['REUSE_BEST_PARAMS'] else None
 
     # ---- MDE (or its full-channel-pool stand-in for MODE='GMN') -------
     mde_results = {}

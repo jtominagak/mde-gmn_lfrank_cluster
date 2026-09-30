@@ -727,11 +727,15 @@ tempdir="$(mktemp -d "${FLASH_BASE}/run_tsls_mde_gmn.${SLURM_JOB_ID}.XXXXXX")"
 # as a zero-driver dead end, i.e. the job silently produces an empty network
 # instead of failing. (The tsls-mde-gmn-gpu-*.sbatch files this was forked from
 # do not copy it -- they have the same latent problem.)
+# The mde_gmn/ PACKAGE is staged too, not just the entry script: the pipeline
+# is split across its modules (see scripts/src/mde_gmn/__init__.py). Without
+# it the entry script fails at import.
 cp -av \
     "$PROJ_DIR/scripts/src/no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py" \
     "$PROJ_DIR/scripts/src/cleaned_helper_functions.py" \
     "$PROJ_DIR/scripts/src/gpu_edm.py" \
     "$tempdir"/
+cp -a "$PROJ_DIR/scripts/src/mde_gmn" "$tempdir"/
 
 mkdir -p "$tempdir/data"
 cp -av \
