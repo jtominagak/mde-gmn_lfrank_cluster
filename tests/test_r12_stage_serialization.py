@@ -1,8 +1,11 @@
 '''R12 acceptance test (docs/review-actions-v1.md): build_nested_mde_network()
-must (1) issue every Stage 2 MDE call only after every Stage 1 MDE call has
-returned, and (2) still let a real-observable driver Stage 2 selects recurse
-into its own further Stage 2 round (kept from the 2026-08-25 revision, not
-reintroduced by R12 -- R12 only restores the Stage 1/Stage 2 sequencing).
+must issue every Stage 2 MDE call only after every Stage 1 MDE call has
+returned.
+
+The two pipelines then diverge deliberately (2026-09-30): simple-mde-gmn.py
+still lets a real-observable driver Stage 2 selects recurse into its own
+further Stage 2 round, while tsls-mde-gmn.py's Stage 2 is a single
+non-recursive lagged-driver pass and must never recurse.
 
 No pytest in this project's venv (see docs/review-findings.md, R12 section)
 -- run directly:
@@ -48,7 +51,7 @@ def _toy_df():
     return pd.DataFrame({'A': rng.normal(size=20), 'B': rng.normal(size=20)})
 
 
-def _run(module, fake_run_mde_for_target, extra_kwargs):
+def _run(module, fake_run_mde_for_target, extra_kwargs, stage2_kwargs):
     call_log = []
     module.run_mde_for_target = fake_run_mde_for_target(PLAN, call_log)
     module.ProcessPoolExecutor = FakeProcessPoolExecutor
@@ -70,13 +73,13 @@ def _run(module, fake_run_mde_for_target, extra_kwargs):
         delay_set=[],
         tp=1,
         lag_set=[-1],
-        stage2_allow_real_observables=True,
+        **stage2_kwargs,
         **extra_kwargs,
     )
     return graph, edges_df, nested_mde_results, call_log
 
 
-def _check(name, graph, edges_df, call_log):
+def _check(name, graph, edges_df, call_log, stage2_recurses):
     # ---- (1) serialization: every stage1 call before every stage2 call ----
     stage1_positions = [i for i, (stage, _) in enumerate(call_log) if stage == 'stage1']
     stage2_positions = [i for i, (stage, _) in enumerate(call_log) if stage == 'stage2']
@@ -86,16 +89,26 @@ def _check(name, graph, edges_df, call_log):
         f'-- call_log={call_log}'
     )
 
-    # ---- (2) Stage 2's own real-observable pick (B) recursed into its own
-    # further Stage 2 round, and was NEVER given a Stage 1 call ----
-    assert ('stage2', 'B') in call_log, (
-        f'{name}: B (Stage 2\'s real-observable pick from T) never got its own Stage 2 '
-        f'call -- recursion is broken'
-    )
-    assert ('stage1', 'B') not in call_log, (
-        f'{name}: B got a Stage 1 call -- Stage 2 recursion must never trigger a fresh '
-        f'Stage-1-style call'
-    )
+    # ---- (2) what Stage 2 does with a real-observable pick ----
+    if stage2_recurses:
+        # simple-mde-gmn.py: the pick recurses into its OWN further Stage 2
+        # round, and never gets a Stage-1-style call.
+        assert ('stage2', 'B') in call_log, (
+            f'{name}: B (Stage 2\'s real-observable pick from T) never got its own Stage 2 '
+            f'call -- recursion is broken'
+        )
+        assert ('stage1', 'B') not in call_log, (
+            f'{name}: B got a Stage 1 call -- Stage 2 recursion must never trigger a fresh '
+            f'Stage-1-style call'
+        )
+    else:
+        # tsls-mde-gmn.py (2026-09-30): Stage 2 is a single non-recursive
+        # pass over Stage 1's nodes, so nothing it selects gets an MDE call
+        # of its own in either stage.
+        assert ('stage2', 'B') not in call_log and ('stage1', 'B') not in call_log, (
+            f'{name}: Stage 2 recursed into B -- Stage 2 must not recurse '
+            f'(call_log={call_log})'
+        )
     # Every Stage 1 node (T, A) also got its own Stage 2 call (lagged/real
     # embedding attachment, unconditionally -- no depth-0 shortcut).
     assert ('stage2', 'T') in call_log and ('stage2', 'A') in call_log, (
@@ -119,16 +132,18 @@ def test_tsls():
          'target_ranking_window_rows': 200, 'min_pred_events': 5, 'max_window_rows': 30000,
          'ccm_lib_sizes_rows': (10, 50), 'ccm_sample': 2,
          'ccm_slope': 0.01, 'cores': 2},
+        {},
     )
-    _check('tsls-mde-gmn.py', graph, edges_df, call_log)
+    _check('tsls-mde-gmn.py', graph, edges_df, call_log, stage2_recurses=False)
 
 
 def test_simple():
     module = load_pipeline_module('simple-mde-gmn.py', '_test_simple_mde_gmn')
     graph, edges_df, _, call_log = _run(
         module, make_fake_run_mde_for_target_simple, {'cores': 2},
+        {'stage2_allow_real_observables': True},
     )
-    _check('simple-mde-gmn.py', graph, edges_df, call_log)
+    _check('simple-mde-gmn.py', graph, edges_df, call_log, stage2_recurses=True)
 
 
 if __name__ == '__main__':

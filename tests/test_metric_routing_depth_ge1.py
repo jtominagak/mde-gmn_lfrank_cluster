@@ -85,7 +85,7 @@ def test_target_metric_resolved_per_node():
     module = load_pipeline_module('tsls-mde-gmn.py', '_test_tsls_mde_gmn_metric_routing')
 
     # T (target) -> A (real observable, Stage 1) -> B (real observable,
-    # Stage 2's own recursion, STAGE2_ALLOW_REAL_OBSERVABLES=True) --
+    # Stage 2's lagged-driver pass) --
     # neither A nor B is ever in `targets`, so both must resolve to
     # CFG_METRIC ('f1'), never CFG_TARGET_METRIC ('correlation').
     plan = {
@@ -115,7 +115,7 @@ def test_target_metric_resolved_per_node():
         target_ranking_window_rows=1000, min_pred_events=20, max_window_rows=30000,
         ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
         ccm_sample=10, ccm_slope=0.01, cores=2,
-        lag_set=[-1], stage2_allow_real_observables=True,
+        lag_set=[-1],
     )
 
     assert calls, 'no run_mde_for_target() calls captured at all'
