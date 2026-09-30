@@ -2661,6 +2661,52 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
 
     stage1_num_delays = len(expanded_columns) // len(raw_columns)
 
+    def _recomputed_stage1_result(node, result):
+        """`result`, or a fresh serial Stage 1 MDE when `result` selected a
+        real observable that is cycle-closing for `node`.
+
+        Needed because a wave's candidate pools are built before any of that
+        wave's results come back: two nodes in the same wave can select each
+        other, and the second one's pool could not have known. Rejecting the
+        offending edge afterwards is not equivalent -- forward selection is
+        greedy, so the discarded pick has already consumed a driver slot and
+        conditioned every later round. See _real_candidate_pool()."""
+        blocked = {node} | (nx.descendants(graph, node) if node in graph else set())
+        conflicts = sorted({
+            observable for observable, delay in
+            (observable_and_delay(c, raw_columns) for c in result['SELECTED_COLUMNS'])
+            if delay == 0 and observable in blocked})
+        if not conflicts:
+            return result
+        print(f'nested MDE (Stage 1): recomputing {node} -- its selection includes '
+              f'{conflicts}, which would close a cycle now that the rest of this wave has '
+              f'been accepted', flush=True)
+        _log_progress(progress_log_path, f'stage1 {node} RECOMPUTE (cycle-closing {conflicts})')
+        pool = _real_candidate_pool(graph, node, expanded_columns, raw_columns)
+        try:
+            return run_mde_for_target(
+                node, expanded_df, pool, prediction_start, prediction_length,
+                effective_mde_dimension(nested_n, pool, stage1_num_delays),
+                embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
+                results_dir, delay_set,
+                tp=tp, metric=metric,
+                target_metric=_metric_for(node, targets, metric, target_metric),
+                gamma_delta=gamma_delta, ccm_sample=ccm_sample, ccm_slope=ccm_slope,
+                is_behavioral_target=(node in targets),
+                target_ranking_window_rows=target_ranking_window_rows,
+                min_pred_events=min_pred_events, max_window_rows=max_window_rows,
+                ccm_lib_sizes_rows=ccm_lib_sizes_rows,
+                reuse_cache=reuse_cache, prev_runs_dir=prev_runs_dir,
+                run_cache_dir=run_cache_dir, data_file=data_file,
+                data_file_sha256=data_file_sha256, code_fingerprint=code_fingerprint,
+                max_e=nested_n, inner_workers=1, raw_columns=raw_columns,
+                use_gpu=use_gpu,
+            )
+        except Exception as exc:
+            print(f'nested MDE (Stage 1): {node} recompute FAILED: {exc!r} -- treating as a '
+                  f'dead end', flush=True)
+            return _failed_mde_result(node)
+
     # Stage 2's candidates are the LAGGED columns only -- every observable's
     # lag embeddings (its own, other backbone nodes', and observables Stage 1
     # never selected). Real (delay=0) observables are Stage 1's business, so
@@ -2836,7 +2882,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         for node, depth in wave_nodes:
             visited1.add(node)
             node_depth[node] = depth
-            result1 = stage1_results[node]
+            result1 = _recomputed_stage1_result(node, stage1_results[node])
             nested_mde_results[node] = result1
 
             accepted1 = _accept_mde_result_edges(graph, edges, node, result1, raw_columns)
@@ -2984,7 +3030,6 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
             visited2.add(node)
             node_depth.setdefault(node, depth)
             result2 = stage2_results[node]
-            nested_mde_results.setdefault(f'stage2:{node}', result2)
             # Every accepted pick here is a lagged leaf, so nothing is
             # enqueued: Stage 2 is a single pass by construction.
             _accept_mde_result_edges(graph, edges, node, result2, raw_columns)

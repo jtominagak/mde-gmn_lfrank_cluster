@@ -328,32 +328,34 @@ LAG_DENSITY="strided"         # default: strided. Other value: dense
 LAG_STEP=4                    # default: 5, only used when LAG_DENSITY=strided
 # Explicit delay list -- only used when DELAY_SOURCE=explicit above.
 DELAY_SET="0,-1,-3,-5,-10"
-# Whether Stage 2's own candidate pool also includes delay=0 (real-
-# observable) columns, in addition to lagged ones -- see
-# simple-mde-gmn.sbatch's own STAGE2_ALLOW_REAL_OBSERVABLES comment for the
-# full rationale (identical here, ported unchanged).
-STAGE2_ALLOW_REAL_OBSERVABLES=true   # default: false. Other value: true
+# NOTE: STAGE2_ALLOW_REAL_OBSERVABLES is retired (2026-09-30). Stage 2's
+# candidates are lagged columns only, and every lagged pick becomes a leaf
+# node, so there is nothing for Stage 2 to select recursively. load_config()
+# REJECTS the env var rather than ignoring it.
 
 # ---- Parallelized-MDE scope (THIS PIPELINE ONLY) -----------------------------
-# Not a knob tsls-mde-gmn.py has. BOTH VALUES PRODUCE THE IDENTICAL NETWORK --
-# this trades wall-clock against wasted compute and nothing else.
+# Not a knob tsls-mde-gmn.py has. The two values are DIFFERENT ALGORITHMS
+# (2026-09-30), not just different batching:
 #
-#   union   Stage 1 AND Stage 2 MDE calls for the entire node universe go to one
-#           pool. Exactly one barrier in the whole network build -- the maximum
-#           the hardware can be asked to do at once, and the reason this fork
-#           exists. Costs the most wasted compute: Stage 2 runs for every
-#           observable, including ones Stage 1's backbone never reaches.
-#   staged  Stage 1 for the universe, then the (instant) Stage 1 replay, then
-#           Stage 2 for only the nodes Stage 2 can actually reach. One extra
-#           barrier. When Stage 2 cannot recurse -- STAGE2_ALLOW_REAL_OBSERVABLES
-#           =false, or every Stage 1 node already sits at the NESTED_M cap -- its
-#           task list shrinks to exactly Stage 1's visited set, i.e. the parent
-#           pipeline's own Stage 2 workload with none of its per-wave barriers.
+#   staged  The parent pipeline's algorithm without its per-wave barriers:
+#           Stage 1 (real observables, recursive) for the whole node universe
+#           in one pool, then the instant Stage 1 replay, then Stage 2
+#           (lagged columns only, attached as leaf nodes) for EXACTLY Stage
+#           1's visited set -- no Stage 2 overshoot at all, since Stage 2
+#           never recurses. Builds the SAME network as tsls-mde-gmn.py,
+#           asserted by tests/test_parallel_mde_equivalence.py. Two barriers.
+#   union   ONE MDE per node over real AND lagged candidates TOGETHER, for the
+#           whole universe, in a single pool: one barrier, and real and lagged
+#           candidates compete directly inside each forward selection. This is
+#           a different network, not a wrong one -- and a much more expensive
+#           call per node, since every node's pool is (1 + len(LAG_SET))x
+#           wider from the first selection round.
 #
-# Pick staged when Stage 2 overshoot is the binding cost: its candidate pool is
-# len(LAG_SET)x wider than Stage 1's, so its per-node calls are the expensive
-# ones. Pick union when wall-clock is the binding cost and cores are free.
-PARALLEL_MDE_SCOPE="union"    # default: union. Other value: staged
+# Either scope may RECOMPUTE a node serially: the up-front phase cannot know
+# which observables will end up upstream, so a precomputed result whose real
+# picks turn out to be cycle-closing is discarded and recomputed with those
+# candidates excluded (logged as "must be RECOMPUTED").
+PARALLEL_MDE_SCOPE="staged"   # default: union. Other value: staged
 
 # ---- Lib/pred split ----------------------------------------------------------
 # Three-way split of the full (TSLS-converted, burn-in-trimmed) dataset --
@@ -769,7 +771,6 @@ export TSLS_MDE_GMN_MULTI_MDE_E="${MULTI_MDE_E}"
 export TSLS_MDE_GMN_MULTI_MDE_TARGET_AGGREGATE="${MULTI_MDE_TARGET_AGGREGATE}"
 export TSLS_MDE_GMN_EXCLUSION_RADIUS="${EXCLUSION_RADIUS}"
 export TSLS_MDE_GMN_NESTED_M="${NESTED_M}"
-export TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES="${STAGE2_ALLOW_REAL_OBSERVABLES}"
 export TSLS_MDE_GMN_PARALLEL_MDE_SCOPE="${PARALLEL_MDE_SCOPE}"
 export TSLS_MDE_GMN_REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP}"
 export TSLS_MDE_GMN_DELAY_SOURCE="${DELAY_SOURCE}"

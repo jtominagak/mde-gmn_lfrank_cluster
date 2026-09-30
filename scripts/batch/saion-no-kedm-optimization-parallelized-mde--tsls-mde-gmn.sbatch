@@ -113,12 +113,11 @@
 # --time=7-00:00:00 is the partition maximum. Per-node Stage 2 cost grows
 # with a 2.6x wider candidate pool and 1.7x larger MDE_D, while each worker
 # gets 1 inner thread here instead of Deigo's 9, so single Stage 2 nodes may
-# well exceed 7 days. Note that PARALLEL_MDE_SCOPE cannot help with that at
-# this configuration (see its own comment: 'staged' resolves to the same task
-# list as 'union' whenever Stage 2 may recurse and any node is under the
-# NESTED_M budget) -- Stage 2 IS computed for the whole ~125-observable
-# universe either way. What protects the run is the per-node cache, synced
-# hourly: resubmitting resumes from every finished node.
+# well exceed 7 days. PARALLEL_MDE_SCOPE='staged' (set below) does bound the
+# Stage 2 work: since Stage 2 attaches lagged leaves and never recurses, its
+# task list is exactly Stage 1's visited set -- a few dozen nodes, not all
+# ~125 observables. What protects the run beyond that is the per-node cache,
+# synced hourly: resubmitting resumes from every finished node.
 #
 # ---- Data ----------------------------------------------------------------
 DATA_FILE="J1620210605_epoch_8_freq_40_Hz.csv"   # default: the 40 Hz (25ms-bin) spike-train file
@@ -290,45 +289,38 @@ LAG_DENSITY="strided"         # default: strided. Other value: dense
 LAG_STEP=4                    # default: 5, only used when LAG_DENSITY=strided
 # Explicit delay list -- only used when DELAY_SOURCE=explicit above.
 DELAY_SET="0,-1,-3,-5,-10"
-# Whether Stage 2's own candidate pool also includes delay=0 (real-
-# observable) columns, in addition to lagged ones -- see
-# simple-mde-gmn.sbatch's own STAGE2_ALLOW_REAL_OBSERVABLES comment for the
-# full rationale (identical here, ported unchanged).
-STAGE2_ALLOW_REAL_OBSERVABLES=true   # default: false. Other value: true
+# NOTE: STAGE2_ALLOW_REAL_OBSERVABLES is retired (2026-09-30). Stage 2's
+# candidates are lagged columns only, and every lagged pick becomes a leaf
+# node, so there is nothing for Stage 2 to select recursively. load_config()
+# REJECTS the env var rather than ignoring it.
 
 # ---- Parallelized-MDE scope (THIS PIPELINE ONLY) -----------------------------
-# Not a knob tsls-mde-gmn.py has. BOTH VALUES PRODUCE THE IDENTICAL NETWORK --
-# this trades wall-clock against wasted compute and nothing else.
+# Not a knob tsls-mde-gmn.py has. The two values are DIFFERENT ALGORITHMS
+# (2026-09-30), not just different batching:
 #
-#   union   Stage 1 AND Stage 2 MDE calls for the entire node universe go to one
-#           pool. Exactly one barrier in the whole network build -- the maximum
-#           the hardware can be asked to do at once, and the reason this fork
-#           exists. Costs the most wasted compute: Stage 2 runs for every
-#           observable, including ones Stage 1's backbone never reaches.
-#   staged  Stage 1 for the universe, then the (instant) Stage 1 replay, then
-#           Stage 2 for only the nodes Stage 2 can actually reach. One extra
-#           barrier. When Stage 2 cannot recurse -- STAGE2_ALLOW_REAL_OBSERVABLES
-#           =false, or every Stage 1 node already sits at the NESTED_M cap -- its
-#           task list shrinks to exactly Stage 1's visited set, i.e. the parent
-#           pipeline's own Stage 2 workload with none of its per-wave barriers.
+#   staged  The parent pipeline's algorithm without its per-wave barriers:
+#           Stage 1 (real observables, recursive) for the whole node universe
+#           in one pool, then the instant Stage 1 replay, then Stage 2
+#           (lagged columns only, attached as leaf nodes) for EXACTLY Stage
+#           1's visited set -- no Stage 2 overshoot at all, since Stage 2
+#           never recurses. Builds the SAME network as tsls-mde-gmn.py,
+#           asserted by tests/test_parallel_mde_equivalence.py. Two barriers.
+#   union   ONE MDE per node over real AND lagged candidates TOGETHER, for the
+#           whole universe, in a single pool: one barrier, and real and lagged
+#           candidates compete directly inside each forward selection. This is
+#           a different network, not a wrong one -- and a much more expensive
+#           call per node, since every node's pool is (1 + len(LAG_SET))x
+#           wider from the first selection round.
 #
-# Pick staged when Stage 2 overshoot is the binding cost: its candidate pool is
-# len(LAG_SET)x wider than Stage 1's, so its per-node calls are the expensive
-# ones. Pick union when wall-clock is the binding cost and cores are free.
-# SAION HALF-PRODUCTION CHOICE: union.
-# An earlier version of this file said 'staged' on the grounds that it would
-# compute Stage 2 only for the nodes the BFS can reach. That is WRONG for THIS
-# configuration: _stage2_precompute_nodes() returns the exact reachable set
-# only when STAGE2_ALLOW_REAL_OBSERVABLES=false, or when no Stage 1 node is
-# still under the NESTED_M budget. Here real observables are allowed AND the
-# depth-0 targets sit at depth 0 < NESTED_M=1, so 'staged' falls through to
-# `list(universe)` -- the SAME Stage 2 task list as 'union', just split across
-# a second pool with an extra barrier. So 'staged' would cost one barrier and
-# save nothing; 'union' is strictly better here.
-# To actually shrink Stage 2's task list, the knob is
-# STAGE2_ALLOW_REAL_OBSERVABLES=false (which changes the science -- Stage 2
-# stops recursing into real observables), not this one.
-PARALLEL_MDE_SCOPE="union"    # default: union. Other value: staged
+# Either scope may RECOMPUTE a node serially: the up-front phase cannot know
+# which observables will end up upstream, so a precomputed result whose real
+# picks turn out to be cycle-closing is discarded and recomputed with those
+# candidates excluded (logged as "must be RECOMPUTED").
+# SAION HALF-PRODUCTION CHOICE: staged -- it is the CPU pipeline's own
+# algorithm (so results are comparable), it computes Stage 2 for only the
+# backbone nodes, and union's much wider per-node pool is not affordable
+# inside the 7-day partition limit.
+PARALLEL_MDE_SCOPE="staged"   # default: union. Other value: staged
 
 # ---- Lib/pred split ----------------------------------------------------------
 # Three-way split of the full (TSLS-converted, burn-in-trimmed) dataset --
@@ -727,7 +719,6 @@ export TSLS_MDE_GMN_MULTI_MDE_E="${MULTI_MDE_E}"
 export TSLS_MDE_GMN_MULTI_MDE_TARGET_AGGREGATE="${MULTI_MDE_TARGET_AGGREGATE}"
 export TSLS_MDE_GMN_EXCLUSION_RADIUS="${EXCLUSION_RADIUS}"
 export TSLS_MDE_GMN_NESTED_M="${NESTED_M}"
-export TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES="${STAGE2_ALLOW_REAL_OBSERVABLES}"
 export TSLS_MDE_GMN_PARALLEL_MDE_SCOPE="${PARALLEL_MDE_SCOPE}"
 export TSLS_MDE_GMN_REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP}"
 export TSLS_MDE_GMN_DELAY_SOURCE="${DELAY_SOURCE}"

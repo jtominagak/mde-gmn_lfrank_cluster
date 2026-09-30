@@ -300,11 +300,9 @@ LAG_DENSITY="strided"         # default: strided. Other value: dense
 LAG_STEP=4                    # default: 5, only used when LAG_DENSITY=strided
 # Explicit delay list -- only used when DELAY_SOURCE=explicit above.
 DELAY_SET="0,-1,-3,-5,-10"
-# Whether Stage 2's own candidate pool also includes delay=0 (real-
-# observable) columns, in addition to lagged ones -- see
-# simple-mde-gmn.sbatch's own STAGE2_ALLOW_REAL_OBSERVABLES comment for the
-# full rationale (identical here, ported unchanged).
-STAGE2_ALLOW_REAL_OBSERVABLES=true   # default: false. Other value: true
+# NOTE: STAGE2_ALLOW_REAL_OBSERVABLES is retired (2026-09-30) -- Stage 2's
+# candidates are lagged columns only and every lagged pick is a leaf node, so
+# there is nothing to select recursively. load_config() REJECTS the env var.
 
 # ---- Lib/pred split ----------------------------------------------------------
 # Three-way split of the full (TSLS-converted, burn-in-trimmed) dataset --
@@ -712,7 +710,6 @@ export TSLS_MDE_GMN_MULTI_MDE_E="${MULTI_MDE_E}"
 export TSLS_MDE_GMN_MULTI_MDE_TARGET_AGGREGATE="${MULTI_MDE_TARGET_AGGREGATE}"
 export TSLS_MDE_GMN_EXCLUSION_RADIUS="${EXCLUSION_RADIUS}"
 export TSLS_MDE_GMN_NESTED_M="${NESTED_M}"
-export TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES="${STAGE2_ALLOW_REAL_OBSERVABLES}"
 export TSLS_MDE_GMN_REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP}"
 export TSLS_MDE_GMN_DELAY_SOURCE="${DELAY_SOURCE}"
 export TSLS_MDE_GMN_LAG_MODE="${LAG_MODE}"

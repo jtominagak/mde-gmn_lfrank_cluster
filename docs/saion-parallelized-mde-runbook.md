@@ -157,7 +157,7 @@ Scale ("half production"; the reasoning is in the sbatch's SIZING NOTE):
 | `MDE_D` | 20 | **10** |
 | `NESTED_M` | 1 | 1 |
 | `GENERATE_LENGTH` | 0 (full window, ~6,700) | **400**, deliberately not halved |
-| `PARALLEL_MDE_SCOPE` | union | union (`staged` resolves to the same task list here — see the sbatch comment) |
+| `PARALLEL_MDE_SCOPE` | union | **staged** — the CPU pipeline's own algorithm without its barriers, so results stay comparable; `union` is now a different algorithm (one combined MDE per node) |
 | Resources | – | `gpu-p100` or `gpu-v100` (picked at submission), 36 cores, 1 GPU, 400 G, 7 days |
 
 ## Step 6 — Monitor (login node; reading only)
