@@ -81,43 +81,74 @@ def expand_delay_columns(df, columns, delay_set):
     return expanded, expanded_columns
 
 def derive_lag_set(delay_source, explicit_delay_set, lag_mode, lag_density, lag_step,
-                    generate_length, mde_lib_size, min_lib_rows=50):
+                    generate_length, mde_lib_size, lag_count=None, min_lib_rows=50):
     '''Resolves the nonzero-delay set used for Stage 2's lagged-driver
     candidate pool (build_nested_mde_network()'s own Stage-2 pass) and,
     unioned with {0}, every node's unconditional self_delay_set -- see
-    config.py's DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP entries for the
-    parameter semantics.
+    config.py's DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP/LAG_COUNT entries
+    for the parameter semantics.
 
-    delay_source='explicit': just the hand-picked delay_set list, stripped
-    of any 0 entry.
+    THE THREE SOURCES DIFFER ONLY IN WHICH QUANTITY YOU PIN. A lag set is a
+    stride and how far back it reaches; fix any two of {stride, count, depth}
+    and the third follows. DELAY_SOURCE chooses which one you state:
 
-    delay_source='lag_mode': auto-derived --
-      lag_mode='generation_length_adjusted': bound = generate_length.
-      lag_mode='every_lag_possible': bound = mde_lib_size - min_lib_rows
-        (clamped to >= 1) -- as deep as the MDE library segment [0, A)
-        structurally allows while reserving min_lib_rows real rows so MDE's
-        own forward-selection still has a meaningful library left after the
-        deepest lag's warm-up NaN rows are skipped.
-    Either bound is then sampled every lag_step rows (lag_density='strided')
-    or every single integer lag (lag_density='dense').
+      'lag_mode'  pins the DEPTH; the count follows from it. Auto-derived,
+        so the count is whatever the data implies -- which is how it gets
+        large without anyone asking (see WHY 'tau_count' EXISTS below).
+          lag_mode='generation_length_adjusted': depth = generate_length.
+          lag_mode='every_lag_possible': depth = mde_lib_size - min_lib_rows
+            (clamped to >= 1) -- as deep as the MDE library segment [0, A)
+            structurally allows while reserving min_lib_rows real rows so
+            MDE's own forward-selection still has a meaningful library left
+            after the deepest lag's warm-up NaN rows are skipped.
+        That depth is then sampled every lag_step rows (lag_density=
+        'strided') or at every single integer lag ('dense').
 
-    Returns a sorted-descending list of negative ints -- no 0 entry, same
-    convention as the explicit-source path above.'''
+      'tau_count' pins the COUNT; the depth follows: exactly lag_count lags
+        spaced lag_step apart (lag_step is the tau), so the deepest lag is
+        lag_step * lag_count. lag_density does not apply here -- the stride
+        is always lag_step, so lag_step=1 gives consecutive lags.
+
+      'explicit'  pins EVERY VALUE: the hand-picked explicit_delay_set list,
+        stripped of any 0 entry.
+
+    WHY 'tau_count' EXISTS. Under 'lag_mode' the count is a side effect of a
+    knob chosen for an unrelated reason: 'generation_length_adjusted' ties it
+    to GENERATE_LENGTH, which is how many steps Generate() free-runs for. The
+    two quantities have no reason to agree, and the coupling has already cost
+    real jobs -- GENERATE_LENGTH=400 with lag_step=4 resolves to 100 lags per
+    observable, and leaving GENERATE_LENGTH at its 0 (= full held-out window)
+    default resolved to roughly 830. Stage 2's candidate pool is
+    (observables x lags) and Stage 2 is where essentially all the runtime
+    goes, so that count is a compute budget. 'tau_count' lets you state the
+    budget directly instead of back-solving GENERATE_LENGTH for it.
+
+    Returns a sorted-descending list of negative ints -- never a 0 entry, the
+    same convention on all three paths.'''
     if delay_source == 'explicit':
         return sorted((d for d in explicit_delay_set if d != 0), reverse=True)
 
+    if delay_source == 'tau_count':
+        if lag_count is None or lag_count < 1:
+            raise ValueError(
+                f"delay_source='tau_count' needs lag_count >= 1, got {lag_count!r}")
+        return list(range(-lag_step, -lag_step * lag_count - 1, -lag_step))
+
+    if delay_source != 'lag_mode':
+        raise ValueError(f"Unknown delay_source: {delay_source!r}")
+
     if lag_mode == 'generation_length_adjusted':
-        bound = max(1, generate_length)
+        depth = max(1, generate_length)
     elif lag_mode == 'every_lag_possible':
-        bound = max(1, mde_lib_size - min_lib_rows)
+        depth = max(1, mde_lib_size - min_lib_rows)
     else:
         raise ValueError(f"Unknown lag_mode: {lag_mode!r}")
 
-    step = lag_step if lag_density == 'strided' else 1
     if lag_density not in ('strided', 'dense'):
         raise ValueError(f"Unknown lag_density: {lag_density!r}")
+    step = lag_step if lag_density == 'strided' else 1
 
-    return list(range(-1, -bound - 1, -step))
+    return list(range(-1, -depth - 1, -step))
 
 def effective_mde_dimension(mde_d, candidate_columns, num_delays):
     '''MDE_D names the desired count of distinct *real* observables MDE

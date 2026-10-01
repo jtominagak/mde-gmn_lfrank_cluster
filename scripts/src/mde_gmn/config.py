@@ -136,7 +136,7 @@ def load_config():
     # columns -- reused as the per-round cap for both nested-MDE stages
     # (Stage 1: real-observable-only, so the multiplier is always 1;
     # Stage 2: lagged-only, multiplied by however many lag values
-    # LAG_MODE/LAG_DENSITY/LAG_STEP below resolve to) -- see
+    # DELAY_SOURCE's chosen path below resolves to) -- see
     # effective_mde_dimension()'s docstring. Ported unchanged from
     cfg['MDE_D'] = int(os.environ.get('TSLS_MDE_GMN_D', 20))
     # Prediction interval every proper_mde forward-selection call (both the
@@ -241,8 +241,17 @@ def load_config():
     # See build_nested_mde_network() for the algorithm: Stage 1 builds the
     # real-observable backbone recursively (NESTED_M rounds), then Stage 2
     # attaches lagged drivers as leaf nodes in a single non-recursive pass.
-    # DELAY_SOURCE/LAG_MODE/LAG_DENSITY/LAG_STEP/DELAY_SET below define which
-    # lags Stage 2 may choose from.
+    # DELAY_SOURCE below picks which of THREE ways defines the lag set Stage 2
+    # may choose from -- they differ only in which quantity you pin, see
+    # derive_lag_set():
+    #   'lag_mode'  (default) pins the DEPTH, the count follows
+    #               (LAG_MODE/LAG_DENSITY/LAG_STEP)
+    #   'tau_count'           pins the COUNT, the depth follows
+    #               (LAG_STEP as tau + LAG_COUNT)
+    #   'explicit'            pins EVERY VALUE (DELAY_SET)
+    # Reach for 'tau_count' or 'explicit' when the auto-derived count is too
+    # large to finish: Stage 2's candidate pool is (observables x lags), and
+    # Stage 2 is where essentially all of a run's time goes.
     #
     # TSLS_MDE_GMN_STAGE2_ALLOW_REAL_OBSERVABLES is retired: Stage 2 considers
     # lagged columns only, so there is nothing for it to select recursively. The
@@ -284,8 +293,9 @@ def load_config():
         )
 
     cfg['DELAY_SOURCE'] = os.environ.get('TSLS_MDE_GMN_DELAY_SOURCE', 'lag_mode').strip().lower()
-    if cfg['DELAY_SOURCE'] not in ('explicit', 'lag_mode'):
-        raise ValueError(f"TSLS_MDE_GMN_DELAY_SOURCE must be 'explicit' or 'lag_mode': {cfg['DELAY_SOURCE']!r}")
+    if cfg['DELAY_SOURCE'] not in ('explicit', 'lag_mode', 'tau_count'):
+        raise ValueError(f"TSLS_MDE_GMN_DELAY_SOURCE must be 'lag_mode', 'tau_count' or "
+                          f"'explicit': {cfg['DELAY_SOURCE']!r}")
 
     cfg['LAG_MODE'] = os.environ.get('TSLS_MDE_GMN_LAG_MODE', 'generation_length_adjusted').strip().lower()
     if cfg['LAG_MODE'] not in ('generation_length_adjusted', 'every_lag_possible'):
@@ -295,9 +305,24 @@ def load_config():
     cfg['LAG_DENSITY'] = os.environ.get('TSLS_MDE_GMN_LAG_DENSITY', 'strided').strip().lower()
     if cfg['LAG_DENSITY'] not in ('strided', 'dense'):
         raise ValueError(f"TSLS_MDE_GMN_LAG_DENSITY must be 'strided' or 'dense': {cfg['LAG_DENSITY']!r}")
+    # LAG_STEP is the spacing between consecutive lags, and it means the same
+    # thing under both auto-derived sources: the sampling stride of LAG_MODE's
+    # bound under DELAY_SOURCE='lag_mode', and tau under 'tau_count'. One knob
+    # rather than two so the two paths cannot disagree about the stride.
     cfg['LAG_STEP'] = int(os.environ.get('TSLS_MDE_GMN_LAG_STEP', 1))
     if cfg['LAG_STEP'] < 1:
         raise ValueError(f"TSLS_MDE_GMN_LAG_STEP must be >= 1: {cfg['LAG_STEP']!r}")
+
+    # LAG_COUNT: how many lags, used only when DELAY_SOURCE='tau_count'. The
+    # lag set is then exactly LAG_COUNT lags spaced LAG_STEP apart, so the
+    # deepest is LAG_STEP * LAG_COUNT (which still has to fit inside
+    # PREDICTION_START -- main() checks that for every source alike).
+    # LAG_DENSITY does not apply on this path; LAG_STEP=1 gives consecutive
+    # lags. This is the knob that makes the Stage 2 pool size a decision
+    # instead of a consequence of GENERATE_LENGTH.
+    cfg['LAG_COUNT'] = int(os.environ.get('TSLS_MDE_GMN_LAG_COUNT', 10))
+    if cfg['LAG_COUNT'] < 1:
+        raise ValueError(f"TSLS_MDE_GMN_LAG_COUNT must be >= 1: {cfg['LAG_COUNT']!r}")
 
     cfg['DELAY_SET'] = _env_int_list('TSLS_MDE_GMN_DELAY_SET', [0, -1, -3, -5, -10])
     if any(d > 0 for d in cfg['DELAY_SET']):
