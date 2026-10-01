@@ -134,8 +134,20 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
 
     cfg['LAG_SET'] = derive_lag_set(
         cfg['DELAY_SOURCE'], cfg['DELAY_SET'], cfg['LAG_MODE'], cfg['LAG_DENSITY'], cfg['LAG_STEP'],
-        cfg['GENERATE_LENGTH'], cfg['PREDICTION_START'],
+        cfg['GENERATE_LENGTH'], cfg['PREDICTION_START'], cfg['LAG_COUNT'],
     )
+
+    # How many lags were resolved is a compute budget, not a detail: Stage 2
+    # offers MDE one candidate column per (real observable x lag), and Stage 2
+    # is where essentially all of a run's time goes. Printed on its own line
+    # because under DELAY_SOURCE='lag_mode' nobody states this number -- it is
+    # derived, and a three-digit count is easy to produce by accident (see
+    # derive_lag_set()). The full list is in the Config dump below; it is too
+    # long to read there once it runs to hundreds of entries.
+    print(f"LAG_SET: {len(cfg['LAG_SET'])} lags via DELAY_SOURCE="
+          f"{cfg['DELAY_SOURCE']!r}, stride {cfg['LAG_STEP']}, deepest "
+          f"{min(cfg['LAG_SET'], default=0)} -- Stage 2's candidate pool is this "
+          f"many columns per real observable.", flush=True)
 
     # Stage 2's lag-embedding depth has to fit inside PREDICTION_START (A),
     # the MDE library segment -- otherwise every lagged candidate column is
@@ -154,7 +166,9 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
             f"This is data-driven for TSLS (burn-in trim shrinks the usable row "
             f"count depending on which channel fires slowest). Narrow "
             f"TSLS_MDE_GMN_LAG_MODE/LAG_STEP, shrink TSLS_MDE_GMN_GENERATE_LENGTH, "
-            f"or raise TSLS_MDE_GMN_LIB_RATIO to fix."
+            f"raise TSLS_MDE_GMN_LIB_RATIO, or state the lag set directly with "
+            f"TSLS_MDE_GMN_DELAY_SOURCE=tau_count (LAG_STEP x LAG_COUNT) or "
+            f"=explicit (DELAY_SET) to fix."
         )
 
     print('Config:', {k: v for k, v in cfg.items() if k != 'TARGET_COLORS'}, flush=True)

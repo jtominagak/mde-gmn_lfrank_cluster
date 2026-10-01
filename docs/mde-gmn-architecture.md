@@ -43,7 +43,9 @@ is shared.
    │      plots.py        optional: network figures                     │
    └───────────────────────────────────────────────────────────────────┘
 
-   used throughout:  columns.py   delay-suffixed column names
+   used throughout:  columns.py   delay-suffixed column names; also
+                                  derive_lag_set(), which resolves which
+                                  lags Stage 2 may choose from
                      caching.py   cross-job result cache + fingerprints
                      progress.py  the heartbeat log
                      gmn_embedding.py  per-node embeddings — AND it patches
@@ -113,7 +115,7 @@ srun -p short -t 0:30:00 -c 4 --mem=8G bash -c 'cd /home/j/j-tominaga/pao_rotati
   { fail=1; echo "FAIL $t"; }; done; echo "SUITE-EXIT=$fail"'
 ```
 
-17 files on `main`, 21 on `no-kEDM-gpu-optimization`.
+19 files on `main`, 23 on `no-kEDM-gpu-optimization`.
 `tests/test_lagged_leaf_nodes.py` is the executable spec for the network
 algorithm; `tests/test_parallel_mde_equivalence.py` (GPU branch) asserts that
 the parallel builder's `staged` scope produces the serial builder's network,
