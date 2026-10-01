@@ -78,6 +78,26 @@ ok "branch $branch"
 [ -f "$SBATCH_SCRIPT" ] || die "missing $SBATCH_SCRIPT"
 ok "pipeline and sbatch present"
 
+# The checked-out code has to be new enough for this workflow, and BOTH of the
+# things below fail SILENTLY if it is not -- which is why they are checked here
+# rather than left to be noticed in the results.
+#
+#   1. An sbatch that assigns PARALLEL_MDE_SCOPE outright ignores --export, so
+#      both jobs would run the same scope while the submission log claims
+#      otherwise.
+#   2. Without builder_kwargs in the network fingerprint, the second job matches
+#      the first job's cached network, skips the whole MDE phase and reports the
+#      other algorithm's result -- again while printing its own scope.
+# Anchored, and matching the ASSIGNMENT only: the unanchored substring also
+# occurs in `export TSLS_MDE_GMN_PARALLEL_MDE_SCOPE="${PARALLEL_MDE_SCOPE}"`
+# further down, which is present in the old file too -- so an unanchored grep
+# passes on exactly the version this is meant to reject.
+grep -qE '^PARALLEL_MDE_SCOPE="\$\{PARALLEL_MDE_SCOPE' "$SBATCH_SCRIPT" \
+    || die "$SBATCH_NAME assigns PARALLEL_MDE_SCOPE outright instead of honouring an inherited value, so --export would be ignored and BOTH jobs would run the same scope. This working tree predates commit fdb848d."
+grep -qF 'builder_kwargs' "$PROJ_DIR/scripts/src/mde_gmn/caching.py" \
+    || die "mde_gmn/caching.py does not put the builder's options in the network fingerprint, so the second job would reuse the first job's cached network and never run its own algorithm. This working tree predates commit 69849ec."
+ok "sbatch honours PARALLEL_MDE_SCOPE; cache fingerprint records it"
+
 # 4. Clean tree. This is not fussiness: the second job stages its sources days
 #    from now, out of this same directory, so anything edited in between
 #    silently makes the two halves of the comparison different code.
