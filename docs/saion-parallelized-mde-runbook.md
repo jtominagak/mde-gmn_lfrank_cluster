@@ -256,12 +256,32 @@ tail $d/results/gpu_usage.csv                     # GPU util + memory, every 60 
 sstat -j <jobid>.batch --format=MaxRSS,AveCPU     # live memory high-water mark
 ```
 
+For a chained pair (`submit_saion_scope_pair.sh`), the second job sits in `PD` until the first
+finishes — that is the dependency working, not a problem:
+
+```bash
+squeue -u j-tominaga -o '%.10i %.9P %.8T %.10M %.12L %.20R'   # R column shows (Dependency)
+squeue -j <second_jobid> -o '%T %r'                           # state + why it is waiting
+scontrol show job <second_jobid> | grep -i depend
+```
+
+Confirm each job actually ran the scope you asked for — this is the one thing that would silently
+invalidate the comparison:
+
+```bash
+grep -h "PARALLEL_MDE_SCOPE\|^LAG_SET:\|cached network" \
+    /home/j/j-tominaga/saion_slurm_logs/saion_pmde_half-<jobid>.out
+```
+
 What to watch for:
 
 - `parallel MDE precompute [...]: N MDE call(s) -- W parallel worker(s)` near the start.
 - `MDE call FAILED: ... CUDA` in the `.out` file means GPU OOM: cancel gracefully (below) and
   resize.
-- `MaxRSS` approaching 400 G means the next run needs fewer workers.
+- `MaxRSS` approaching **120 G** means the next run needs fewer workers — that is this job's
+  `--mem`, and Slurm kills the job at it. The pre-run estimate was ~83 G (~6.5 G/worker x 9 +
+  ~1 G torch import each + ~15 G main), so roughly 45% headroom; it has never been measured at
+  this shape, so this is the number to watch on the first run.
 
 ## Step 7 — When it ends
 

@@ -5,6 +5,44 @@ submissions (see scripts/batch/submit.sh), newest entry first.
 
 <!-- new entries inserted below this line -->
 
+## Job 4741045
+
+**Scope-pair note:** ran `PARALLEL_MDE_SCOPE=union` with the sbatch's own lag settings. Submitted by submit_saion_scope_pair.sh at commit 02e55a0cd648, paired with job 4741044. The sbatch file is identical for both jobs, so the parameter diff below does not show the scope.
+
+Generated: 2026-10-01T22:07:40+09:00
+
+Git commit at submission: `02e55a0` (clean vs. HEAD)
+
+Compared against: **job_4741044**
+
+### Parameter changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 4741044
+
+**Scope-pair note:** ran `PARALLEL_MDE_SCOPE=staged` with the sbatch's own lag settings. Submitted by submit_saion_scope_pair.sh at commit 02e55a0cd648, paired with job 4741045. The sbatch file is identical for both jobs, so the parameter diff below does not show the scope.
+
+Generated: 2026-10-01T22:07:39+09:00
+
+Git commit at submission: `02e55a0` (clean vs. HEAD)
+
+No previous job snapshot found -- this is the first tracked run of this pipeline, or all prior jobs predate this tracking.
+
+---
+
+
 ## Job 40684253
 
 Generated: 2026-09-01T10:24:42+09:00
