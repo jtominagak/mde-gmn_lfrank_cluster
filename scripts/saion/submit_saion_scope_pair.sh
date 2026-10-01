@@ -98,15 +98,26 @@ grep -qF 'builder_kwargs' "$PROJ_DIR/scripts/src/mde_gmn/caching.py" \
     || die "mde_gmn/caching.py does not put the builder's options in the network fingerprint, so the second job would reuse the first job's cached network and never run its own algorithm. This working tree predates commit 69849ec."
 ok "sbatch honours PARALLEL_MDE_SCOPE; cache fingerprint records it"
 
-# 4. Clean tree. This is not fussiness: the second job stages its sources days
-#    from now, out of this same directory, so anything edited in between
-#    silently makes the two halves of the comparison different code.
-if [ -n "$(git -C "$PROJ_DIR" status --porcelain)" ]; then
-    git -C "$PROJ_DIR" status --short >&2
-    die "working tree is dirty. Commit or stash first -- see the note about job 2 staging sources later."
+# 4. The sources the jobs stage must not move under them. The second job copies
+#    scripts/src/ out of this directory at ITS OWN start, days from now, so an
+#    edit in between silently makes the two halves of the comparison different
+#    code. That is a hard failure.
+#
+#    Scoped to scripts/src/ rather than the whole tree deliberately. The sbatch
+#    file is snapshotted by sbatch at submission, so later edits to it cannot
+#    reach a queued job; and JOB_LOG.md is written by THIS script, so a
+#    repo-wide clean requirement would block every resubmission after the first
+#    one -- a check that fails on its own side effects trains you to bypass it.
+if [ -n "$(git -C "$PROJ_DIR" status --porcelain -- scripts/src)" ]; then
+    git -C "$PROJ_DIR" status --short -- scripts/src >&2
+    die "scripts/src/ has uncommitted changes. Commit or stash them -- job 2 stages that directory when it starts, not now, so the two jobs would otherwise run different code."
 fi
 commit="$(git -C "$PROJ_DIR" rev-parse HEAD)"
-ok "tree clean at ${commit:0:12}"
+ok "scripts/src/ clean at ${commit:0:12}"
+if [ -n "$(git -C "$PROJ_DIR" status --porcelain)" ]; then
+    echo "  note  other files are modified; they are not staged by the jobs, so this is not blocking:"
+    git -C "$PROJ_DIR" status --short | sed 's/^/          /'
+fi
 
 # 5. The stage-out key (runbook step 1). Without it a job computes for days and
 #    then cannot write its results to /bucket.
@@ -217,9 +228,12 @@ record_scope_note() {
 
 for pair in "$first_id:$SCOPE_FIRST:$second_id" "$second_id:$SCOPE_SECOND:$first_id"; do
     IFS=':' read -r id scope partner <<<"$pair"
+    # Both jobs are already queued by this point, so nothing here may abort the
+    # script under `set -e` -- the summary below is how you learn the job ids.
     if "$PROJ_DIR/scripts/batch/generate_job_description.sh" \
             "$PROJ_DIR" "$id" "$SBATCH_SCRIPT" "$PROJ_DIR/scripts/src/$PY_NAME"; then
-        record_scope_note "$id" "$scope" "$partner"
+        record_scope_note "$id" "$scope" "$partner" \
+            || echo "WARNING: could not add the scope note for $id to JOB_LOG.md." >&2
     else
         echo "WARNING: JOB_LOG.md entry for $id failed; the job is still queued." >&2
     fi
