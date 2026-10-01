@@ -172,11 +172,37 @@ echo "Submitted job $first_id  scope=$SCOPE_FIRST  partition=$partition"
 second_id="$(submit_one "$SCOPE_SECOND" "$first_id")"
 echo "Submitted job $second_id  scope=$SCOPE_SECOND  partition=$partition  starts after $first_id finishes"
 
-# JOB_LOG.md entries, the same ones submit.sh would have written.
-for id in "$first_id" "$second_id"; do
-    "$PROJ_DIR/scripts/batch/generate_job_description.sh" \
-        "$PROJ_DIR" "$id" "$SBATCH_SCRIPT" "$PROJ_DIR/scripts/src/$PY_NAME" || \
+# JOB_LOG.md entries, the same ones submit.sh would have written -- plus a line
+# naming the scope. That line is not decoration: generate_job_description.sh
+# diffs each job against the previous job from the same pipeline, and these two
+# share one byte-identical sbatch file (the scope arrives via --export, not the
+# file), so the generated entry would show NO difference between them. Without
+# this, JOB_LOG.md could not tell you which job ran which algorithm.
+record_scope_note() {
+    local id="$1" scope="$2" partner="$3" note tmp
+    note="**Scope-pair note:** ran \`PARALLEL_MDE_SCOPE=$scope\`"
+    if [ -n "${LAG_OVERRIDE:-}" ]; then
+        note="$note with \`DELAY_SOURCE=tau_count LAG_STEP=${LAG_STEP:-4} LAG_COUNT=${LAG_COUNT:-25}\`"
+    else
+        note="$note with the sbatch's own lag settings"
+    fi
+    note="$note. Submitted by submit_saion_scope_pair.sh at commit ${commit:0:12},"
+    note="$note paired with job $partner. The sbatch file is identical for both jobs,"
+    note="$note so the parameter diff below does not show the scope."
+    tmp="$(mktemp)"
+    awk -v heading="## Job $id" -v note="$note" \
+        '{print} $0 == heading {print ""; print note}' \
+        "$PROJ_DIR/JOB_LOG.md" > "$tmp" && mv "$tmp" "$PROJ_DIR/JOB_LOG.md"
+}
+
+for pair in "$first_id:$SCOPE_FIRST:$second_id" "$second_id:$SCOPE_SECOND:$first_id"; do
+    IFS=':' read -r id scope partner <<<"$pair"
+    if "$PROJ_DIR/scripts/batch/generate_job_description.sh" \
+            "$PROJ_DIR" "$id" "$SBATCH_SCRIPT" "$PROJ_DIR/scripts/src/$PY_NAME"; then
+        record_scope_note "$id" "$scope" "$partner"
+    else
         echo "WARNING: JOB_LOG.md entry for $id failed; the job is still queued." >&2
+    fi
 done
 
 cat <<EOF

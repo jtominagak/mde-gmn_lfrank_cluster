@@ -224,6 +224,27 @@ grep -h "PARALLEL_MDE_SCOPE\|^LAG_SET:\|matched cached network" \
 The union job should say "no matching cached network found ... building from scratch". If it says
 "matched cached network", stop and check why — that is the failure above.
 
+### Where each job's results land
+
+Nothing is shared, and nothing is overwritten — every destination is keyed on the job id:
+
+| What | Where |
+|---|---|
+| Scratch while running | `/work/FukaiU/j-tominaga/pmde.<jobid>.XXXXXX` (`mktemp`, deleted after a successful stage-out) |
+| Results on Bucket | `.../tsls_mde_gmn_outputs/job_<jobid>` — or `job_<jobid>_FAIL` if the job failed, so a failure never lands where a success would |
+| Cache entries on Bucket | `.../tsls_mde_gmn_cache/job_<jobid>` (also written hourly while running) |
+| Slurm logs | `saion_slurm_logs/saion_pmde_half-<jobid>.{out,err}`, and copied into the results directory |
+| `JOB_LOG.md` | one `## Job <jobid>` entry each, plus a line naming the scope |
+
+The cache root is *shared for reading* — that is the point of it, so a resubmission resumes from
+finished nodes — but each job only ever **writes** into its own `job_<jobid>` subdirectory. That
+read-sharing is exactly why the fingerprint has to distinguish the scopes, which is the fix above.
+
+The scope line in `JOB_LOG.md` is written by the pair script rather than by
+`generate_job_description.sh`, because that script diffs each job against the previous job from the
+same pipeline — and these two jobs use one byte-identical sbatch file, with the scope arriving via
+`--export`. Its parameter diff therefore shows no difference between them.
+
 ## Step 6 — Monitor (login node; reading only)
 
 ```bash
