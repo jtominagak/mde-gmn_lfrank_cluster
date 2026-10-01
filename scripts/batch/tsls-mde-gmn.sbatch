@@ -127,7 +127,8 @@ set -euo pipefail
 # held-out window (thousands of rows at this dataset's scale) before that
 # happens -- unrelated to, and not implied by, REGION_CHANNEL_CAP/MDE_D
 # below. Leaving it at 0 here would silently make Stage 2 search thousands
-# of lag columns at this scale.
+# of lag columns at this scale. DELAY_SOURCE=tau_count (below) is the way to
+# avoid this coupling entirely rather than working around it here.
 
 # ---- Data ----------------------------------------------------------------
 DATA_FILE="J1620210605_epoch_8_freq_40_Hz.csv"   # default: the 40 Hz (25ms-bin) spike-train file

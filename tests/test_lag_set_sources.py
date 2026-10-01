@@ -174,6 +174,26 @@ def test_f_cache_key_follows_the_resolved_list_only():
     print('F. cache key follows the resolved list, not the source: PASS')
 
 
+def test_g_every_source_has_lag_depth_remedy_advice():
+    '''main() refuses a lag set deeper than the MDE library segment and tells
+    the operator what to change -- advice that is only correct for the path that
+    produced the set. The mapping is keyed by DELAY_SOURCE, so a source without
+    an entry turns that clear startup error into a KeyError.'''
+    from mde_gmn.config import DELAY_SOURCES
+    from mde_gmn.pipeline import _LAG_DEPTH_REMEDY
+
+    missing = set(DELAY_SOURCES) - set(_LAG_DEPTH_REMEDY)
+    assert not missing, (
+        f'DELAY_SOURCE value(s) {sorted(missing)} have no entry in '
+        f"pipeline._LAG_DEPTH_REMEDY, so main()'s lag-depth guard would raise "
+        f'KeyError instead of its intended message. A new source also needs: '
+        f"derive_lag_set()'s own branch, the sbatch DELAY_SOURCE comment blocks, "
+        f'and Section sec:lag-set of docs/tsls-mde-gmn-pipeline.tex.')
+    stale = set(_LAG_DEPTH_REMEDY) - set(DELAY_SOURCES)
+    assert not stale, f'remedy advice for removed source(s): {sorted(stale)}'
+    print(f'G. all {len(DELAY_SOURCES)} sources have lag-depth remedy advice: PASS')
+
+
 def main():
     test_a_each_source_produces_its_documented_set()
     test_b_tau_count_pins_the_count_exactly()
@@ -181,6 +201,7 @@ def main():
     test_d_bad_input_raises_instead_of_falling_through()
     test_e_config_plumbs_the_knobs_through()
     test_f_cache_key_follows_the_resolved_list_only()
+    test_g_every_source_has_lag_depth_remedy_advice()
     print('ALL PASS')
 
 

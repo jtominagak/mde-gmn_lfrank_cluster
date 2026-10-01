@@ -54,6 +54,14 @@ def _env_int_list(name, default):
         return list(default)
     return [int(x.strip()) for x in val.split(',') if x.strip()]
 
+# The ways Stage 2's lag set can be defined, in the order derive_lag_set()
+# documents them (which quantity each one pins: depth, count, every value).
+# Named here rather than spelled out at the validation site because
+# pipeline.py's lag-depth error message keys its remedy advice off the same
+# set -- one list, so the two cannot drift apart.
+DELAY_SOURCES = ('lag_mode', 'tau_count', 'explicit')
+
+
 def load_config():
     cfg = {}
 
@@ -293,9 +301,9 @@ def load_config():
         )
 
     cfg['DELAY_SOURCE'] = os.environ.get('TSLS_MDE_GMN_DELAY_SOURCE', 'lag_mode').strip().lower()
-    if cfg['DELAY_SOURCE'] not in ('explicit', 'lag_mode', 'tau_count'):
-        raise ValueError(f"TSLS_MDE_GMN_DELAY_SOURCE must be 'lag_mode', 'tau_count' or "
-                          f"'explicit': {cfg['DELAY_SOURCE']!r}")
+    if cfg['DELAY_SOURCE'] not in DELAY_SOURCES:
+        raise ValueError(f"TSLS_MDE_GMN_DELAY_SOURCE must be one of "
+                          f"{', '.join(DELAY_SOURCES)}: {cfg['DELAY_SOURCE']!r}")
 
     cfg['LAG_MODE'] = os.environ.get('TSLS_MDE_GMN_LAG_MODE', 'generation_length_adjusted').strip().lower()
     if cfg['LAG_MODE'] not in ('generation_length_adjusted', 'every_lag_possible'):
