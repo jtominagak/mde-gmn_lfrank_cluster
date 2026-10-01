@@ -64,6 +64,23 @@ def target_groups_for_mode(targets, gmn_mode):
     else:
         raise ValueError(f"Unknown GMN_MODE: {gmn_mode!r}")
 
+# What to change when the resolved lag set is too deep for the MDE library
+# segment -- keyed by DELAY_SOURCE, because the advice is only correct for the
+# path that produced the set: telling someone on 'tau_count' to shrink
+# GENERATE_LENGTH would be wrong, since it does not feed their lag set at all.
+# Must cover every entry in config.DELAY_SOURCES (a missing key would turn a
+# clear startup error into a KeyError); tests/test_lag_set_sources.py checks that.
+_LAG_DEPTH_REMEDY = {
+    'lag_mode': 'raise TSLS_MDE_GMN_LAG_STEP, shrink TSLS_MDE_GMN_GENERATE_LENGTH '
+                '(under LAG_MODE=generation_length_adjusted it IS this bound), or '
+                'switch to TSLS_MDE_GMN_DELAY_SOURCE=tau_count and state LAG_COUNT '
+                'directly',
+    'tau_count': 'lower TSLS_MDE_GMN_LAG_COUNT or TSLS_MDE_GMN_LAG_STEP -- their '
+                 'product is the deepest lag',
+    'explicit': 'drop the deepest entries from TSLS_MDE_GMN_DELAY_SET',
+}
+
+
 def main(entry_path, network_builder=None, builder_config_keys=None):
     """Run the whole pipeline once.
 
@@ -158,17 +175,16 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
     # proper_mde or gmn's SMap calls.
     max_lag_depth = max((abs(d) for d in cfg['LAG_SET']), default=0)
     if max_lag_depth >= cfg['PREDICTION_START']:
+        remedy = _LAG_DEPTH_REMEDY[cfg['DELAY_SOURCE']]
         raise ValueError(
-            f"Stage 2's lag-embedding depth ({max_lag_depth} rows, from LAG_SET= "
-            f"{cfg['LAG_SET']}) does not fit within PREDICTION_START "
+            f"Stage 2's lag-embedding depth ({max_lag_depth} rows -- the deepest of "
+            f"{len(cfg['LAG_SET'])} lags resolved from DELAY_SOURCE="
+            f"{cfg['DELAY_SOURCE']!r}) does not fit within PREDICTION_START "
             f"({cfg['PREDICTION_START']} rows, the MDE library segment) -- every "
             f"lagged candidate column would be all-NaN across the entire library. "
             f"This is data-driven for TSLS (burn-in trim shrinks the usable row "
-            f"count depending on which channel fires slowest). Narrow "
-            f"TSLS_MDE_GMN_LAG_MODE/LAG_STEP, shrink TSLS_MDE_GMN_GENERATE_LENGTH, "
-            f"raise TSLS_MDE_GMN_LIB_RATIO, or state the lag set directly with "
-            f"TSLS_MDE_GMN_DELAY_SOURCE=tau_count (LAG_STEP x LAG_COUNT) or "
-            f"=explicit (DELAY_SET) to fix."
+            f"count depending on which channel fires slowest). To fix: {remedy}; "
+            f"or raise TSLS_MDE_GMN_LIB_RATIO to give the library more rows."
         )
 
     print('Config:', {k: v for k, v in cfg.items() if k != 'TARGET_COLORS'}, flush=True)
