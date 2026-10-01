@@ -164,6 +164,66 @@ Scale ("half production"; the reasoning is in the sbatch's SIZING NOTE):
 | `PARALLEL_MDE_SCOPE` | union | **staged** — the CPU pipeline's own algorithm without its barriers, so results stay comparable; `union` is now a different algorithm (one combined MDE per node) |
 | Resources | – | `gpu-p100` or `gpu-v100` (picked at submission), **9 cores, 1 GPU, 120 G**, 6 days — a quarter-node share, so the other 3 GPUs stay usable by others |
 
+## Step 5b — Submit the staged **and** union jobs as a chain
+
+To run both `PARALLEL_MDE_SCOPE` values one after the other, rather than one scope alone:
+
+```bash
+cd /home/j/j-tominaga
+git -C pao_rotation status --porcelain      # must print nothing (see below)
+SCOPE_PAIR_DRY_RUN=1 pao_rotation/scripts/saion/submit_saion_scope_pair.sh   # check, submit nothing
+pao_rotation/scripts/saion/submit_saion_scope_pair.sh                        # submit both
+```
+
+Both jobs run the same sbatch file and the same pipeline; only `PARALLEL_MDE_SCOPE` differs
+(the sbatch honours an inherited value, so there is no second copy of the file to keep in sync).
+The second job carries `--dependency=afterany:<first>`, which is what stops Slurm running them
+together — each asks for 9 cores + 1 GPU and the allocation is 36 + 4, so there is room for both.
+`afterany` rather than `afterok`: the union job is an independent experiment, and under `afterok`
+a first job that merely hit its 6-day limit would leave the second stuck in
+`DependencyNeverSatisfied` until cancelled by hand.
+
+Options, all applied to **both** jobs so the two networks stay comparable:
+
+| Variable | Effect |
+|---|---|
+| `SCOPE_PAIR_DRY_RUN=1` | run every check, print what would be submitted, submit nothing |
+| `LAG_OVERRIDE=1 LAG_STEP=4 LAG_COUNT=25` | use `DELAY_SOURCE=tau_count` instead of the sbatch's `lag_mode` — see the sizing warning below |
+| `SCOPE_PAIR_ORDER=union,staged` | run union first |
+| `SAION_PARTITION=gpu-p100` | skip the start-time estimate and force a partition |
+
+### Two things that will invalidate the comparison
+
+**`union` at the default lag setting may well not finish.** `lag_mode` with `GENERATE_LENGTH=400`
+and `LAG_STEP=4` resolves to 100 lags per observable. `union` gives *every* node in the universe a
+pool `1 + 100 = 101x` wider than staged's Stage 1 pool, from the first selection round, where
+staged pays the wide-pool cost only on its backbone nodes. Deigo job 40684253 (101 lags,
+staged-shaped) had single Stage 2 nodes take up to 36.7 h. No union run has ever completed, so
+6 days is a guess rather than a budget. `LAG_OVERRIDE=1 LAG_COUNT=25` narrows both jobs together;
+a timeout otherwise costs a resubmission, not the work, because the per-node cache syncs hourly.
+
+**Do not touch `scripts/src/` or switch branches until the second job has started.** The sbatch
+copies the sources out of the live working tree at *job start*, not at submission — so the second
+job, starting up to six days later, would stage whatever is there then. The script refuses to
+submit from a dirty tree for this reason, records the commit it expected, and each job warns in
+its own output if what it staged does not match.
+
+### Confirming each job really used its own scope
+
+This is worth checking once, because until 2026-10-01 it was not true: the network cache key did
+not include `parallel_mde_scope`, so the second job would have matched the first job's cached
+network, skipped the whole MDE phase, and reported the other algorithm's result while still
+printing its own scope in the config dump. Fixed, and pinned by
+`tests/test_network_cache_builder_kwargs.py`. In each job's `.out`:
+
+```bash
+grep -h "PARALLEL_MDE_SCOPE\|^LAG_SET:\|matched cached network" \
+    /home/j/j-tominaga/saion_slurm_logs/saion_pmde_half-<jobid>.out
+```
+
+The union job should say "no matching cached network found ... building from scratch". If it says
+"matched cached network", stop and check why — that is the failure above.
+
 ## Step 6 — Monitor (login node; reading only)
 
 ```bash

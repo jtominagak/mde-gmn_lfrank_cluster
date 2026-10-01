@@ -325,7 +325,7 @@ REGION_CHANNEL_CAP=3         # MID-SCALE CALIBRATION RUN (see NOTE above) -- def
 # it to, say, LAG_COUNT=25 is then a one-knob edit that does NOT also shorten
 # the Generate() run -- which is what makes this different from shrinking
 # GENERATE_LENGTH to get the same effect (see the pitfall note there).
-DELAY_SOURCE="lag_mode"       # default: lag_mode. Other values: tau_count, explicit
+DELAY_SOURCE="${DELAY_SOURCE:-lag_mode}"       # overridable; default: lag_mode. Other values: tau_count, explicit
 # LAG_MODE (only used when DELAY_SOURCE=lag_mode) sets the *bound* (deepest
 # lag magnitude, in rows) the auto-derived delay set reaches:
 #   'generation_length_adjusted' (default): bound = GENERATE_LENGTH below.
@@ -345,12 +345,12 @@ LAG_DENSITY="strided"         # default: strided. Other value: dense
 # under both auto paths: the sampling stride of LAG_MODE's bound under
 # DELAY_SOURCE=lag_mode, and tau under DELAY_SOURCE=tau_count. One knob rather
 # than two so the two paths cannot disagree about the stride.
-LAG_STEP=4                    # default: 1. The sampling stride (lag_mode) / tau (tau_count)
+LAG_STEP="${LAG_STEP:-4}"     # overridable; default: 1. The sampling stride (lag_mode) / tau (tau_count)
 # LAG_COUNT: how many lags -- only used when DELAY_SOURCE=tau_count above.
 # The deepest lag is then LAG_STEP x LAG_COUNT, which still has to fit inside
 # the MDE library segment (the pipeline checks that for every source alike and
 # fails at startup with the numbers, not mid-run).
-LAG_COUNT=10                  # default: 10, only used when DELAY_SOURCE=tau_count
+LAG_COUNT="${LAG_COUNT:-10}"  # overridable; default: 10, only used when DELAY_SOURCE=tau_count
 # Explicit delay list -- only used when DELAY_SOURCE=explicit above.
 DELAY_SET="0,-1,-3,-5,-10"
 # NOTE: STAGE2_ALLOW_REAL_OBSERVABLES is retired (2026-09-30). Stage 2's
@@ -380,7 +380,11 @@ DELAY_SET="0,-1,-3,-5,-10"
 # which observables will end up upstream, so a precomputed result whose real
 # picks turn out to be cycle-closing is discarded and recomputed with those
 # candidates excluded (logged as "must be RECOMPUTED").
-PARALLEL_MDE_SCOPE="staged"   # default: union. Other value: staged
+# OVERRIDABLE FROM THE SUBMITTING SHELL, so one file can run either scope:
+# `sbatch --export=ALL,PARALLEL_MDE_SCOPE=union <this file>`. The Saion variant
+# of this script is submitted that way in pairs by
+# scripts/saion/submit_saion_scope_pair.sh.
+PARALLEL_MDE_SCOPE="${PARALLEL_MDE_SCOPE:-staged}"   # code default: union. Here: staged
 
 # ---- Lib/pred split ----------------------------------------------------------
 # Three-way split of the full (TSLS-converted, burn-in-trimmed) dataset --

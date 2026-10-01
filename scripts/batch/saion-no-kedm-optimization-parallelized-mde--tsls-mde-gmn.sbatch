@@ -317,7 +317,7 @@ REGION_CHANNEL_CAP=78        # HALF PRODUCTION (see SIZING NOTE above): 78x3 = 2
 # it to, say, LAG_COUNT=25 is then a one-knob edit that does NOT also shorten
 # the Generate() run -- which is what makes this different from shrinking
 # GENERATE_LENGTH to get the same effect (see the pitfall note there).
-DELAY_SOURCE="lag_mode"       # default: lag_mode. Other values: tau_count, explicit
+DELAY_SOURCE="${DELAY_SOURCE:-lag_mode}"       # overridable; default: lag_mode. Other values: tau_count, explicit
 # LAG_MODE (only used when DELAY_SOURCE=lag_mode) sets the *bound* (deepest
 # lag magnitude, in rows) the auto-derived delay set reaches:
 #   'generation_length_adjusted' (default): bound = GENERATE_LENGTH below.
@@ -337,12 +337,12 @@ LAG_DENSITY="strided"         # default: strided. Other value: dense
 # under both auto paths: the sampling stride of LAG_MODE's bound under
 # DELAY_SOURCE=lag_mode, and tau under DELAY_SOURCE=tau_count. One knob rather
 # than two so the two paths cannot disagree about the stride.
-LAG_STEP=4                    # default: 1. The sampling stride (lag_mode) / tau (tau_count)
+LAG_STEP="${LAG_STEP:-4}"     # overridable; default: 1. The sampling stride (lag_mode) / tau (tau_count)
 # LAG_COUNT: how many lags -- only used when DELAY_SOURCE=tau_count above.
 # The deepest lag is then LAG_STEP x LAG_COUNT, which still has to fit inside
 # the MDE library segment (the pipeline checks that for every source alike and
 # fails at startup with the numbers, not mid-run).
-LAG_COUNT=10                  # default: 10, only used when DELAY_SOURCE=tau_count
+LAG_COUNT="${LAG_COUNT:-10}"  # overridable; default: 10, only used when DELAY_SOURCE=tau_count
 # Explicit delay list -- only used when DELAY_SOURCE=explicit above.
 DELAY_SET="0,-1,-3,-5,-10"
 # NOTE: STAGE2_ALLOW_REAL_OBSERVABLES is retired (2026-09-30). Stage 2's
@@ -376,7 +376,12 @@ DELAY_SET="0,-1,-3,-5,-10"
 # algorithm (so results are comparable), it computes Stage 2 for only the
 # backbone nodes, and union's much wider per-node pool is not affordable
 # inside the 7-day partition limit.
-PARALLEL_MDE_SCOPE="staged"   # default: union. Other value: staged
+# OVERRIDABLE FROM THE SUBMITTING SHELL. The value here is the default;
+# `sbatch --export=ALL,PARALLEL_MDE_SCOPE=union <this file>` runs the other
+# scope from this same file, which is how scripts/saion/submit_saion_scope_pair.sh
+# submits the staged/union pair as one chain. Keeping it one file matters: the
+# two scopes must otherwise agree on every knob, or the comparison is not one.
+PARALLEL_MDE_SCOPE="${PARALLEL_MDE_SCOPE:-staged}"   # code default: union. Here: staged
 
 # ---- Lib/pred split ----------------------------------------------------------
 # Three-way split of the full (TSLS-converted, burn-in-trimmed) dataset --
@@ -738,7 +743,20 @@ cp -a "$PROJ_DIR/scripts/src/mde_gmn" "$STAGE_SRC"/ || die "staging source files
 cd "$STAGE_SRC" || die "cd $STAGE_SRC failed"
 
 echo "host=$(hostname) partition=${SLURM_JOB_PARTITION:-?} cpus=${SLURM_CPUS_PER_TASK} gpus=${SLURM_JOB_GPUS:-${CUDA_VISIBLE_DEVICES:-?}}"
-echo "commit=$(git -C "$PROJ_DIR" rev-parse --short HEAD 2>/dev/null || echo '?') jobdir=$jobdir"
+staged_commit="$(git -C "$PROJ_DIR" rev-parse HEAD 2>/dev/null || echo '?')"
+echo "commit=${staged_commit:0:12} jobdir=$jobdir"
+# SCOPE_PAIR_COMMIT is set by submit_saion_scope_pair.sh at submission time. The
+# sources above were copied out of $PROJ_DIR just now, not when this job was
+# queued, so a job that waited days behind another may have staged different
+# code than its partner -- which would quietly invalidate a staged-vs-union
+# comparison. Warn rather than die: the runbook's resume path legitimately
+# resubmits after a code fix, and dying here would throw away the queue wait.
+if [ -n "${SCOPE_PAIR_COMMIT:-}" ] && [ "$SCOPE_PAIR_COMMIT" != "$staged_commit" ]; then
+    echo "WARNING: staged sources are at ${staged_commit:0:12} but this job was" >&2
+    echo "         submitted expecting ${SCOPE_PAIR_COMMIT:0:12}. The repository changed" >&2
+    echo "         while this job was queued, so it is NOT running the same code as the" >&2
+    echo "         other job in its pair. Results are not directly comparable." >&2
+fi
 nvidia-smi || echo "WARNING: nvidia-smi failed" >&2
 
 # ==============================================================================
