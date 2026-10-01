@@ -88,12 +88,12 @@ patching and `load_config()`.
 
 ## Still open (not refactor work)
 
-1. Saion job shape: 9 cores + 120 GB (a fair quarter-node share) versus the
-   current 36 cores + 400 GB, which occupies a whole node and strands 3 GPUs.
-   Needed before the half-production run.
-2. `docs/tsls-mde-gmn-pipeline.tex` still describes the pre-Phase-1 design
-   (lagged drivers as delay-tagged edges out of the real node, Stage 2
-   recursing into real observables). It is now the last place that description
-   survives.
-3. Nothing has ever run on Saion: venv setup, preflight and the A/B are all
-   still pending (`docs/saion-parallelized-mde-runbook.md`).
+1. ~~Saion job shape~~ — settled: 9 cores + 120 GB + 1 GPU, a quarter-node
+   share, so the other 3 GPUs stay usable by others. On the GPU branch.
+2. ~~`docs/tsls-mde-gmn-pipeline.tex`~~ — done: rewritten against the current
+   algorithm and file layout, with a new section mapping every function name to
+   its module, and the PDF rebuilt.
+3. Saion: `.venv-gpu` is built and preflight 4724497 passed on a P100 -- every
+   check except the stage-out ssh round trip, which needs the key from runbook
+   step 1 (the user's action; see `docs/saion-parallelized-mde-runbook.md`).
+   The pipeline job itself has not been submitted.
