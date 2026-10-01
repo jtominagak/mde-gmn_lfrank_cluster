@@ -95,5 +95,7 @@ patching and `load_config()`.
    (lagged drivers as delay-tagged edges out of the real node, Stage 2
    recursing into real observables). It is now the last place that description
    survives.
-3. Nothing has ever run on Saion: venv setup, preflight and the A/B are all
-   still pending (`docs/saion-parallelized-mde-runbook.md`).
+3. Saion: `.venv-gpu` is built and preflight 4724497 passed on a P100 -- every
+   check except the stage-out ssh round trip, which needs the key from runbook
+   step 1 (the user's action; see `docs/saion-parallelized-mde-runbook.md`).
+   The pipeline job itself has not been submitted.

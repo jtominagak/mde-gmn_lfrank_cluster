@@ -4,8 +4,13 @@
 # gpu-p100/gpu-v100 starts first (a comma list is rejected for this account).
 #SBATCH --partition=gpu-p100
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=36
-#SBATCH --mem=128G
+# A quarter-node share, matching the production job (9 cores + 1 GPU), so the
+# capacity probe measures the shape that will actually run. The 36-worker
+# sweep is already done -- preflight 4724497 on a P100: 36 workers, 0 errors,
+# 15,135 MiB of 16,384 (92%), safe cap ~31, and total throughput flat at ~58
+# CCM sweeps/s for 1/9/18/36 alike. See docs/no-kEDM-gpu-optimization-progress.md.
+#SBATCH --cpus-per-task=9
+#SBATCH --mem=120G
 #SBATCH --time=0-02:00:00
 # Absolute path under /home/j/j-tominaga (the guide's recommendation); the directory must
 # already exist -- Slurm opens it before this script runs. See the runbook.

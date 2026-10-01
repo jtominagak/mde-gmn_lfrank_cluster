@@ -15,7 +15,9 @@ restricted GPU partitions within the cluster rules
 
 ## The rules this follows
 
-- **Allocation:** 36 cores + 4 GPUs *per partition*, 7-day maximum. Nodes: 36 cores, 512 GB,
+- **Allocation:** 36 cores + 4 GPUs *per partition*, 7-day maximum. The pipeline job asks for a
+  balanced quarter of that (9 cores + 1 GPU + 120 GB) rather than a whole node's cores alongside a
+  single GPU, which would strand the other three. Nodes: 36 cores, 512 GB,
   4 × 16 GB GPUs. P100 nodes support CUDA ≤ 12.8, so `.venv-gpu` uses the cu126 torch build,
   which also runs on V100, so a job can go to either partition.
 - **Partition choice:** Slurm's `-p gpu-p100,gpu-v100` is **rejected** for this account ("Multiple
@@ -125,14 +127,16 @@ cat /home/j/j-tominaga/saion_slurm_logs/preflight_<jobid>/SUMMARY.txt
   - *ssh / stage-out:* redo step 1. The bare name `saion` resolves only through the
     `~/.ssh/config` alias, so that block must exist.
   - *equivalence test SKIPPED:* torch can't see the GPU. Check the `torch CUDA` log.
-- **GPU capacity verdict** (the multi-GPU decision):
-  - `FITS` → submit the pipeline job as is (1 GPU, 36 workers).
-  - `DOES NOT FIT ... about N workers per GPU` → in the pipeline sbatch, set
-    `#SBATCH --cpus-per-task=N` and scale `--mem` to about `N × 8G + 20G`. Alternatively, implement
-    per-worker GPU assignment and request `--gres=gpu:4` (not built yet, by decision on
-    2026-09-16).
-  - Also look at the `slowdown` column. If 36 workers slow each CCM sweep by much more than ~2×,
-    GPU contention is significant, and multi-GPU assignment is worth building even if memory fits.
+- **GPU capacity verdict.** Already measured, and no longer the binding constraint: preflight
+  4724497 on a P100 ran 36 workers with 0 errors at 15,135 MiB of 16,384 (92%, safe cap ~31), and
+  9 workers at 3,785 MiB (23%). The job requests 9, so expect `FITS` with large margin.
+  - `DOES NOT FIT ... about N workers per GPU` → set `#SBATCH --cpus-per-task=N` in the pipeline
+    sbatch and scale `--mem` to about `N × 8G + 20G`.
+  - The `slowdown` column is the more interesting number, and it already answered the multi-GPU
+    question: per-sweep time scales *exactly* with worker count (1.00× / 9.05× / 18.11× / 36.27×),
+    so total throughput is flat at ~58 sweeps/s however many workers share the card. One card is
+    saturated by one worker. More CPU workers buy no GPU throughput — only `--gres=gpu:4` plus
+    per-worker GPU assignment would, and that code does not exist yet (deferred 2026-09-16).
 
 ## Step 5 — Submit the pipeline
 
@@ -158,7 +162,7 @@ Scale ("half production"; the reasoning is in the sbatch's SIZING NOTE):
 | `NESTED_M` | 1 | 1 |
 | `GENERATE_LENGTH` | 0 (full window, ~6,700) | **400**, deliberately not halved |
 | `PARALLEL_MDE_SCOPE` | union | **staged** — the CPU pipeline's own algorithm without its barriers, so results stay comparable; `union` is now a different algorithm (one combined MDE per node) |
-| Resources | – | `gpu-p100` or `gpu-v100` (picked at submission), 36 cores, 1 GPU, 400 G, 7 days |
+| Resources | – | `gpu-p100` or `gpu-v100` (picked at submission), **9 cores, 1 GPU, 120 G**, 6 days — a quarter-node share, so the other 3 GPUs stay usable by others |
 
 ## Step 6 — Monitor (login node; reading only)
 

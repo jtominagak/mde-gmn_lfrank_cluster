@@ -8,14 +8,20 @@
 # with the earlier estimated start and overrides this line. The value here is
 # only the fallback for a plain `sbatch`.
 #SBATCH --partition=gpu-p100
-# ONE GPU: every spawn worker shares it. Whether --cpus-per-task workers
-# actually fit on one 16 GB card is what saion-preflight.sbatch's GPU
-# capacity verdict measures -- if it said DOES NOT FIT, lower
-# --cpus-per-task to the worker count it printed before submitting.
+# A QUARTER-NODE SHARE, deliberately. The allocation is 36 cores + 4 GPUs per
+# partition, so 1 GPU + 9 cores + ~120 GB is the balanced quarter of it: asking
+# for 36 cores and 400 GB alongside a single GPU would occupy a whole node and
+# strand the other 3 GPUs, which nobody else could then use. The cost is
+# wall-clock -- see SIZING NOTE below.
+#
+# 9 workers on one 16 GB card is comfortably inside the measured capacity
+# (preflight ran 36 with 0 errors at 92% of device memory; the safe cap is ~31),
+# so the preflight's GPU verdict is no longer the binding constraint here. Check
+# it anyway, but it should pass with large margin.
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=36
+#SBATCH --cpus-per-task=9
 # See SIZING NOTE below for how --mem/--time were derived.
-#SBATCH --mem=400G
+#SBATCH --mem=120G
 #SBATCH --time=6-00:00:00
 # 30 min before the time limit Slurm sends USR1 to this batch shell only;
 # the handler below stops Python cleanly so there is time to stage results
@@ -106,18 +112,37 @@
 # Scaled to CAP=78 (~125 observables after the same ~53% pre-filter keep
 # rate): Stage 2 DataFrame ~125 x 101 cols x 44k rows x 8 B ~= 4.5 GB, and
 # every spawn worker gets its own pickled copy (no fork copy-on-write under
-# GPU_ENABLED). ~6.5 GB/worker + ~1 GB torch/CUDA import, x 36 workers,
-# + ~15 GB main process ~= 300 GB  =>  --mem=400G (node has 512 GB).
+# GPU_ENABLED). ~6.5 GB/worker + ~1 GB torch/CUDA import, x 9 workers,
+# + ~15 GB main process ~= 83 GB  =>  --mem=120G, ~45% headroom on an
+# extrapolation that has never been measured at this scale.
 # If the job is OOM-killed: lower --cpus-per-task (= worker count), not MDE_D.
 #
-# --time=7-00:00:00 is the partition maximum. Per-node Stage 2 cost grows
-# with a 2.6x wider candidate pool and 1.7x larger MDE_D, while each worker
-# gets 1 inner thread here instead of Deigo's 9, so single Stage 2 nodes may
-# well exceed 7 days. PARALLEL_MDE_SCOPE='staged' (set below) does bound the
-# Stage 2 work: since Stage 2 attaches lagged leaves and never recurses, its
-# task list is exactly Stage 1's visited set -- a few dozen nodes, not all
-# ~125 observables. What protects the run beyond that is the per-node cache,
-# synced hourly: resubmitting resumes from every finished node.
+# TIME, AND WHAT THE QUARTER-NODE SHARE COSTS. 7-00:00:00 is the partition
+# maximum; this asks for 6 days.
+#
+# Per-node Stage 2 cost is unchanged by the core count -- one node's work is one
+# node's work, and Deigo saw single Stage 2 nodes take up to 36.7 h at a
+# narrower pool than this. What the core count changes is how many nodes run at
+# once: 9 instead of 36.
+#
+# For the CCM gate that costs nothing, which is the measured part. Saion
+# preflight 4724497 on a P100 found total throughput flat at ~58 CCM sweeps/s
+# for 1, 9, 18 and 36 workers alike (per-sweep time scaled exactly with the
+# worker count) -- one card is already saturated by a single worker, so sharing
+# it between 36 buys no GPU throughput over 9. That preflight also measured
+# 9 workers at 3,785 MiB of the card's 16,384, i.e. 23%, against 92% for 36:
+# this shape has large VRAM margin where the 36-worker shape had almost none.
+#
+# What does slow down is the CPU-side work -- the ranking stage and everything
+# outside the GPU kernel -- by up to ~4x wherever Phase 0 has more tasks than
+# workers.
+#
+# PARALLEL_MDE_SCOPE='staged' (set below) bounds the Stage 2 task list: Stage 2
+# attaches lagged leaves and never recurses, so its tasks are exactly Stage 1's
+# visited set -- a few dozen nodes, not all ~125 observables. Beyond that, the
+# per-node cache synced hourly is what protects the run: resubmitting resumes
+# from every finished node, so exceeding 6 days costs a resubmission, not the
+# work.
 #
 # ---- Data ----------------------------------------------------------------
 DATA_FILE="J1620210605_epoch_8_freq_40_Hz.csv"   # default: the 40 Hz (25ms-bin) spike-train file
@@ -522,7 +547,8 @@ die() { echo "FATAL: $*" >&2; exit 2; }
 source "${VENV_DIR}/bin/activate"
 export MPLBACKEND=Agg
 # Workers are processes (TSLS_MDE_GMN_CORES); keep BLAS/OpenMP single-threaded
-# inside each so 36 workers don't each spin up 36 threads.
+# inside each, so N workers don't each spin up N threads and oversubscribe the
+# cores this job was actually given.
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
