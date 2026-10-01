@@ -13,8 +13,8 @@ wheels/
 data/
 results/
 
-# Scratch output from tests/test_rN_*.py's real gmn.GMN / real-dataframe runs
-tests/_scratch_r*/
+# Scratch output from tests that make real gmn.GMN / real-dataframe runs
+tests/_scratch_*/
 
 # Stray MDE output written when a test runs the real run_mde_for_target()
 # with results_dir=Path(".")
