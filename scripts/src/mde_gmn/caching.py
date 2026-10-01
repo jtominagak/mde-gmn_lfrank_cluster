@@ -155,7 +155,8 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
                                gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
                                target_ranking_window_rows=1000, min_pred_events=20,
                                max_window_rows=30000,
-                               ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800)):
+                               ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
+                               builder_kwargs=None):
     '''Everything that determines one group's network-construction outcome.
     Computable BEFORE that construction runs, since the whole point is deciding
     whether it can be skipped. `observable_columns` here is
@@ -166,6 +167,19 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
     the resolved list alone captures everything a cache needs to
     distinguish, the same way it already does for REGION_CHANNEL_CAP; no
     separate pre-filter fields needed here.
+
+    builder_kwargs: the options passed to the network builder itself, which
+    build_network() does not otherwise know the meaning of -- today that is the
+    parallel builder's `parallel_mde_scope`. These change WHICH NETWORK gets
+    built, so they have to be here: 'staged' and 'union' agree on every other
+    field in this fingerprint (same targets, same observables, same entry
+    script, therefore the same code fingerprint), so without this a 'union'
+    run would match a 'staged' run's cached network, print "matched cached
+    network", skip the whole MDE phase and report the other algorithm's result.
+    Omitted from the dict entirely when empty, so the serial pipeline's
+    existing cache entries still match; the parallel fork's older entries do
+    not, which is correct -- they were written without recording which scope
+    produced them, so they cannot be attributed to either.
 
     gmn_mode/multi_mde_e/multi_mde_target_aggregate: this function itself
     doesn't consume these (the depth-0 `mde_results` it's handed is already
@@ -217,6 +231,8 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
         'data_file_sha256': data_file_sha256,
         'code_fingerprint': code_fingerprint,
         'stage': 'network',
+        **({'builder_kwargs': {k: builder_kwargs[k] for k in sorted(builder_kwargs)}}
+           if builder_kwargs else {}),
     }
 
 def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_rho_min,

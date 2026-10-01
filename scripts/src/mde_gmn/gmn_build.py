@@ -187,7 +187,9 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
     network_builder_kwargs: arguments only that builder understands, e.g. the
     parallel one's parallel_mde_scope. Kept separate rather than added to this
     signature so that a builder-specific option never has to be threaded
-    through code that does not use it.
+    through code that does not use it. They ARE part of the cache fingerprint
+    (build_network_fingerprint's `builder_kwargs`), because they decide which
+    network gets built -- see that parameter's own docstring.
 
     The two constructions:
       - mode == 'MDE-GMN': two-stage nested-MDE, both stages inside the
@@ -222,6 +224,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
             metric, target_metric, gamma_delta, ccm_window_rows, ccm_lib_size_pcts,
             ccm_sample, ccm_slope,
             data_file, data_file_sha256, code_fingerprint,
+            builder_kwargs=network_builder_kwargs,
             gmn_mode=gmn_mode, multi_mde_e=multi_mde_e,
             multi_mde_target_aggregate=multi_mde_target_aggregate,
             target_ranking_window_rows=target_ranking_window_rows,
