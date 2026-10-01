@@ -1074,8 +1074,41 @@ genuinely non-recursive, the 'staged' scope's node set IS Stage 1's visited set,
 correction above ("staged buys nothing") no longer applies — `staged` is exact, which is why
 both fork sbatch files use it.
 
-### Next (unchanged)
-1. User: runbook step 1 (stage-out key).
-2. User decision: single-GPU at `--cpus-per-task≈30`, or per-worker GPU assignment first and 4
-   GPUs. Also still open: 9 cores + 120 GB vs 36 cores + 400 GB.
+
+## 2026-10-01 — Stage 2's lag count became a stated budget instead of a derived one
+
+`DELAY_SOURCE=tau_count` is new: the lag set is `LAG_STEP` (tau) x `LAG_COUNT`. The two existing
+ways were `lag_mode` (pins the depth, count follows — auto-derived) and `explicit` (enumerate
+every value). All three now differ only in which of {stride, count, depth} is stated.
+
+**Why this branch cares most.** Stage 2's candidate pool is (observables x lags), and Stage 2 is
+where this fork's entire runtime lives — Deigo job 40684253 measured Stage 2 nodes from 11 s up
+to 132,219 s (36.7 h) against Stage 1 nodes under 1 s. Yet the lag count was derived from
+`GENERATE_LENGTH`, which means how many steps `Generate()` free-runs for. The two have no reason
+to agree. The Saion sbatch's own sizing note is the evidence: `GENERATE_LENGTH` is pinned at 400
+against an otherwise uniform halving of every other knob, purely to hold the count at 100
+instead of ~830. Capping Stage 2 meant back-solving an unrelated knob; now it is one knob.
+
+**No fork-side code was needed** — the Phase 2 refactor paying off. `network_parallel`'s builder
+already takes `lag_set` as a parameter and derives its delay multiplier from `len(lag_set)`, so
+it honours the new source through the shared `columns.py`/`pipeline.py`. Before Phase 2 this
+would have been a second, hand-synchronised copy of `derive_lag_set` — exactly the duplication
+that let the lagged-leaf export bug survive in this fork.
+
+All six fork/GPU sbatch files got the knob and its documentation. The sbatch files still use
+`lag_mode`/400 so their numbers stay comparable to the runs the sizing evidence came from —
+switching is deliberate, because changing the resolved lag set invalidates the MDE cache.
+
+**Cache note:** the fingerprint stores the resolved lag list, not which source produced it. So
+restating today's auto-derived set as the equivalent `tau_count` reuses cached MDE work, while
+changing `LAG_COUNT` correctly invalidates it. Pinned by `tests/test_lag_set_sources.py`.
+
+### Next
+1. User: runbook step 1 (stage-out key) — still the only failing preflight check.
+2. ~~Job shape~~ **settled 2026-09-30: 9 cores + 120 GB + 1 GPU**, now in the sbatch. Preflight
+   4724497 measured total CCM throughput flat at ~58 sweeps/s for 1/9/18/36 workers (one card is
+   saturated by one worker) and peak VRAM 3,785 MiB of 16,384 at 9 workers vs 15,135 at 36. So
+   the quarter-node share costs nothing on the GPU-bound gate; only CPU-side ranking slows. That
+   also closes the multi-GPU question: more CPU workers cannot help — only `--gres=gpu:4` plus
+   per-worker GPU assignment would, and that code does not exist.
 3. Submit with `scripts/saion/submit_saion.sh saion-no-kedm-...sbatch no-kedm-...py`.

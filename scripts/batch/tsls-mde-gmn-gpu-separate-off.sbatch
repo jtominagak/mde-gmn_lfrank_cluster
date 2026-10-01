@@ -278,10 +278,26 @@ REGION_CHANNEL_CAP=3         # MID-SCALE CALIBRATION RUN (see NOTE above) -- def
 # LAG_MODE/LAG_DENSITY/LAG_STEP comments for the full rationale (identical
 # here, ported unchanged -- pure column-name/DataFrame machinery with no
 # TSLS-specific behavior).
-#   'explicit' (legacy): the hand-picked DELAY_SET list below.
-#   'lag_mode' (default, recommended): auto-derived from LAG_MODE/
-#     LAG_DENSITY/LAG_STEP below instead -- DELAY_SET is ignored.
-DELAY_SOURCE="lag_mode"       # default: lag_mode. Other value: explicit
+# THREE WAYS TO DEFINE THE LAG SET. They differ only in which quantity you
+# pin -- a lag set is a stride and how far back it reaches, so fixing any two
+# of {stride, count, depth} determines the third:
+#   'lag_mode' (default): pins the DEPTH, the count follows. Auto-derived from
+#     LAG_MODE/LAG_DENSITY/LAG_STEP below; DELAY_SET and LAG_COUNT are ignored.
+#   'tau_count': pins the COUNT, the depth follows. Exactly LAG_COUNT lags
+#     spaced LAG_STEP apart (LAG_STEP is the tau), so the deepest lag is
+#     LAG_STEP x LAG_COUNT. LAG_MODE/LAG_DENSITY/DELAY_SET are ignored.
+#   'explicit': pins EVERY VALUE -- the hand-picked DELAY_SET list below.
+# WHICH TO USE. 'lag_mode' when you want the lag set to follow the data.
+# 'tau_count' when the count is a BUDGET you need to hold: Stage 2 offers MDE
+# one candidate column per (real observable x lag) and Stage 2 is where
+# essentially all of this job's time goes, so the count directly sets the bill.
+# With the values set here ('lag_mode', GENERATE_LENGTH=400, LAG_STEP=4) the
+# auto path resolves to 100 lags per observable; the same shape stated
+# directly is DELAY_SOURCE=tau_count with LAG_STEP=4, LAG_COUNT=100. Narrowing
+# it to, say, LAG_COUNT=25 is then a one-knob edit that does NOT also shorten
+# the Generate() run -- which is what makes this different from shrinking
+# GENERATE_LENGTH to get the same effect (see the pitfall note there).
+DELAY_SOURCE="lag_mode"       # default: lag_mode. Other values: tau_count, explicit
 # LAG_MODE (only used when DELAY_SOURCE=lag_mode) sets the *bound* (deepest
 # lag magnitude, in rows) the auto-derived delay set reaches:
 #   'generation_length_adjusted' (default): bound = GENERATE_LENGTH below.
@@ -297,7 +313,16 @@ LAG_DENSITY="strided"         # default: strided. Other value: dense
 # (every consecutive row is its own candidate delay). Cost is real and
 # load-bearing on --cpus-per-task/--mem/--time above -- see
 # simple-mde-gmn.sbatch's own LAG_STEP comment for the full rationale.
-LAG_STEP=4                    # default: 5, only used when LAG_DENSITY=strided
+# LAG_STEP is the spacing between consecutive lags and means the same thing
+# under both auto paths: the sampling stride of LAG_MODE's bound under
+# DELAY_SOURCE=lag_mode, and tau under DELAY_SOURCE=tau_count. One knob rather
+# than two so the two paths cannot disagree about the stride.
+LAG_STEP=4                    # default: 1. The sampling stride (lag_mode) / tau (tau_count)
+# LAG_COUNT: how many lags -- only used when DELAY_SOURCE=tau_count above.
+# The deepest lag is then LAG_STEP x LAG_COUNT, which still has to fit inside
+# the MDE library segment (the pipeline checks that for every source alike and
+# fails at startup with the numbers, not mid-run).
+LAG_COUNT=10                  # default: 10, only used when DELAY_SOURCE=tau_count
 # Explicit delay list -- only used when DELAY_SOURCE=explicit above.
 DELAY_SET="0,-1,-3,-5,-10"
 # NOTE: STAGE2_ALLOW_REAL_OBSERVABLES is retired (2026-09-30) -- Stage 2's
@@ -719,6 +744,7 @@ export TSLS_MDE_GMN_DELAY_SOURCE="${DELAY_SOURCE}"
 export TSLS_MDE_GMN_LAG_MODE="${LAG_MODE}"
 export TSLS_MDE_GMN_LAG_DENSITY="${LAG_DENSITY}"
 export TSLS_MDE_GMN_LAG_STEP="${LAG_STEP}"
+export TSLS_MDE_GMN_LAG_COUNT="${LAG_COUNT}"
 export TSLS_MDE_GMN_DELAY_SET="${DELAY_SET}"
 export TSLS_MDE_GMN_LIB_RATIO="${LIB_RATIO}"
 export TSLS_MDE_GMN_MDE_VALIDATION_RATIO="${MDE_VALIDATION_RATIO}"
