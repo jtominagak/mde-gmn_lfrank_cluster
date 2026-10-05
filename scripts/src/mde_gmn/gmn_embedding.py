@@ -39,6 +39,7 @@ import gmn
 import networkx as nx
 import numpy as np
 import pandas as pd
+from mde_gmn.columns import _delayed_column_name
 
 
 def _embedding_spec_for(graph, node_name):
@@ -89,22 +90,41 @@ def _embedding_spec_for(graph, node_name):
     the libEnd_i correction below that would otherwise need a spec to
     exist at all.
 
-    On the historical "leaf duplicate" degeneracy this decision's
-    rationale originally cited (a real observable B and "a lagged copy of
-    B" ending up as two separate zero-driver nodes with identical
-    embeddings): confirmed against _accept_mde_result_edges() and
-    observable_and_delay() that this does not describe this graph.
-    observable_and_delay() always resolves a candidate column back to its
-    RAW observable name (delay lives separately), and
-    _accept_mde_result_edges() calls graph.add_node(driver) using only
-    that raw name -- so there is exactly one graph node per raw
-    observable regardless of how many different delays reference it; "a
-    lagged copy of B" is never a second node, only a (B, some-negative-
-    delay) edge into whatever node selected it. The surviving
-    justification for partitioning out zero-driver nodes is simpler and
-    still correct on its own: a zero-driver node isn't something
-    nested-MDE discovered as a network member at all, so counting it as
-    an interior (simulated) node overstates what was actually found.
+    Two kinds of node, and this is where the naming diverges (network.py's
+    module docstring is the authority):
+      * a REAL observable at delay 0 is a graph node under its own name,
+        e.g. 'CA1_3_tsls', and may acquire drivers of its own;
+      * a LAGGED observable is its OWN LEAF NODE under a delayed name,
+        e.g. 'CA1_3_tsls::delay-49', carrying lagged_of='CA1_3_tsls' and
+        lag=-49. A leaf never has in-edges, so it can never close a
+        cycle, and it has zero drivers by construction -- which is
+        exactly why partition_network() classifies it as an external
+        input that the simulation feeds from recorded data.
+    So a lagged copy of B IS a second node, distinct from B's own node,
+    and B's own node need not be in the graph at all for 'B::delay-49' to
+    be in it. (An earlier version of this docstring claimed the opposite
+    -- "exactly one graph node per raw observable" -- and that was simply
+    wrong; _accept_mde_result_edges() calls add_node() with the RAW name
+    only on the delay == 0 branch, and with the delayed name on the
+    other.) The loop below therefore resolves a leaf in-edge back to
+    (lagged_of, edge delay), so that the coordinate names a raw data
+    column rather than a node name.
+
+    CAVEAT -- that resolution assumes the caller's frame carries the RAW
+    observable column, and data_after_mde (gmn_build.py) does not: it is
+    keyed on graph node names, storing each leaf as a PRE-SHIFTED column
+    under the leaf's own name, and omitting the raw observable unless
+    that observable is independently a node. Calling this with that frame
+    raises KeyError on the first leaf in-edge -- job 4741044 died exactly
+    here, on 'CA1_12_tsls'. Unresolved: either this function emits the
+    leaf's own name at delay 0 (and the caller accounts for the lag the
+    column already carries when sizing its offset), or the frame also
+    carries raw observable columns.
+
+    Partitioning zero-driver nodes out stands on its own regardless of
+    the above: such a node isn't something nested-MDE discovered as a
+    network member at all, so counting it as an interior (simulated) node
+    overstates what was actually found.
 
     Plain DiGraph (MODE='GMN', from apps.CreateNetwork -- no per-edge delay
     data exists in that mode at all): falls back to the original uniform
@@ -170,11 +190,60 @@ def _generalized_embed(data, embedding_spec):
     unchanged. Returns (embedded_df, offset) with a fresh 0-based index --
     offset is the largest lag magnitude across the whole spec, i.e. how many
     leading rows are dropped as NaN once every (col, delay) pair has been
-    shifted into place.'''
-    columns = {
-        f'{col}(t-{abs(delay)})': data[col].shift(-delay).to_numpy()
-        for col, delay in embedding_spec
-    }
+    shifted into place.
+
+    TWO WAYS A FRAME CAN CARRY A LAGGED VALUE, and this function accepts
+    both, because the frames it is called with disagree:
+
+      * UNSHIFTED -- a raw observable column, which this function shifts
+        itself. That is the (col, delay) pair taken literally.
+      * PRE-SHIFTED -- a column already holding the value abs(delay) rows
+        in the past, stored under the delayed name '<col>::delay<delay>'.
+        data_after_mde (gmn_build.py) is built this way: it is keyed on
+        GRAPH NODE NAMES, and a lagged leaf's node name IS the delayed
+        name, so the shift happened once at build time and the raw
+        observable is absent unless it is independently a node.
+
+    Resolving that here, rather than by rewriting the spec upstream, is
+    deliberate, and the reason is the `offset` line below. The spec's delay
+    is the only thing that tells this function how many leading rows are
+    unusable: for head_position_x a deepest input of delay -393 is what
+    makes offset 393 and drops those 393 NaN rows before pyEDM sees them.
+    Rewriting a pre-shifted coordinate to (leaf_name, 0) -- the obvious
+    alternative -- would erase that 393 from the only place offset is
+    computed from, so max() would return 0, nothing would be dropped, and
+    the NaNs physically present at the top of the pre-shifted column (put
+    there by gmn_build.py's own shift) would flow into the SMap fit. That
+    is a silent wrong answer where this is a loud KeyError. So the delay
+    stays in the spec and ONLY the lookup branches; offset is computed
+    from the spec exactly as before, untouched by any of this.
+
+    Keeping the spec intact also keeps the output column names
+    ('CA1_12_tsls(t-49)') identical under either branch, which matters
+    because gmn's SMap finds its prediction target by looking up
+    Parameters.target + '(t-0)' by name.
+
+    Raises KeyError naming both spellings it tried when a coordinate
+    resolves to neither -- see _embedding_spec_for()'s CAVEAT for the
+    drift this guards (job 4741044 died on exactly that, after 40h).'''
+    columns = {}
+    for col, delay in embedding_spec:
+        if col in data.columns:
+            series = data[col].shift(-delay)
+        else:
+            delayed = _delayed_column_name(col, delay)
+            if delayed not in data.columns:
+                raise KeyError(
+                    f'_generalized_embed: embedding coordinate ({col!r}, {delay}) '
+                    f'matches no column in the frame it was given -- tried the raw '
+                    f'name {col!r} (to shift here) and the pre-shifted name '
+                    f'{delayed!r}. The frame has {len(data.columns)} columns. A '
+                    f'graph node and its data column have drifted apart; see '
+                    f'_embedding_spec_for() and gmn_build.py\'s data_after_mde block.')
+            # Already shifted at build time -- taking it as-is IS the shift.
+            series = data[delayed]
+        columns[f'{col}(t-{abs(delay)})'] = series.to_numpy()
+
     embedded = pd.DataFrame(columns, index=data.index)
     offset = max(abs(delay) for _, delay in embedding_spec)
     return embedded.iloc[offset:].reset_index(drop=True), offset

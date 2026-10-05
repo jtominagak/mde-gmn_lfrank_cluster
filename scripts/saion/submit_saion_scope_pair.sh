@@ -18,9 +18,10 @@
 #           more expensive call per node, since every node's pool is
 #           (1 + number of lags)x wider from the first selection round.
 #
-# WHY A CHAIN AND NOT TWO SUBMISSIONS. Each job asks for 9 cores + 1 GPU and
-# the allocation is 36 cores + 4 GPUs per partition, so Slurm would happily run
-# both at once. `--dependency=afterany:<first>` is what holds the second back.
+# WHY A CHAIN AND NOT TWO SUBMISSIONS. Each job asks for 18 cores + 2 GPUs
+# (raised from 9 + 1 on 2026-10-05, see the sbatch's own header) and the
+# allocation is 36 cores + 4 GPUs per partition, so the two together are
+# EXACTLY the allocation and Slurm would happily run both at once. `--dependency=afterany:<first>` is what holds the second back.
 # afterany, not afterok: the union job is an independent experiment, and with
 # afterok a first job that merely hit its 6-day limit would leave the second
 # stuck in DependencyNeverSatisfied until cancelled by hand.

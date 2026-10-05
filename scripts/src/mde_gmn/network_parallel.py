@@ -49,6 +49,7 @@ from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 import networkx as nx
 import pandas as pd
 
+import gpu_budget                # staged beside the entry script, not in the package
 from mde_gmn import mde          # module object, so tests' fake is honoured
 from mde_gmn.columns import effective_mde_dimension, expand_delay_columns, observable_and_delay
 from mde_gmn.network import _accept_mde_result_edges
@@ -268,8 +269,27 @@ def precompute_all_mde(tasks, stage_specs, common, cores, mp_start_method,
     # A further (fork-only) win of collapsing every wave into one pool: the
     # 10-28s spawn startup docs/no-kEDM-gpu-optimization-progress.md
     # measured is now paid once per network build instead of once per wave.
+    #
+    # GPU admission control. One budget per visible device, sized from
+    # what the device reports rather than a hardcoded card size (the job
+    # goes to whichever of gpu-p100/gpu-v100 starts sooner, and those need
+    # not match). The budgets and the round-robin device counter are built
+    # HERE, in the parent, because multiprocessing primitives can only
+    # reach a spawned child by being passed at process construction --
+    # which is exactly what ProcessPoolExecutor's initargs are. Without
+    # this every worker would launch its GPU work blind, which is how job
+    # 4741044 lost 51 candidates. Empty list on a GPU-less host, and then
+    # gpu_budget.reserve() is a transparent no-op.
+    ctx = mp.get_context(mp_start_method)
+    gpu_budgets = gpu_budget.create_budgets(ctx, workers=outer_workers)
+    device_counter = ctx.Value('i', 0)
+    if gpu_budgets:
+        print(gpu_budget.env_summary(), flush=True)
+
     with ProcessPoolExecutor(max_workers=outer_workers,
-                              mp_context=mp.get_context(mp_start_method)) as executor:
+                              mp_context=ctx,
+                              initializer=gpu_budget.init_worker,
+                              initargs=(gpu_budgets, device_counter)) as executor:
         pending = {}
         next_task = 0
 

@@ -1082,6 +1082,7 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
 
     if gpu_ready:
         from gpu_edm import batched_crossmap_predict
+        import gpu_budget
 
         # Group the already-drawn tasks by i (libSize index): every task
         # at a given i has the same fwd library length (min(libSizes[i],
@@ -1096,34 +1097,56 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
             by_i_fwd[i].append((t, lib_idx_fwd))
             by_i_rev[i].append((t, lib_idx_rev))
 
-        # Cached (M, M) pairwise distance matrix, one per direction,
-        # reused across every libSize's batched call within that
-        # direction -- NEVER share this between fwd and rev, they're
-        # different embeddings. See batched_crossmap_predict's own
-        # docstring for why this is the dominant cost this caching avoids
-        # recomputing.
-        full_dist_fwd = None
-        full_dist_rev = None
-        for i in range(n_L):
-            t_fwd = [t for t, _ in by_i_fwd[i]]
-            lib_batch_fwd = np.stack([lib for _, lib in by_i_fwd[i]])
-            preds_fwd, full_dist_fwd = batched_crossmap_predict(
-                embed_fwd, obs_fwd, lib_batch_fwd, k, exclusionRadius, idx_fwd,
-                full_dist=full_dist_fwd,
-            )
-            for row, t in zip(preds_fwd, t_fwd):
-                c2t_measurements[t, i] = _score(
-                    obs_fwd, row, target_measurement, gammaDelta=gammaDelta)
+        # One reservation for the WHOLE section, not per batched call:
+        # the two (M, M) distance caches below stay alive across every
+        # libSize iteration, so a per-call reserve/release would hand back
+        # budget for memory still being held. See gpu_budget.reserve().
+        est_bytes = gpu_budget.crossmap_bytes(
+            m_rows=max(M_fwd, M_rev),
+            batch=sample,
+            lib_len=min(max(libSizes), max(M_fwd, M_rev)),
+            k_query=k + 1 + 2 * max(0, exclusionRadius),
+        )
+        label = f'proper_ccm {columns}->{target} M={max(M_fwd, M_rev)} B={sample}'
 
-            t_rev = [t for t, _ in by_i_rev[i]]
-            lib_batch_rev = np.stack([lib for _, lib in by_i_rev[i]])
-            preds_rev, full_dist_rev = batched_crossmap_predict(
-                embed_rev, obs_rev, lib_batch_rev, k, exclusionRadius, idx_rev,
-                full_dist=full_dist_rev,
-            )
-            for row, t in zip(preds_rev, t_rev):
-                t2c_measurements[t, i] = _score(
-                    obs_rev, row, columns_measurement, gammaDelta=gammaDelta)
+        def _run_gpu_crossmaps():
+            '''The GPU section as one retryable unit. Both full_dist
+            caches are built INSIDE, so a retry after an OOM starts from a
+            clean allocator instead of reusing tensors from the attempt
+            that just failed. Writes into c2t/t2c_measurements are
+            position-indexed and therefore idempotent across a retry.'''
+            # Cached (M, M) pairwise distance matrix, one per direction,
+            # reused across every libSize's batched call within that
+            # direction -- NEVER share this between fwd and rev, they're
+            # different embeddings. See batched_crossmap_predict's own
+            # docstring for why this is the dominant cost this caching
+            # avoids recomputing, and crossmap_bytes() for why holding
+            # both of them is the first term of the memory estimate.
+            full_dist_fwd = None
+            full_dist_rev = None
+            for i in range(n_L):
+                t_fwd = [t for t, _ in by_i_fwd[i]]
+                lib_batch_fwd = np.stack([lib for _, lib in by_i_fwd[i]])
+                preds_fwd, full_dist_fwd = batched_crossmap_predict(
+                    embed_fwd, obs_fwd, lib_batch_fwd, k, exclusionRadius, idx_fwd,
+                    full_dist=full_dist_fwd,
+                )
+                for row, t in zip(preds_fwd, t_fwd):
+                    c2t_measurements[t, i] = _score(
+                        obs_fwd, row, target_measurement, gammaDelta=gammaDelta)
+
+                t_rev = [t for t, _ in by_i_rev[i]]
+                lib_batch_rev = np.stack([lib for _, lib in by_i_rev[i]])
+                preds_rev, full_dist_rev = batched_crossmap_predict(
+                    embed_rev, obs_rev, lib_batch_rev, k, exclusionRadius, idx_rev,
+                    full_dist=full_dist_rev,
+                )
+                for row, t in zip(preds_rev, t_rev):
+                    t2c_measurements[t, i] = _score(
+                        obs_rev, row, columns_measurement, gammaDelta=gammaDelta)
+
+        with gpu_budget.reserve(est_bytes, label=label):
+            gpu_budget.retry_on_oom(_run_gpu_crossmaps, label=label)
     else:
         mapper = pool.map if pool is not None else map
         for t, i, c2t, t2c in mapper(_run_one_cell, tasks):
@@ -1672,8 +1695,23 @@ def proper_mde(
                     use_gpu=use_gpu,
                 )
             except Exception as exc:
+                if use_gpu:
+                    # NEVER swallow a GPU memory failure. A candidate
+                    # dropped for want of memory is a MISSING EDGE that
+                    # looks downstream exactly like a measured absence --
+                    # job 4741044 lost 51 of them through this clause and
+                    # still exited into network construction. A real dead
+                    # end ("Maximum libSize 800 exceeds data size 703")
+                    # IS a finding and still falls through to `continue`;
+                    # an OOM is not a finding about anything. The import
+                    # stays inside `if use_gpu` so a CPU-only run still
+                    # never imports torch (see proper_ccm's gpu_ready
+                    # gate for that contract).
+                    from gpu_budget import is_gpu_memory_error
+                    if is_gpu_memory_error(exc):
+                        raise
                 if verbose:
-                    print(f'    {newColumn}: proper_ccm raised {exc}')
+                    print(f'    CCM dead end: {newColumn}: proper_ccm raised {exc}')
                 continue
 
             # Average the t2c direction (target's manifold cross-mapping to
@@ -1983,6 +2021,7 @@ def multi_proper_ccm(
         gpu_ready = _gpu_is_available()
     if gpu_ready:
         from gpu_edm import batched_crossmap_predict
+        import gpu_budget
 
     # Draw every (i, t[, target]) library index SEQUENTIALLY, in EXACTLY
     # the order and from the exact same per-i rng_fwd/rng_rev Generators
@@ -2040,19 +2079,31 @@ def multi_proper_ccm(
     fwd_scores = {i: {tname: [None] * sample for tname in targets} for i in range(n_L)}
 
     if gpu_ready:
-        full_dist_fwd = None
-        for i in range(n_L):
-            for tname in targets:
-                group = fwd_draws[i][tname]
-                t_order = [t for t, _ in group]
-                lib_batch = np.stack([lib for _, lib in group])
-                preds, full_dist_fwd = batched_crossmap_predict(
-                    embed_fwd, obs_fwd_dict[tname], lib_batch, k_fwd, exclusionRadius, idx_fwd,
-                    full_dist=full_dist_fwd,
-                )
-                for row, t in zip(preds, t_order):
-                    fwd_scores[i][tname][t] = _score(
-                        obs_fwd_dict[tname], row, target_measurement, gammaDelta=gammaDelta)
+        est_bytes = gpu_budget.crossmap_bytes(
+            m_rows=M_fwd, batch=sample,
+            lib_len=min(max(libSizes), M_fwd),
+            k_query=k_fwd + 1 + 2 * max(0, exclusionRadius), dist_matrices=1)
+        label = f'multi_proper_ccm fwd M={M_fwd} B={sample}'
+
+        def _run_gpu_fwd():
+            # Built inside, so an OOM retry starts from a clean allocator
+            # rather than reusing a tensor from the failed attempt.
+            full_dist_fwd = None
+            for i in range(n_L):
+                for tname in targets:
+                    group = fwd_draws[i][tname]
+                    t_order = [t for t, _ in group]
+                    lib_batch = np.stack([lib for _, lib in group])
+                    preds, full_dist_fwd = batched_crossmap_predict(
+                        embed_fwd, obs_fwd_dict[tname], lib_batch, k_fwd, exclusionRadius, idx_fwd,
+                        full_dist=full_dist_fwd,
+                    )
+                    for row, t in zip(preds, t_order):
+                        fwd_scores[i][tname][t] = _score(
+                            obs_fwd_dict[tname], row, target_measurement, gammaDelta=gammaDelta)
+
+        with gpu_budget.reserve(est_bytes, label=label):
+            gpu_budget.retry_on_oom(_run_gpu_fwd, label=label)
     else:
         for i in range(n_L):
             for tname in targets:
@@ -2082,18 +2133,28 @@ def multi_proper_ccm(
     # measuring" lesson from section 7c's H1 result).
     if gpu_ready and use_full_pool:
         target_embed_full = np.ascontiguousarray(pool_valid[:, full_pool_idx])
-        full_dist_rev = None
-        for i in range(n_L):
-            group = rev_draws[i]
-            t_order = [t for t, _, _ in group]
-            lib_batch = np.stack([lib for _, lib, _ in group])
-            preds, full_dist_rev = batched_crossmap_predict(
-                target_embed_full, obs_rev, lib_batch, k_rev, exclusionRadius, idx_rev,
-                full_dist=full_dist_rev,
-            )
-            for row, t in zip(preds, t_order):
-                t2c_measurements[t, i] = _score(
-                    obs_rev, row, columns_measurement, gammaDelta=gammaDelta)
+        est_bytes = gpu_budget.crossmap_bytes(
+            m_rows=target_embed_full.shape[0], batch=sample,
+            lib_len=min(max(libSizes), target_embed_full.shape[0]),
+            k_query=k_rev + 1 + 2 * max(0, exclusionRadius), dist_matrices=1)
+        label = f'multi_proper_ccm rev M={target_embed_full.shape[0]} B={sample}'
+
+        def _run_gpu_rev():
+            full_dist_rev = None
+            for i in range(n_L):
+                group = rev_draws[i]
+                t_order = [t for t, _, _ in group]
+                lib_batch = np.stack([lib for _, lib, _ in group])
+                preds, full_dist_rev = batched_crossmap_predict(
+                    target_embed_full, obs_rev, lib_batch, k_rev, exclusionRadius, idx_rev,
+                    full_dist=full_dist_rev,
+                )
+                for row, t in zip(preds, t_order):
+                    t2c_measurements[t, i] = _score(
+                        obs_rev, row, columns_measurement, gammaDelta=gammaDelta)
+
+        with gpu_budget.reserve(est_bytes, label=label):
+            gpu_budget.retry_on_oom(_run_gpu_rev, label=label)
     else:
         for i in range(n_L):
             for t, lib_idx_rev, col_idx in rev_draws[i]:
@@ -2504,8 +2565,23 @@ def multi_proper_mde(
                     use_gpu=use_gpu,
                 )
             except Exception as exc:
+                if use_gpu:
+                    # NEVER swallow a GPU memory failure. A candidate
+                    # dropped for want of memory is a MISSING EDGE that
+                    # looks downstream exactly like a measured absence --
+                    # job 4741044 lost 51 of them through this clause and
+                    # still exited into network construction. A real dead
+                    # end ("Maximum libSize 800 exceeds data size 703")
+                    # IS a finding and still falls through to `continue`;
+                    # an OOM is not a finding about anything. The import
+                    # stays inside `if use_gpu` so a CPU-only run still
+                    # never imports torch (see proper_ccm's gpu_ready
+                    # gate for that contract).
+                    from gpu_budget import is_gpu_memory_error
+                    if is_gpu_memory_error(exc):
+                        raise
                 if verbose:
-                    print(f'    {newColumn}: multi_proper_ccm raised {exc}')
+                    print(f'    CCM dead end: {newColumn}: multi_proper_ccm raised {exc}')
                 continue
 
             ccmVals = np.nan_to_num(np.nanmean(t2c, axis=0))

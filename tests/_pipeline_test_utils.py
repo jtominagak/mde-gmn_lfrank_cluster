@@ -167,12 +167,24 @@ class FakeProcessPoolExecutor:
     "no Stage 2 call before every Stage 1 call has returned" needs to
     check -- a real ProcessPoolExecutor would only add nondeterministic
     interleaving noise here, not a more faithful test.'''
-    def __init__(self, max_workers=None, mp_context=None, initializer=None):
-        # `initializer` (simple-mde-gmn.py's _mde_wave_worker_init, which
-        # reapplies dimx.Run monkeypatches inside a real worker process) is
-        # irrelevant here -- run_mde_for_target itself is faked below, so
-        # no real dimx.MDE/CCM call ever happens for this to matter to.
-        pass
+    def __init__(self, max_workers=None, mp_context=None, initializer=None,
+                 initargs=()):
+        # `initializer` is run ONCE here, in the calling process, which is
+        # the closest this synchronous double can get to a real pool's
+        # per-worker init. Two callers rely on it:
+        #   * simple-mde-gmn.py's _mde_wave_worker_init, which reapplies
+        #     dimx.Run monkeypatches -- irrelevant to these tests, since
+        #     run_mde_for_target itself is faked below and no real
+        #     dimx.MDE/CCM call ever happens;
+        #   * network_parallel's gpu_budget.init_worker, which is a no-op
+        #     on a GPU-less host (empty budget list) and must therefore
+        #     stay harmless when it IS called.
+        # It is called rather than ignored so the double keeps matching
+        # ProcessPoolExecutor's signature -- it silently diverging from the
+        # real class is what let an initargs= change reach the suite as a
+        # TypeError instead of a behavioural assertion.
+        if initializer is not None:
+            initializer(*initargs)
 
     def __enter__(self):
         return self

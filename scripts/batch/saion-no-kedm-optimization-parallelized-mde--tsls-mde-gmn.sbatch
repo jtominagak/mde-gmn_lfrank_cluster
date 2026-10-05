@@ -8,20 +8,35 @@
 # with the earlier estimated start and overrides this line. The value here is
 # only the fallback for a plain `sbatch`.
 #SBATCH --partition=gpu-p100
-# A QUARTER-NODE SHARE, deliberately. The allocation is 36 cores + 4 GPUs per
-# partition, so 1 GPU + 9 cores + ~120 GB is the balanced quarter of it: asking
-# for 36 cores and 400 GB alongside a single GPU would occupy a whole node and
-# strand the other 3 GPUs, which nobody else could then use. The cost is
-# wall-clock -- see SIZING NOTE below.
+# A HALF-NODE SHARE (raised from a quarter, 2026-10-05). The allocation is
+# 36 cores + 4 GPUs per partition, so 2 GPUs + 18 cores + ~240 GB is the
+# balanced half of it, and still leaves half for everyone else -- the point of
+# the original quarter-share note was not to occupy a whole node while
+# stranding GPUs nobody else could then use, and that still holds at a half.
 #
-# 9 workers on one 16 GB card is comfortably inside the measured capacity
-# (preflight ran 36 with 0 errors at 92% of device memory; the safe cap is ~31),
-# so the preflight's GPU verdict is no longer the binding constraint here. Check
-# it anyway, but it should pass with large margin.
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=9
-# See SIZING NOTE below for how --mem/--time were derived.
-#SBATCH --mem=120G
+# WHY THIS WENT UP -- job 4741044. The claim this block used to make, that
+# "9 workers on one 16 GB card is comfortably inside the measured capacity
+# (preflight ran 36 with 0 errors at 92% of device memory; the safe cap is
+# ~31)", was wrong, and wrong in a way the preflight could not have caught.
+# The preflight measured the ~288 MiB CUDA CONTEXT each worker costs just to
+# attach to the device, and divided 16 GiB by it. It never measured the
+# WORKING SET of a real cross-map: the (M, M) distance matrix plus the
+# gathered (B, M, L) tensor run to GIGABYTES -- one process in 4741044 was
+# logged holding 8.51 GiB, ~30x its context. Nine of those do not fit. The
+# card peaked at 16203/16384 MiB and 51 CCM calls across 85 nodes failed,
+# each one silently recorded as a dead end.
+#
+# Capacity is no longer asserted here at all. scripts/src/gpu_budget.py sizes
+# a per-device budget AT RUNTIME from what the device reports, and workers
+# queue for it, so this file no longer has to predict what fits -- which is
+# what it got wrong. The second GPU is throughput: it restores roughly the
+# concurrency the broken version had by accident, without the failures.
+#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-task=18
+# See SIZING NOTE below for how --mem/--time were derived (doubled with the
+# core count: memory here scales per spawn worker, each holding its own
+# pickled copy of the Stage 2 DataFrame).
+#SBATCH --mem=240G
 #SBATCH --time=6-00:00:00
 # 30 min before the time limit Slurm sends USR1 to this batch shell only;
 # the handler below stops Python cleanly so there is time to stage results
@@ -58,10 +73,15 @@
 #     (path_under/safe_rm_work in scripts/saion/saion_env.sh).
 #
 #   OUTCOME  results/STATUS.txt says COMPLETED or FAIL plus the reason
-#     (python exit status, time-limit, CUDA errors, Slurm state). A run whose
-#     Python exited 0 but whose log contains CUDA OOM/errors is marked FAIL:
-#     the pipeline records a crashed MDE node as a zero-driver dead end, so a
-#     GPU OOM would otherwise silently yield a smaller network.
+#     (python exit status, time-limit, CUDA errors, Slurm state), and reports
+#     CCM_DEAD_ENDS -- candidates genuinely evaluated and rejected, which are
+#     findings, not failures.
+#     As of 2026-10-05 a GPU memory failure no longer reaches this check as a
+#     silent shrinkage: proper_ccm/multi_proper_ccm re-raise it instead of
+#     recording the candidate as a zero-driver dead end (see gpu_budget.py),
+#     so the run stops at the failure rather than exiting 0 with a quietly
+#     smaller network. The CUDA-error count is kept as a second line of
+#     defence and now also catches the allocator's own warning spelling.
 #
 #   RESUMING  Every finished MDE node is cached immediately and synced to
 #     /bucket/FukaiU/tominaga/pao_rotation hourly, so resubmitting this same file after a timeout/crash
@@ -588,6 +608,11 @@ export MPLBACKEND=Agg
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
+# Let the CUDA caching allocator grow one segment instead of many fixed
+# blocks. torch's own OOM message in job 4741044 recommended exactly this;
+# it does not create capacity, it stops capacity being lost to
+# fragmentation between the several workers sharing each card.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # Bucket targets, all inside $BUCKET_PROJECT (written only through the login
 # node; stage_dir refuses anything outside it).
@@ -647,15 +672,24 @@ cleanup() {
         kill "$pid" 2>/dev/null
     done
 
-    local slurm_state="" gpu_errors mde_failures status reason dest stage_ok=1
+    local slurm_state="" gpu_errors mde_failures ccm_dead_ends status reason dest stage_ok=1
     for _ in 1 2 3; do
         slurm_state="$(sacct -j "$SLURM_JOB_ID" --format=State -P -n 2>/dev/null | head -1 | tr -d ' ')"
         [ -n "$slurm_state" ] && break
         sleep 2
     done
+    # 'memory allocation failed with OOM' is the CUDACachingAllocator's own
+    # spelling and matched NONE of the other patterns -- job 4741044 logged
+    # 47 of those lines and this check saw zero of them, so the early
+    # warning that the card was saturating never reached STATUS.txt.
     gpu_errors="$(cat "$SLURM_OUT" "$SLURM_ERR" 2>/dev/null \
-        | grep -c -E 'CUDA out of memory|OutOfMemoryError|CUDA error|CUBLAS_STATUS|cuDNN error')"
+        | grep -c -E 'CUDA out of memory|OutOfMemoryError|CUDA error|CUBLAS_STATUS|cuDNN error|memory allocation failed with OOM|UNDER-ESTIMATED')"
     mde_failures="$(cat "$SLURM_OUT" 2>/dev/null | grep -c 'MDE call FAILED')"
+    # Candidates that were genuinely evaluated and found wanting (short
+    # data, no convergence). These are FINDINGS, not failures -- counted
+    # so they stop being indistinguishable from the GPU-memory drops that
+    # used to print through the same clause.
+    ccm_dead_ends="$(cat "$SLURM_OUT" 2>/dev/null | grep -c 'CCM dead end:')"
 
     if [ "${PY_STATUS:-unset}" = "0" ] && [ -z "$STOP_REASON" ] && [ "$gpu_errors" -eq 0 ]; then
         status=COMPLETED; reason="pipeline exited 0"
@@ -677,6 +711,7 @@ cleanup() {
         echo "SLURM_STATE_AT_EXIT: ${slurm_state:-unknown (check: sacct -j $SLURM_JOB_ID)}"
         echo "HOST: $(hostname)  PARTITION: ${SLURM_JOB_PARTITION:-?}  GPUS: ${SLURM_JOB_GPUS:-${CUDA_VISIBLE_DEVICES:-?}}"
         echo "CUDA_ERROR_LINES: $gpu_errors"
+        echo "CCM_DEAD_ENDS: $ccm_dead_ends"
         echo "MDE_CALL_FAILED_LINES: $mde_failures"
         echo "ENDED: $(date -Iseconds)"
         echo "CACHE_ARCHIVE: $CACHE_DEST"
@@ -730,6 +765,11 @@ trap cleanup EXIT
 # gpu_edm.py must be staged: the pipeline puts its own directory at the head
 # of sys.path, and a missing gpu_edm would turn every GPU MDE call into an
 # ImportError-recorded dead end (an empty network, not a crash).
+# gpu_budget.py likewise, and it fails harder: cleaned_helper_functions
+# imports it on the GPU path and again from both CCM except-clauses, so a
+# missing copy is an unhandled ImportError mid-run rather than a quiet
+# degradation. It is a separate module from gpu_edm for the same reason
+# gpu_edm is separate -- it must import cleanly with no torch on Deigo.
 # The mde_gmn/ PACKAGE is staged too, not just the entry script: the pipeline
 # is split across its modules (see scripts/src/mde_gmn/__init__.py). Without
 # it the entry script fails at import.
@@ -737,6 +777,7 @@ cp -a \
     "$PROJ_DIR/scripts/src/$PY_NAME" \
     "$PROJ_DIR/scripts/src/cleaned_helper_functions.py" \
     "$PROJ_DIR/scripts/src/gpu_edm.py" \
+    "$PROJ_DIR/scripts/src/gpu_budget.py" \
     "$STAGE_SRC"/
 cp -a "$PROJ_DIR/scripts/src/mde_gmn" "$STAGE_SRC"/ || die "staging source files failed"
 [ -r "$BUCKET_DATA_DIR/${DATA_FILE}" ] || die "input data not found on Bucket: $BUCKET_DATA_DIR/${DATA_FILE}"

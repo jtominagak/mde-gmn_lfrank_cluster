@@ -100,7 +100,7 @@ import sys; sys.path.insert(0, '$PROJ_DIR/scripts/src')
 import sitecustomize; print('sitecustomize:', sitecustomize.__file__)
 import gmn, pyEDM, networkx, sklearn, matplotlib, pydiffmap, pandas, numpy
 from apps.CreateNetwork import CreateNetwork
-import cleaned_helper_functions, gpu_edm
+import cleaned_helper_functions, gpu_edm, gpu_budget
 # The pipeline itself: importing pipeline pulls in every stage module, and
 # importing network_parallel covers the builder this job actually uses. This is
 # the check that catches a package the sbatch forgot to stage, or a module that
@@ -108,6 +108,14 @@ import cleaned_helper_functions, gpu_edm
 import mde_gmn.pipeline, mde_gmn.network_parallel
 assert gpu_edm.is_available(), 'gpu_edm.is_available() is False'
 print('all imports OK; gpu_edm.is_available() = True')
+# gpu_budget sizes a per-device admission budget from what the card
+# reports. Printing it here is the only place the numbers a real run
+# will queue against are visible BEFORE the run commits days to them.
+print(gpu_budget.env_summary())
+import multiprocessing as _mp
+_b = gpu_budget.create_budgets(_mp.get_context('spawn'),
+                               workers=int('${SLURM_CPUS_PER_TASK:-1}'))
+assert _b, 'gpu_budget.create_budgets() produced no budget despite a visible GPU'
 "
 
 # ---- 3. storage rules ------------------------------------------------------------
