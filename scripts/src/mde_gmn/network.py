@@ -275,6 +275,10 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                 use_gpu=use_gpu,
             )
         except Exception as exc:
+            if mde.is_gpu_memory_failure(exc):
+                print(f'nested MDE (Stage 1): {node} recompute hit a GPU MEMORY failure: '
+                      f'{exc!r} -- STOPPING the run. {mde._GPU_MEMORY_STOP_ADVICE}', flush=True)
+                raise
             print(f'nested MDE (Stage 1): {node} recompute FAILED: {exc!r} -- treating as a '
                   f'dead end', flush=True)
             return mde._failed_mde_result(node)
@@ -433,6 +437,11 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                             # single node's MDE call failing must not crash the
                             # rest of this wave or every already-completed node
                             # in prior waves.
+                            if mde.is_gpu_memory_failure(exc):
+                                print(f'nested MDE (Stage 1): {node} MDE call hit a GPU MEMORY '
+                                      f'failure: {exc!r} -- STOPPING the run. '
+                                      f'{mde._GPU_MEMORY_STOP_ADVICE}', flush=True)
+                                raise
                             print(f'nested MDE (Stage 1): {node} MDE call FAILED: {exc!r} -- treating '
                                   f'as a dead-end (zero drivers selected, no further nesting from this '
                                   f'node)', flush=True)
@@ -581,6 +590,11 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                             f'stage2 node END -- {node} duration={node_duration:.1f}s '
                             f'selected={stage2_results[node]["SELECTED_COLUMNS"]}')
                     except Exception as exc:
+                        if mde.is_gpu_memory_failure(exc):
+                            print(f'nested MDE (Stage 2): {node} MDE call hit a GPU MEMORY '
+                                  f'failure: {exc!r} -- STOPPING the run. '
+                                  f'{mde._GPU_MEMORY_STOP_ADVICE}', flush=True)
+                            raise
                         print(f'nested MDE (Stage 2): {node} MDE call FAILED: {exc!r} -- treating as '
                               f'a dead-end (zero lagged drivers attached for this node)', flush=True)
                         _log_progress(

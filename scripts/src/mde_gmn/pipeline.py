@@ -309,6 +309,10 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
                     # depth-0 seed for that same Stage-1 BFS, so it needs
                     # the identical guard or the exact crash just
                     # relocates one level up.
+                    if mde.is_gpu_memory_failure(exc):
+                        print(f'{target}: top-level MDE call hit a GPU MEMORY failure: {exc!r} '
+                              f'-- STOPPING the run. {mde._GPU_MEMORY_STOP_ADVICE}', flush=True)
+                        raise
                     print(f'{target}: top-level MDE call FAILED: {exc!r} -- treating as a dead-end '
                           f'(zero drivers selected for this target)', flush=True)
                     mde_results[target] = mde._failed_mde_result(target)

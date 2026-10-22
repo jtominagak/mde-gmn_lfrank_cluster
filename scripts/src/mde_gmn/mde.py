@@ -545,6 +545,41 @@ def plot_3d_mde_projection(target, second_target, mde_results, df, raw_columns,
     fig.savefig(save_path, dpi=300)
     plt.close(fig)
 
+def is_gpu_memory_failure(exc):
+    """True when `exc` reports GPU memory exhaustion rather than a finding.
+
+    EVERY caller that answers a failed MDE call with _failed_mde_result()
+    must ask this first, and re-raise when it says yes. A candidate dropped
+    for want of memory is a MISSING EDGE, and downstream it is
+    indistinguishable from a candidate that was measured and found absent --
+    so swallowing one does not lose a data point, it fabricates one. Job
+    4741044 lost 51 that way; job 4744295 recorded 20 more as dead ends
+    even though gpu_budget had already raised precisely to stop that.
+
+    A genuine finding ("Maximum libSize 800 exceeds data size 703", no
+    convergence) is NOT a memory failure and still falls through to the
+    caller's own dead-end handling. An OOM is not a finding about anything.
+
+    gpu_budget lives beside the entry script rather than in this package
+    and does not exist at all on the CPU-only branch, so the import is
+    lazy and a missing module simply means there is no GPU path here and
+    nothing to re-raise.
+    """
+    try:
+        from gpu_budget import GpuBudgetError, is_gpu_memory_error
+    except ImportError:
+        return False
+    return isinstance(exc, GpuBudgetError) or is_gpu_memory_error(exc)
+
+
+_GPU_MEMORY_STOP_ADVICE = (
+    'This candidate was NOT evaluated, and recording it as a dead end would make it '
+    'indistinguishable from a measured absence. Raise --gres=gpu:N, lower '
+    '--cpus-per-task, or reduce MAX_WINDOW_ROWS/CCM_SAMPLE, then resubmit -- every '
+    'node finished so far is cached.'
+)
+
+
 def _failed_mde_result(target):
     '''Fallback run_mde_for_target()-shaped result for a node/target whose
     MDE call raised, instead of returning normally (job 37946756: dimx's own internal EmbedDimension hit
