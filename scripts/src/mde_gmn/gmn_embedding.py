@@ -204,6 +204,33 @@ def _generalized_embed(data, embedding_spec):
         name, so the shift happened once at build time and the raw
         observable is absent unless it is independently a node.
 
+    WHICH BRANCH WINS, and why the order is not arbitrary: a nonzero delay
+    tries the PRE-SHIFTED name first, and the raw name only as a fallback.
+    Raw-name-first is what job 4744294 died of, after 19h. A node's
+    Generate() frame carries EVERY column but populates only that node's own
+    coordinates; the rest are NaN placeholders that gain one simulated row
+    per step. So a raw column being PRESENT says nothing about whether it
+    holds data -- OFC_10_tsls's coordinate (CA1_55_tsls, -305) found a raw
+    column (that observable is independently a node elsewhere in the same
+    network) holding 1 valid row out of 37783, shifted it to all-NaN, and
+    pyEDM then dropped every row carrying a NaN -- all 37478 of them. The
+    emptied library made SMap's knn = len(lib_i) - 1 = -1, which reached
+    scipy as a reduction over an empty array ('zero-size array to reduction
+    operation maximum which has no identity'). The pre-shifted column it
+    ignored held 37478 real values. Pre-shifted is also the semantically
+    right source: a lagged driver is a leaf node, hence an external input
+    fed from REAL recorded data, which is exactly what gmn_build.py shifted
+    into that column at build time.
+
+    delay == 0 stays on the raw branch, and has to: there is no '::delay0'
+    alias (columns.py gives a delay-0 candidate the bare observable name),
+    and a delay-0 coordinate is the node's own current value or a
+    contemporaneous driver -- under Generate() that must come from the
+    GROWING SIMULATED column, never from a frozen recording, or the
+    simulator reads the very values it is being scored against. The raw
+    branch also still serves MODE='GMN', whose uniform E/tau spec invents
+    delays that no leaf column was ever built for.
+
     Resolving that here, rather than by rewriting the spec upstream, is
     deliberate, and the reason is the `offset` line below. The spec's delay
     is the only thing that tells this function how many leading rows are
@@ -228,25 +255,50 @@ def _generalized_embed(data, embedding_spec):
     drift this guards (job 4741044 died on exactly that, after 40h).'''
     columns = {}
     for col, delay in embedding_spec:
-        if col in data.columns:
-            series = data[col].shift(-delay)
-        else:
-            delayed = _delayed_column_name(col, delay)
-            if delayed not in data.columns:
-                raise KeyError(
-                    f'_generalized_embed: embedding coordinate ({col!r}, {delay}) '
-                    f'matches no column in the frame it was given -- tried the raw '
-                    f'name {col!r} (to shift here) and the pre-shifted name '
-                    f'{delayed!r}. The frame has {len(data.columns)} columns. A '
-                    f'graph node and its data column have drifted apart; see '
-                    f'_embedding_spec_for() and gmn_build.py\'s data_after_mde block.')
+        # Pre-shifted FIRST, raw only as a fallback -- see the docstring's
+        # WHICH BRANCH WINS note. delay == 0 has no pre-shifted spelling and
+        # must read the raw (growing, simulated) column.
+        delayed = _delayed_column_name(col, delay) if delay else None
+        if delayed is not None and delayed in data.columns:
             # Already shifted at build time -- taking it as-is IS the shift.
             series = data[delayed]
+        elif col in data.columns:
+            series = data[col].shift(-delay)
+        else:
+            tried = f'the pre-shifted name {delayed!r} and ' if delayed else ''
+            raise KeyError(
+                f'_generalized_embed: embedding coordinate ({col!r}, {delay}) '
+                f'matches no column in the frame it was given -- tried '
+                f'{tried}the raw name {col!r} (to shift here). The frame has '
+                f'{len(data.columns)} columns. A graph node and its data column '
+                f'have drifted apart; see _embedding_spec_for() and '
+                f'gmn_build.py\'s data_after_mde block.')
         columns[f'{col}(t-{abs(delay)})'] = series.to_numpy()
 
     embedded = pd.DataFrame(columns, index=data.index)
     offset = max(abs(delay) for _, delay in embedding_spec)
-    return embedded.iloc[offset:].reset_index(drop=True), offset
+    embedded = embedded.iloc[offset:].reset_index(drop=True)
+
+    # An all-NaN coordinate is never a usable embedding, and left alone it does
+    # NOT fail where it happened. pyEDM drops every row carrying a NaN, so one
+    # such column empties the entire library and the failure surfaces much
+    # later, and unrecognisably, as scipy reducing over an empty array
+    # ('zero-size array to reduction operation maximum which has no identity').
+    # Job 4744294 spent 19h reaching exactly that, and the pipeline then
+    # recorded the whole network as simply having produced no output. Naming
+    # the coordinate here turns the next occurrence into a diagnosis.
+    empty = [name for name in embedded.columns if embedded[name].isna().all()]
+    if empty:
+        shown = ', '.join(empty[:6]) + (' ...' if len(empty) > 6 else '')
+        raise ValueError(
+            f'_generalized_embed: {len(empty)} of {len(embedded.columns)} embedding '
+            f'coordinate(s) resolved to an all-NaN column over the '
+            f'{len(embedded)} usable rows (offset {offset}): {shown}. The frame '
+            f'supplied a column under that name but it carries no data in this '
+            f'window -- see this function\'s WHICH BRANCH WINS note: a node\'s '
+            f'Generate() frame holds placeholder columns for every coordinate it '
+            f'does not own, so a name being present does not mean it has values.')
+    return embedded, offset
 
 _real_node_init = gmn.Node.__init__
 
