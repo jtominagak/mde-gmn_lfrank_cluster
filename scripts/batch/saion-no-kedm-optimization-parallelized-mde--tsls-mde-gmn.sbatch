@@ -517,7 +517,18 @@ GAMMA_DELTA=2                  # coincidence window (bins), only used when METRI
 # window-sizing block below.
 CCM_WINDOW_ROWS=800
 CCM_LIB_SIZE_PCTS="2,3,5,8,12,20,30,50"  # -> ~16,24,40,64,96,160,240,400 rows at CCM_WINDOW_ROWS=800
-CCM_SAMPLE=20                    # random-library resamples averaged per libSize -- higher = less noisy, slower
+CCM_SAMPLE=10                    # random-library resamples averaged per libSize -- higher = less noisy, slower
+# 20 -> 10 (2026-10-22), to bring union scope inside a 2-day wall. This is
+# the BATCH dimension of the GPU cross-map, so it buys time AND memory: by
+# crossmap_bytes()'s own terms the B-dependent terms are ~80% of a call, so
+# halving B takes the worst observed union call (M=28251, ~14.9 GiB live in
+# job 4744295) to roughly 9 GiB. It costs ESTIMATOR PRECISION, not model
+# space -- no observable, driver, depth, lag, generative window or data row
+# is given up, the CCM rho at each libSize is just averaged over 10 random
+# library draws instead of 20, so the convergence slope is noisier.
+# NOTE: ccm_sample is part of the per-node cache fingerprint
+# (caching.py build_mde_selection_fingerprint), so this correctly MISSES
+# every node cached at 20 rather than silently reusing it.
 CCM_SLOPE=0.01                   # convergence-slope threshold, used by both proper_mde's own CCM gate and build_interaction_matrix()
 
 # ---- Window sizing (MODE='MDE-GMN' only, docs/review-findings.md) -----------
@@ -537,7 +548,14 @@ TARGET_RANKING_WINDOW_ROWS=1000  # depth-0 (behavioral target) seed's own fixed 
 # value, vs 8/45 and 20/45 at 40/80) -- not a discovered stabilisation point.
 MIN_PRED_EVENTS=20
 MAX_WINDOW_ROWS=30000             # compute ceiling on the search above -- not calibrated, just a backstop
-CCM_LIB_SIZES_ROWS="16,24,40,64,160,400,800"  # absolute row counts for the CCM gate's own library sweep, never a percentage now
+CCM_LIB_SIZES_ROWS="16,40,160,400,800"  # absolute row counts for the CCM gate's own library sweep, never a percentage now
+# 7 entries -> 5 (2026-10-22), same 2-day motivation. The sweep is
+# sequential within one reservation, so this is ~5/7 of the time and does
+# NOT change peak memory. 24 and 64 were dropped and the ENDPOINTS kept:
+# proper_ccm's verdict needs both the endpoint-to-endpoint change and the
+# fitted slope to agree, so 16 and 800 are the two that must stay, and what
+# is left (16,40,160,400,800) is still a near-geometric spread -- five
+# points is ample to fit a line through. Also in the node fingerprint.
 
 # ---- MDE-only diagnostics (skipped when MODE=GMN) ---------------------------
 MAX_TP=20                        # max forecast horizon (steps) for the Tp-vs-rho sweep
