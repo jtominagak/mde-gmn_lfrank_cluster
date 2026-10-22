@@ -365,7 +365,17 @@ LAG_STEP="${LAG_STEP:-8}"     # overridable; default: 1. The sampling stride (la
 # fails at startup with the numbers, not mid-run).
 LAG_COUNT="${LAG_COUNT:-10}"  # overridable; default: 10, only used when DELAY_SOURCE=tau_count
 # Explicit delay list -- only used when DELAY_SOURCE=explicit above.
-DELAY_SET="0,-1,-3,-5,-10"
+# Overridable (2026-10-22), like DELAY_SOURCE/LAG_STEP/LAG_COUNT above: it was
+# hardcoded, so `sbatch --export=...,DELAY_SET=...` was silently clobbered here
+# and DELAY_SOURCE=explicit could only ever mean this one list.
+#
+# DELAY_SET=0 is the useful edge case it unlocks: derive_lag_set() strips every
+# 0 entry on the explicit path, so that resolves to an EMPTY lag set -- no
+# lagged candidates, hence no Stage 2 picks and no lagged leaf nodes at all.
+# Nothing downstream trips on it (the lag-depth guard reads max(..., default=0)
+# and expand_delay_columns() adds no columns), and lag_set is in the per-node
+# cache fingerprint, so such a run shares nothing with a lagged one.
+DELAY_SET="${DELAY_SET:-0,-1,-3,-5,-10}"
 # NOTE: STAGE2_ALLOW_REAL_OBSERVABLES is retired (2026-09-30). Stage 2's
 # candidates are lagged columns only, and every lagged pick becomes a leaf
 # node, so there is nothing for Stage 2 to select recursively. load_config()
