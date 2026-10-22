@@ -358,21 +358,44 @@ def reserve(nbytes, label=''):
         budget.cond.notify_all()
 
     if clamped:
+        # "To itself" means no other worker is doing GPU WORK. It does not mean
+        # the card is empty: every sibling worker keeps its ~CONTEXT_BYTES CUDA
+        # context resident for its whole life, which is why that cost was
+        # already subtracted from total_tokens. A request that exceeds the
+        # context-adjusted budget therefore wants memory that does not exist on
+        # this card, and the OOM that usually follows is a sizing shortfall, not
+        # a transient -- job 4744295 clamped 30 times and lost 20 candidates.
         print(f'GPU budget: {label or "request"} estimated at '
               f'{nbytes / 2**30:.2f} GiB exceeds device {budget.index}\'s '
               f'{budget.total_tokens * TOKEN_BYTES / 2**30:.2f} GiB budget -- '
-              f'running with the device to itself', flush=True)
+              f'running with the device to itself. Sibling CUDA contexts stay '
+              f'resident, so this may still OOM; if it does, raise --gres=gpu:N, '
+              f'lower --cpus-per-task, or reduce MAX_WINDOW_ROWS/CCM_SAMPLE.',
+              flush=True)
 
-    # Measure what this reservation actually costs, so an estimate that
-    # is too low shows up in the log as a number instead of as a
-    # mysterious OOM three hours later. crossmap_bytes() is a formula over
-    # tensor shapes; this is the ground truth it should be checked against,
-    # and the two diverging is the signal to re-derive it.
+    # Measure what this reservation actually costs, so an estimate that is
+    # too low shows up in the log as a number instead of as a mysterious OOM
+    # three hours later. crossmap_bytes() is a formula over tensor shapes;
+    # this is what it gets checked against, and the two diverging is the
+    # signal to re-derive it.
+    #
+    # It is the GROWTH over this reservation, not the absolute peak, and that
+    # distinction is the whole reliability of the number.
+    # max_memory_reserved() is a PROCESS-WIDE high-water mark, and
+    # reset_peak_memory_stats() rebases it only to what the allocator is
+    # ALREADY holding -- so the absolute figure charges this call for every
+    # block its process cached earlier. Job 4744295 reported 73x
+    # under-estimates on M=1003 calls whose own tensors come to ~0.1 GiB:
+    # that reading was an earlier, far larger call's cache, not this one's,
+    # and it made the advisory useless exactly where it mattered. Subtracting
+    # the baseline attributes to this reservation only what it added.
+    baseline = 0
     if torch is not None:
         try:
             torch.cuda.reset_peak_memory_stats()
+            baseline = torch.cuda.memory_reserved()
         except Exception:
-            pass
+            baseline = 0
 
     _RESERVE_DEPTH += 1
     try:
@@ -381,15 +404,18 @@ def reserve(nbytes, label=''):
         _RESERVE_DEPTH -= 1
         if torch is not None:
             try:
-                actual = torch.cuda.max_memory_reserved()
+                actual = max(torch.cuda.max_memory_reserved() - baseline, 0)
             except Exception:
                 actual = 0
             if actual > nbytes:
-                print(f'GPU budget: UNDER-ESTIMATED {label or "request"} -- reserved '
+                print(f'GPU budget: UNDER-ESTIMATED {label or "request"} -- grew '
                       f'{actual / 2**30:.2f} GiB against an estimate of '
-                      f'{nbytes / 2**30:.2f} GiB ({actual / max(nbytes, 1):.2f}x). '
-                      f'Admission control is running looser than intended on device '
-                      f'{budget.index}; raise crossmap_bytes()\'s headroom factor.',
+                      f'{nbytes / 2**30:.2f} GiB ({actual / max(nbytes, 1):.2f}x), '
+                      f'over a {baseline / 2**30:.2f} GiB baseline. Admission '
+                      f'control is running looser than intended on device '
+                      f'{budget.index}; raise crossmap_bytes()\'s headroom factor. '
+                      f'This is an advisory, NOT a failure -- the reservation was '
+                      f'granted and the call ran.',
                       flush=True)
         # Hand the memory back to the DRIVER before handing the tokens
         # back to the queue. torch's caching allocator would otherwise

@@ -193,6 +193,10 @@ def _mde_result_for_node(node, spec, common, blocked, precomputed, recompute_cac
     try:
         result = _run_one_mde(node, spec, call, common)
     except Exception as exc:   # same policy as the precompute pool's own handler
+        if mde.is_gpu_memory_failure(exc):
+            print(f'parallelized MDE: {node} recompute hit a GPU MEMORY failure: {exc!r} '
+                  f'-- STOPPING the run. {mde._GPU_MEMORY_STOP_ADVICE}', flush=True)
+            raise
         print(f'parallelized MDE: {node} recompute FAILED: {exc!r} -- treating as a dead end',
               flush=True)
         result = mde._failed_mde_result(node)
@@ -374,6 +378,24 @@ def precompute_all_mde(tasks, stage_specs, common, cores, mp_start_method,
                         f'duration={node_duration:.1f}s '
                         f'selected={tables[cache_stage][node]["SELECTED_COLUMNS"]}')
                 except Exception as exc:
+                    # A GPU-MEMORY failure is not a finding and must never be
+                    # recorded as one. gpu_budget re-raises OOM for exactly that
+                    # reason, but this clause used to catch it anyway and write a
+                    # dead end regardless -- job 4744295 printed "the run is
+                    # stopping rather than recording it as a dead end" 20 times
+                    # and then recorded a dead end 20 times. A candidate dropped
+                    # for want of memory is indistinguishable from one measured
+                    # and found absent, which is the whole failure mode this
+                    # machinery exists to remove, so stop the run instead.
+                    if mde.is_gpu_memory_failure(exc):
+                        print(f'parallel MDE precompute [{phase_label}]: {cache_stage} {node} MDE '
+                              f'call hit a GPU MEMORY failure: {exc!r} -- STOPPING the run. '
+                              f'{mde._GPU_MEMORY_STOP_ADVICE}', flush=True)
+                        _log_progress(
+                            progress_log_path,
+                            f'{phase_label} node END -- {cache_stage} {node} '
+                            f'duration={node_duration:.1f}s GPU MEMORY FAILURE: {exc!r}')
+                        raise
                     # See mde._failed_mde_result()'s own docstring -- one node's
                     # MDE call failing must not crash the whole precompute.
                     print(f'parallel MDE precompute [{phase_label}]: {cache_stage} {node} MDE call '

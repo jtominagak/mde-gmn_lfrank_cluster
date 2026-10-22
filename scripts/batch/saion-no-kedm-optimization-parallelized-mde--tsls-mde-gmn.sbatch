@@ -117,10 +117,11 @@
 #   GENERATE_LENGTH=400     -> NOT halved from the default, deliberately:
 #       0 resolves to the full held-out window (~6,700 rows here), and
 #       LAG_MODE=generation_length_adjusted turns that bound into Stage 2's
-#       lag set. Half of it (~3,300 rows / LAG_STEP=4) would be ~830 lags per
+#       lag set. Half of it (~3,300 rows / LAG_STEP=8) would be ~410 lags per
 #       channel -- a ~8x wider Stage 2 candidate pool than every run so far,
-#       which already produced 36 h single nodes. 400 (-> 100 lags) is the
-#       value every recent run used. Raise deliberately, not via "half".
+#       which already produced 36 h single nodes. 400 (-> 50 lags at
+#       LAG_STEP=8 below) is the value every recent run used. Raise
+#       deliberately, not via "half".
 #       NOTE (2026-10-01): the lag count no longer has to be controlled this
 #       way. DELAY_SOURCE=tau_count states it directly (LAG_STEP x LAG_COUNT),
 #       which frees GENERATE_LENGTH to mean only how long Generate() runs.
@@ -331,9 +332,9 @@ REGION_CHANNEL_CAP=78        # HALF PRODUCTION (see SIZING NOTE above): 78x3 = 2
 # 'tau_count' when the count is a BUDGET you need to hold: Stage 2 offers MDE
 # one candidate column per (real observable x lag) and Stage 2 is where
 # essentially all of this job's time goes, so the count directly sets the bill.
-# With the values set here ('lag_mode', GENERATE_LENGTH=400, LAG_STEP=4) the
-# auto path resolves to 100 lags per observable; the same shape stated
-# directly is DELAY_SOURCE=tau_count with LAG_STEP=4, LAG_COUNT=100. Narrowing
+# With the values set here ('lag_mode', GENERATE_LENGTH=400, LAG_STEP=8) the
+# auto path resolves to 50 lags per observable; the same shape stated
+# directly is DELAY_SOURCE=tau_count with LAG_STEP=8, LAG_COUNT=50. Narrowing
 # it to, say, LAG_COUNT=25 is then a one-knob edit that does NOT also shorten
 # the Generate() run -- which is what makes this different from shrinking
 # GENERATE_LENGTH to get the same effect (see the pitfall note there).
@@ -357,7 +358,7 @@ LAG_DENSITY="strided"         # default: strided. Other value: dense
 # under both auto paths: the sampling stride of LAG_MODE's bound under
 # DELAY_SOURCE=lag_mode, and tau under DELAY_SOURCE=tau_count. One knob rather
 # than two so the two paths cannot disagree about the stride.
-LAG_STEP="${LAG_STEP:-4}"     # overridable; default: 1. The sampling stride (lag_mode) / tau (tau_count)
+LAG_STEP="${LAG_STEP:-8}"     # overridable; default: 1. The sampling stride (lag_mode) / tau (tau_count)
 # LAG_COUNT: how many lags -- only used when DELAY_SOURCE=tau_count above.
 # The deepest lag is then LAG_STEP x LAG_COUNT, which still has to fit inside
 # the MDE library segment (the pipeline checks that for every source alike and
@@ -672,7 +673,7 @@ cleanup() {
         kill "$pid" 2>/dev/null
     done
 
-    local slurm_state="" gpu_errors mde_failures ccm_dead_ends status reason dest stage_ok=1
+    local slurm_state="" gpu_errors budget_advisories networks_skipped mde_failures ccm_dead_ends status reason dest stage_ok=1
     for _ in 1 2 3; do
         slurm_state="$(sacct -j "$SLURM_JOB_ID" --format=State -P -n 2>/dev/null | head -1 | tr -d ' ')"
         [ -n "$slurm_state" ] && break
@@ -682,8 +683,22 @@ cleanup() {
     # spelling and matched NONE of the other patterns -- job 4741044 logged
     # 47 of those lines and this check saw zero of them, so the early
     # warning that the card was saturating never reached STATUS.txt.
+    #
+    # 'UNDER-ESTIMATED' is deliberately NOT in this list (it was, 2026-10-05
+    # to 2026-10-22). gpu_budget.reserve() prints it AFTER a reservation has
+    # been granted and the call has run, to say the shape formula predicted
+    # less than the allocator went on to hold. Nothing failed. Counting it
+    # here stamped job 4744294 FAIL on 93 of those advisories with zero real
+    # CUDA errors in the whole 19h run, which buried the one thing that did
+    # go wrong. It gets its own line below instead.
     gpu_errors="$(cat "$SLURM_OUT" "$SLURM_ERR" 2>/dev/null \
-        | grep -c -E 'CUDA out of memory|OutOfMemoryError|CUDA error|CUBLAS_STATUS|cuDNN error|memory allocation failed with OOM|UNDER-ESTIMATED')"
+        | grep -c -E 'CUDA out of memory|OutOfMemoryError|CUDA error|CUBLAS_STATUS|cuDNN error|memory allocation failed with OOM')"
+    budget_advisories="$(cat "$SLURM_OUT" "$SLURM_ERR" 2>/dev/null | grep -c 'UNDER-ESTIMATED')"
+    # A network whose Generate() never rebuilt produces NO plots, fidelity or
+    # output, and the pipeline says so and carries on to exit 0. Job 4744294
+    # lost head_position_x_head_position_y exactly that way and reported
+    # success. Counted, and FAILed on below, so it cannot pass unnoticed again.
+    networks_skipped="$(cat "$SLURM_OUT" 2>/dev/null | grep -c 'no successful Generate() rebuild')"
     mde_failures="$(cat "$SLURM_OUT" 2>/dev/null | grep -c 'MDE call FAILED')"
     # Candidates that were genuinely evaluated and found wanting (short
     # data, no convergence). These are FINDINGS, not failures -- counted
@@ -691,13 +706,15 @@ cleanup() {
     # used to print through the same clause.
     ccm_dead_ends="$(cat "$SLURM_OUT" 2>/dev/null | grep -c 'CCM dead end:')"
 
-    if [ "${PY_STATUS:-unset}" = "0" ] && [ -z "$STOP_REASON" ] && [ "$gpu_errors" -eq 0 ]; then
+    if [ "${PY_STATUS:-unset}" = "0" ] && [ -z "$STOP_REASON" ] && [ "$gpu_errors" -eq 0 ] \
+            && [ "$networks_skipped" -eq 0 ]; then
         status=COMPLETED; reason="pipeline exited 0"
         dest="$OUTPUT_ARCHIVE_ROOT/job_${SLURM_JOB_ID}"
     else
         status=FAIL
         if [ -n "$STOP_REASON" ]; then reason="$STOP_REASON"
-        elif [ "${PY_STATUS:-unset}" = "0" ]; then reason="pipeline exited 0 but the log has ${gpu_errors} CUDA error line(s) -- MDE nodes that hit them were silently recorded as dead ends"
+        elif [ "${PY_STATUS:-unset}" = "0" ] && [ "$gpu_errors" -gt 0 ]; then reason="pipeline exited 0 but the log has ${gpu_errors} CUDA error line(s) -- MDE nodes that hit them were silently recorded as dead ends"
+        elif [ "${PY_STATUS:-unset}" = "0" ]; then reason="pipeline exited 0 but ${networks_skipped} network(s) produced no output (Generate() never rebuilt) -- see the '*: FINAL Generate() rebuild FAILED' line(s) in the log"
         elif [ -z "${PY_STATUS:-}" ]; then reason="job ended before the pipeline started (setup failure)"
         else reason="pipeline exited with status ${PY_STATUS}"
         fi
@@ -711,6 +728,8 @@ cleanup() {
         echo "SLURM_STATE_AT_EXIT: ${slurm_state:-unknown (check: sacct -j $SLURM_JOB_ID)}"
         echo "HOST: $(hostname)  PARTITION: ${SLURM_JOB_PARTITION:-?}  GPUS: ${SLURM_JOB_GPUS:-${CUDA_VISIBLE_DEVICES:-?}}"
         echo "CUDA_ERROR_LINES: $gpu_errors"
+        echo "GPU_BUDGET_ADVISORIES: $budget_advisories  (UNDER-ESTIMATED; informational, not failures)"
+        echo "NETWORKS_SKIPPED: $networks_skipped"
         echo "CCM_DEAD_ENDS: $ccm_dead_ends"
         echo "MDE_CALL_FAILED_LINES: $mde_failures"
         echo "ENDED: $(date -Iseconds)"
