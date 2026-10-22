@@ -3,7 +3,7 @@
 # Fallback only: scripts/saion/submit_saion.sh overrides this with whichever of
 # gpu-p100/gpu-v100 starts first (a comma list is rejected for this account).
 #SBATCH --partition=gpu-p100
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 # A quarter-node share, matching the production job (9 cores + 1 GPU), so the
 # capacity probe measures the shape that will actually run. The 36-worker
 # sweep is already done -- preflight 4724497 on a P100: 36 workers, 0 errors,

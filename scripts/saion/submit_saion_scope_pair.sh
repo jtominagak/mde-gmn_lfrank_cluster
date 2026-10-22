@@ -35,7 +35,7 @@
 #                             below instead of the sbatch's own lag_mode
 #                             setting. See the SIZING WARNING printed at the
 #                             end of a dry run.
-#   LAG_STEP=4 LAG_COUNT=25   the tau and the number of lags, with LAG_OVERRIDE
+#   LAG_STEP=8 LAG_COUNT=25   the tau and the number of lags, with LAG_OVERRIDE
 #   SCOPE_PAIR_ORDER=union,staged   run union first instead
 #   SCOPE_PAIR_DRY_RUN=1      run every check, print what would be submitted,
 #                             submit nothing
@@ -141,7 +141,7 @@ scope_env() {
     local scope="$1"
     local -a pairs=("PARALLEL_MDE_SCOPE=$scope")
     if [ -n "${LAG_OVERRIDE:-}" ]; then
-        pairs+=("DELAY_SOURCE=tau_count" "LAG_STEP=${LAG_STEP:-4}" "LAG_COUNT=${LAG_COUNT:-25}")
+        pairs+=("DELAY_SOURCE=tau_count" "LAG_STEP=${LAG_STEP:-8}" "LAG_COUNT=${LAG_COUNT:-25}")
     fi
     printf '%s\n' "${pairs[*]}"
 }
@@ -153,14 +153,14 @@ if [ -z "${LAG_OVERRIDE:-}" ]; then
 
   SIZING WARNING -- read before submitting a union job at these settings.
   The sbatch leaves the lag set on DELAY_SOURCE=lag_mode, which with
-  GENERATE_LENGTH=400 and LAG_STEP=4 resolves to 100 lags per observable.
-  'union' gives every node a pool 101x wider than staged's Stage 1 pool, from
+  GENERATE_LENGTH=400 and LAG_STEP=8 resolves to 50 lags per observable.
+  'union' gives every node a pool 51x wider than staged's Stage 1 pool, from
   the first selection round, for the whole node universe -- where staged pays
   that cost only on its backbone nodes. Measured reference: Deigo job 40684253
   (101 lags, staged-shaped) had single Stage 2 nodes take up to 36.7 h. No
   union run has ever completed, so 6 days is a guess, not a budget.
   To make both jobs narrower and still comparable, resubmit with e.g.
-      LAG_OVERRIDE=1 LAG_STEP=4 LAG_COUNT=25 <this script>
+      LAG_OVERRIDE=1 LAG_STEP=8 LAG_COUNT=25 <this script>
   Either way the per-node cache is synced hourly, so a timeout costs a
   resubmission rather than the work.
 WARN
@@ -192,7 +192,7 @@ submit_one() {
     [ -n "$dependency" ] && args+=(--dependency="afterany:$dependency")
     local export_list="ALL,PARALLEL_MDE_SCOPE=$scope,SCOPE_PAIR_COMMIT=$commit"
     if [ -n "${LAG_OVERRIDE:-}" ]; then
-        export_list="$export_list,DELAY_SOURCE=tau_count,LAG_STEP=${LAG_STEP:-4},LAG_COUNT=${LAG_COUNT:-25}"
+        export_list="$export_list,DELAY_SOURCE=tau_count,LAG_STEP=${LAG_STEP:-8},LAG_COUNT=${LAG_COUNT:-25}"
     fi
     args+=(--export="$export_list")
     sbatch "${args[@]}" "$SBATCH_SCRIPT"
@@ -214,7 +214,7 @@ record_scope_note() {
     local id="$1" scope="$2" partner="$3" note tmp
     note="**Scope-pair note:** ran \`PARALLEL_MDE_SCOPE=$scope\`"
     if [ -n "${LAG_OVERRIDE:-}" ]; then
-        note="$note with \`DELAY_SOURCE=tau_count LAG_STEP=${LAG_STEP:-4} LAG_COUNT=${LAG_COUNT:-25}\`"
+        note="$note with \`DELAY_SOURCE=tau_count LAG_STEP=${LAG_STEP:-8} LAG_COUNT=${LAG_COUNT:-25}\`"
     else
         note="$note with the sbatch's own lag settings"
     fi
