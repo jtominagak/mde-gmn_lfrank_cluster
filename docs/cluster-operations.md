@@ -186,17 +186,71 @@ Tests are plain scripts — there is no pytest in this venv.
 
 ---
 
-## 6. Caching
+## 6. The precomputed-result cache
 
-A four-stage cross-job cache on `/bucket`, keyed on a hash of **the whole
-`mde_gmn` package plus the entry script's path**, and the installed package
-versions. Therefore:
+Expensive deterministic stages are cached across jobs, so a resubmitted job
+reuses them instead of recomputing. Implemented in `mde_gmn/caching.py`.
 
-- A real logic change **misses** the cache. Expected, not a bug.
-- A comment-only or whitespace change **reuses** it.
-- Changing which entry script is used changes the key, because the path is in it.
+### Reads come from Bucket. Writes go to scratch, then get staged to Bucket.
 
-When planning work locally, assume any substantive edit means a cold run.
+This asymmetry is the thing to get right:
+
+| | Path | Env var |
+|---|---|---|
+| **Lookup (read)** | `/bucket/FukaiU/tominaga/pao_rotation/tsls_mde_gmn_cache` | `TSLS_MDE_GMN_PREV_RUNS_DIR` |
+| **Write, deigo** | `/flash/.../pao_rotation_results/<job>` + run cache | `TSLS_MDE_GMN_RESULTS_DIR`, `TSLS_MDE_GMN_RUN_CACHE_DIR` |
+| **Write, saion** | `/work/FukaiU/j-tominaga/pmde.<job>.XXXX/{results,cache}` | same two |
+| **Then staged to** | `.../tsls_mde_gmn_cache/job_<id>/` | — |
+
+So **a job never reads its cache from `/flash` or `/work`** — those hold only
+what the current job just wrote. `find_cached()` globs
+`prev_runs_dir/**/<filename>` recursively, newest mtime first, and accepts the
+first entry whose fingerprint compares **exactly equal**. Writes go to
+`results_dir` *and* `run_cache_dir` (deduplicated), and the stage-out is what
+makes them visible to the next job.
+
+Consequence: a result computed by a job that crashed before stage-out is not
+in the cache, even though it is sitting on `/flash`. On saion the cache syncs
+hourly, so a timed-out job's work is mostly preserved; on deigo stage-out is
+at exit, so a hard kill loses that job's cache contribution.
+
+Both clusters share the same bucket tree deliberately — fingerprints are exact,
+so a cross-cluster hit is safe.
+
+### What the fingerprint contains
+
+Every stage's key combines its own parameters with `build_code_fingerprint()`:
+
+- **Code** — SHA-256 over **every `mde_gmn/*.py` plus the running entry
+  script**, each parsed to an AST with **docstrings stripped**. So comment and
+  docstring edits reuse the cache; any real change to a function body anywhere
+  in the package invalidates it. The entry script is included by name and
+  content, which is why the serial and parallel builders never share entries.
+- **Environment** — `importlib.metadata.version()` of `gmn`, `pyEDM`,
+  `networkx`, `numpy`, `pandas`, plus **content hashes** of
+  `cleaned_helper_functions` and `apps.CreateNetwork` (not installed packages,
+  so they are hashed by bytes). Current values are recorded in
+  `scripts/env/README.md`. **Bumping any of those five invalidates the whole
+  cache.**
+- **Data** — the data file name *and* its SHA-256. A re-exported dataset with
+  identical contents still hits; one changed value misses.
+- **Stage parameters** — e.g. `builder_kwargs` for the network,
+  node/candidate pool/`mde_d`/`tp`/rho thresholds for MDE selection.
+
+### Cached stages
+
+Per-node MDE selection, multi-target MDE selection, network construction,
+the theta search (`best_params_<network_id>.json`), and the generate-start
+sweep.
+
+### Working on this locally
+
+- Assume any substantive edit means a **cold run**, and that the cost is the
+  whole pipeline, not one stage.
+- A docs-only or comment-only commit is free. This is worth exploiting
+  deliberately when you only want to re-describe something.
+- Do not "tidy" a dependency version to a newer one casually. It is a
+  days-of-compute decision, not a hygiene one.
 
 ---
 
@@ -213,6 +267,12 @@ and depends on `dimx==1.1.3`, `gmn==1.5.1`, `pyedm==2.5.0` plus a
 CPU/cu126 `torch`. On macOS (especially Apple Silicon) `uv sync` will not
 produce a working environment. The cluster venvs are not portable either:
 `pao_rotation/.venv` is 3.2 GB and `.venv-gpu` is 8.6 GB of Linux binaries.
+
+The two things inside those venvs that are *not* reproducible from
+`uv.lock` — `sitecustomize.py` (the pyEDM `Pool` fix and the warning-flood
+filter) and the exact installed versions the cache fingerprint reads — are
+preserved in `scripts/env/`. Read `scripts/env/README.md` before rebuilding
+any venv.
 
 **So local work is: read, edit, reason, and run the fake-backed tests.** Per
 `CLAUDE.md`, tests reach the tsls pipeline through a namespace assembled from

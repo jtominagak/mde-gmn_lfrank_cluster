@@ -68,8 +68,19 @@ Since 2026-10-23 this repo is edited locally and run only on the cluster.
 - Don't run jobs while source files are half-moved: sbatch stages
   `scripts/src/*.py` **and `scripts/src/mde_gmn/`** at job start. A new sbatch
   needs that package line or the job dies at import.
-- Caches are keyed on a hash of the whole package plus the entry script: real
-  code changes miss the cache, comment-only changes reuse it.
+- Caches are keyed on a hash of the whole package plus the entry script
+  (docstring-stripped AST), the data file's SHA-256, the stage's parameters,
+  and the versions of `gmn`/`pyEDM`/`networkx`/`numpy`/`pandas`: real code
+  changes miss the cache, comment-only changes reuse it, and bumping one of
+  those five dependencies invalidates **all** of it.
+- **The cache is read from `/bucket`, never from `/flash` or `/work`.** Scratch
+  holds only what the running job just wrote; stage-out is what makes a result
+  visible to the next job. See `docs/cluster-operations.md` §6.
+- `scripts/env/` holds the two things the cluster venvs contain that `uv.lock`
+  cannot rebuild: `sitecustomize.py` (the pyEDM per-call `Pool` fix and the
+  `FindNeighbors` warning-flood filter — it only works when installed into the
+  venv's `site-packages`) and the frozen version manifests. Read
+  `scripts/env/README.md` before rebuilding a venv.
 - Tests reach the tsls pipeline through a namespace assembled from the package
   (`load_pipeline_module`), because its entry script is thin. Install MDE fakes
   with `install_fake_mde()`, never by assigning to the loaded module.
