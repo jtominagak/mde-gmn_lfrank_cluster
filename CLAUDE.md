@@ -11,6 +11,12 @@ cycle-closing candidates are excluded before MDE, Stage 2 is lagged-only — is
 explained in `scripts/src/mde_gmn/network.py`'s module docstring and pinned by
 `tests/test_lagged_leaf_nodes.py`. Keep that test passing.
 
+**`docs/cluster-operations.md`** — read this before anything that touches a
+job, a path or a dataset. Development is local; execution is cluster-only.
+It covers the two clusters, the storage tiers (`/flash` is deigo-only,
+`/work` is saion-only, `/bucket` is read-only from saion compute nodes), how
+data actually moves during a job, and why the pipeline cannot run on a laptop.
+
 ## Layout
 - `scripts/src/mde_gmn/` — the pipeline, one module per stage. `__init__.py`
   has the module map and the dependency direction.
@@ -25,6 +31,26 @@ explained in `scripts/src/mde_gmn/network.py`'s module docstring and pinned by
   cluster) helpers, with `docs/saion-parallelized-mde-runbook.md`.
 - `tests/` — plain scripts, no pytest in this venv: `python3 tests/test_x.py`.
 
+## Local development, cluster execution
+Since 2026-10-23 this repo is edited locally and run only on the cluster.
+
+- **Nothing here runs end-to-end locally.** `pyproject.toml` pins resolution to
+  `sys_platform == 'linux' and platform_machine == 'x86_64'`, and the pipeline
+  needs `dimx`, `gmn`, `pyedm` and a cu126 `torch`. Do not try to `uv sync` on
+  macOS and do not "fix" that pin.
+- Locally you can read, edit, reason, and run the **fake-backed** tests. Any
+  test that needs real `gmn`/`dimx`/`pyEDM` goes to the cluster via `srun`.
+- The helpers in `scripts/dev/` exist so cluster rules do not have to be
+  remembered: `push-to-cluster.sh` (code only, never `JOB_LOG.md`) and
+  `cluster-run.sh` (`test`, `submit`, `queue`, `tail`, `pull-log`, `results`).
+  `CLUSTER=saion` switches them to the GPU cluster.
+- **`JOB_LOG.md` is written on the cluster**, by `generate_job_description.sh`
+  at job start. It syncs cluster → local only
+  (`scripts/dev/cluster-run.sh pull-log`); pushing it from local clobbers
+  entries that jobs wrote.
+- `data/` and `results/` are gitignored. They never travel through git, and
+  the authoritative copies live on `/bucket`.
+
 ## Branches
 - `main` — CPU pipeline.
 - `no-kEDM-gpu-optimization` — adds the GPU CCM path (`gpu_edm.py`) and
@@ -34,8 +60,11 @@ explained in `scripts/src/mde_gmn/network.py`'s module docstring and pinned by
 ## Rules that are easy to get wrong
 - **Never compute on a login node.** Use `srun -p short -t 0:30:00 -c 4
   --mem=8G ...` even for test suites and quick timings.
-- Submit pipeline jobs with `scripts/batch/submit.sh <name>.sbatch [<name>.py]`,
-  then add the plain-language summary to that job's `JOB_LOG.md` entry.
+- Submit pipeline jobs with `scripts/batch/submit.sh <name>.sbatch [<name>.py]`
+  on deigo, or `scripts/saion/submit_saion.sh` on saion (it picks whichever
+  restricted partition can start first — saion rejects a multi-partition
+  request for this account). Then add the plain-language summary to that
+  job's `JOB_LOG.md` entry.
 - Don't run jobs while source files are half-moved: sbatch stages
   `scripts/src/*.py` **and `scripts/src/mde_gmn/`** at job start. A new sbatch
   needs that package line or the job dies at import.
