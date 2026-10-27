@@ -5,6 +5,366 @@ submissions (see scripts/batch/submit.sh), newest entry first.
 
 <!-- new entries inserted below this line -->
 
+## Job 4769464
+
+Generated: 2026-10-22T20:01:09+09:00
+
+Git commit at submission: `f176546` (clean vs. HEAD)
+
+Compared against: **job_4769437**
+
+### Parameter changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch)
+
+| Parameter | job_4769437 | job_4769464 |
+|---|---|---|
+| DELAY_SET | 0,-1,-3,-5,-10 | ${DELAY_SET:-0,-1,-3,-5,-10} |
+
+### Batch script design changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 4769437
+
+Generated: 2026-10-22T19:19:44+09:00
+
+Git commit at submission: `3cd63ab` (clean vs. HEAD)
+
+Compared against: **job_4769350**
+
+### Parameter changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch)
+
+| Parameter | job_4769350 | job_4769437 |
+|---|---|---|
+| CCM_LIB_SIZES_ROWS | 16,24,40,64,160,400,800 | 16,40,160,400,800 |
+| CCM_SAMPLE | 20 | 10 |
+
+### Batch script design changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+### Plain-language summary
+
+**`PARALLEL_MDE_SCOPE=union` at reduced CCM precision, 4 GPUs, hard 2-day
+cap.** Supersedes job_4769350 (cancelled at 1h50m to free its 2 v100 GPUs;
+it had logged 0 clamps, 0 OOMs and 0 failures, and had not yet reached the
+`M=28251` call that killed job_4744295). Code is `3cd63ab`.
+
+| | job_4744295 | job_4769350 | this job |
+|---|---|---|---|
+| partition | gpu-p100 | gpu-v100 | gpu-v100 |
+| GPUs | 2 | 2 | **4** |
+| cores | 18 | 4 | 18 |
+| mem | 240 G | 80 G | 240 G |
+| `CCM_SAMPLE` | 20 | 20 | **10** |
+| `CCM_LIB_SIZES_ROWS` | 7 entries | 7 entries | **5** |
+| time limit | 6 d | 6 d | **2 d** |
+
+**4 GPUs is within allocation.** `sacctmgr` gives this account
+`cpu=36,gres/gpu=4` on gpu-v100 and the same again, separately, on gpu-p100.
+4 is therefore exactly the cap rather than an overrun -- but it needed
+job_4769350's 2 GPUs back first, which is why that job was cancelled. Nothing
+was lost: both knobs below are in the per-node cache fingerprint, so its
+cached nodes would not have been reused anyway.
+
+**Why these two knobs and not the five protected dimensions.** Every
+observable (`REGION_CHANNEL_CAP=78`), driver (`MDE_D=10`), depth
+(`NESTED_M=1`), the generative window (`GENERATE_LENGTH=400`), the lag set
+(50 lags to -393) and all 44,449 data rows (`MAX_WINDOW_ROWS=30000`) are
+untouched. `CCM_SAMPLE` and the library sweep cost CCM ESTIMATOR PRECISION
+only: rho at each library size is now averaged over 10 random draws instead
+of 20, and the convergence slope is fitted through 5 points instead of 7,
+with the endpoints (16 and 800) kept because proper_ccm's verdict needs the
+endpoint-to-endpoint change as well as the slope.
+
+**Memory.** 18 cores over 4 GPUs is 5 workers/device, so the budget should
+print ~14.5 GiB admissible (15.77 total, less 4 sibling contexts at 320 MiB
+and the 1 GiB reserve). Halving `CCM_SAMPLE` also halves the GPU cross-map's
+batch dimension, which is ~80% of a call by crossmap_bytes()'s terms, so the
+worst union call should fall from the ~14.9 GiB it held in job_4744295 to
+roughly 9 GiB -- a far wider margin than job_4769350's ~0.5 GiB. If that
+estimate is wrong the run now stops and says so (`4bd0f9b`) rather than
+recording unevaluated candidates as measured dead ends.
+
+**It will NOT finish inside the 2 days.** job_4744295's final heartbeat
+projected ~34 more days at 18 cores / 2 GPUs / 20 samples / 7 library sizes.
+Doubling the GPUs (~2x), halving the batch (~1.7x) and dropping to 5 library
+sizes (~1.4x) is about 4.7x altogether, i.e. roughly 7 days of work. The
+2-day limit is an OCCUPANCY cap, deliberately, not a completion estimate:
+USR1 fires at 1d23h30m for a clean stage-out, the per-node cache is synced to
+Bucket hourly, and resubmitting resumes from every finished node. Expect
+around four 2-day windows, with the cluster released between each.
+
+**No cache head start, and not comparable to job_4769178.** `ccm_sample` and
+`ccm_lib_sizes_rows` are both inside `build_mde_selection_fingerprint` /
+`build_multi_mde_selection_fingerprint`, so this run correctly MISSES every
+node cached at the old precision instead of silently reusing it -- it begins
+from scratch. By the same token it cannot be compared against job_4769178,
+which is mid-flight at `CCM_SAMPLE=20` and 7 library sizes. A valid
+staged-vs-union pair needs both sides at the same precision.
+
+---
+
+
+## Job 4769350
+
+Generated: 2026-10-22T17:29:03+09:00
+
+Git commit at submission: `2f8da11` (clean vs. HEAD)
+
+Compared against: **job_4769178**
+
+### Parameter changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+### Plain-language summary
+
+**`PARALLEL_MDE_SCOPE=union`, the partner to job_4769178's `staged`, on the
+same fixed code (`2f8da11`).** Every science parameter is identical to
+job_4744295 -- the union run that died -- including `MAX_WINDOW_ROWS=30000`
+and `CCM_SAMPLE=20`. Only the resource request changed, and only to make
+the memory arithmetic work:
+
+| | job_4744295 (OOM'd) | this job |
+|---|---|---|
+| partition | gpu-p100 | **gpu-v100** |
+| GPUs | 2 | 2 |
+| cores | 18 | **4** |
+| mem | 240 G | **80 G** |
+| workers/device | 9 | **2** |
+
+**Why 4 cores and not 18.** The binding constraint is not total GPU memory,
+it is the per-worker CUDA context: ~320 MiB that every worker holds from
+start to exit whether or not it is computing, which is why create_budgets()
+subtracts it per worker sharing the card. The worst call in job_4744295 --
+`proper_ccm CA1_48_tsls::delay-41->CA1_43_tsls M=28251 B=20` -- actually
+needed about **14.9 GiB**: at the moment it OOM'd it held 13.22 GiB and was
+asking for 1.69 GiB more. At 9 workers/device the sibling contexts cost
+9 x 320 MiB = 2.81 GiB, leaving only ~13.1 GiB physically reachable by a
+clamped request, roughly **1.8 GiB short** -- which is exactly why it
+failed. At 2 workers/device the sibling cost falls to ~0.31 GiB, leaving
+~15.46 GiB against ~14.9 GiB needed: a margin of about **0.56 GiB**.
+
+Note that `crossmap_bytes()` ESTIMATED that same call at 50.66 GiB, ~3.4x
+its observed actual. So admission control will clamp the big calls and hand
+the device over rather than admitting them against the budget -- that is the
+intended path here, and it is what lets them fit at all. (The estimate's
+true headroom factor is still unmeasured; see `2f8da11` on why the old
+UNDER-ESTIMATED figures were measurement artefact.)
+
+**Why gpu-v100 rather than the rest of gpu-p100.** The 36-core/4-GPU
+allocation is attached to each partition SEPARATELY, so running here costs
+job_4769178 nothing and the two never queue against each other. It uses
+4 of 36 cores and 2 of 4 GPUs of the gpu-v100 entitlement, leaving 2 GPUs
+and 32 cores of saion-gpu22 free for other people. V100 is 15.77 GiB
+against P100's 15.89, i.e. marginally SMALLER -- the partition choice is
+about contention, not capacity; no card available on this account (there is
+no gpu-a100 allocation) is larger than ~16 GiB.
+
+**This does not make OOM impossible, and on 16 GiB cards nothing can.**
+The margin on the single worst call is ~0.5 GiB. What has changed is the
+consequence: if it is exceeded the run now STOPS (`4bd0f9b`, `2f8da11`)
+instead of recording 20 unevaluated candidates as measured dead ends the
+way job_4744295 did, the hourly-synced cache keeps every finished node, and
+the log names the call and its shape so the next decision rests on a
+measurement rather than a guess.
+
+**What was deliberately NOT changed.** Lowering `MAX_WINDOW_ROWS` is the
+other way to make the big calls fit, and it was rejected: job_4769178 is
+running `staged` at 30000 right now, and the entire purpose of a scope pair
+is to compare staged against union. Shrinking one side's library window
+would leave the two incomparable, which costs more than it buys.
+
+**Expect it to be slow.** 4 workers against job_4744295's 18, on a scope
+that had not completed in 39 h. It will very likely reach the 6-day wall;
+resubmitting continues from the cache rather than restarting.
+
+---
+
+
+## Job 4769178
+
+Generated: 2026-10-22T15:04:03+09:00
+
+Git commit at submission: `2f8da11` (clean vs. HEAD)
+
+Compared against: **job_4744295**
+
+### Parameter changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_4744295/saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch
++++ job_4769178/saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch
+@@ -193,7 +193,7 @@
+         kill "$pid" 2>/dev/null
+     done
+ 
+-    local slurm_state="" gpu_errors mde_failures ccm_dead_ends status reason dest stage_ok=1
++    local slurm_state="" gpu_errors budget_advisories networks_skipped mde_failures ccm_dead_ends status reason dest stage_ok=1
+     for _ in 1 2 3; do
+         slurm_state="$(sacct -j "$SLURM_JOB_ID" --format=State -P -n 2>/dev/null | head -1 | tr -d ' ')"
+         [ -n "$slurm_state" ] && break
+@@ -203,8 +203,22 @@
+     # spelling and matched NONE of the other patterns -- job 4741044 logged
+     # 47 of those lines and this check saw zero of them, so the early
+     # warning that the card was saturating never reached STATUS.txt.
++    #
++    # 'UNDER-ESTIMATED' is deliberately NOT in this list (it was, 2026-10-05
++    # to 2026-10-22). gpu_budget.reserve() prints it AFTER a reservation has
++    # been granted and the call has run, to say the shape formula predicted
++    # less than the allocator went on to hold. Nothing failed. Counting it
++    # here stamped job 4744294 FAIL on 93 of those advisories with zero real
++    # CUDA errors in the whole 19h run, which buried the one thing that did
++    # go wrong. It gets its own line below instead.
+     gpu_errors="$(cat "$SLURM_OUT" "$SLURM_ERR" 2>/dev/null \
+-        | grep -c -E 'CUDA out of memory|OutOfMemoryError|CUDA error|CUBLAS_STATUS|cuDNN error|memory allocation failed with OOM|UNDER-ESTIMATED')"
++        | grep -c -E 'CUDA out of memory|OutOfMemoryError|CUDA error|CUBLAS_STATUS|cuDNN error|memory allocation failed with OOM')"
++    budget_advisories="$(cat "$SLURM_OUT" "$SLURM_ERR" 2>/dev/null | grep -c 'UNDER-ESTIMATED')"
++    # A network whose Generate() never rebuilt produces NO plots, fidelity or
++    # output, and the pipeline says so and carries on to exit 0. Job 4744294
++    # lost head_position_x_head_position_y exactly that way and reported
++    # success. Counted, and FAILed on below, so it cannot pass unnoticed again.
++    networks_skipped="$(cat "$SLURM_OUT" 2>/dev/null | grep -c 'no successful Generate() rebuild')"
+     mde_failures="$(cat "$SLURM_OUT" 2>/dev/null | grep -c 'MDE call FAILED')"
+     # Candidates that were genuinely evaluated and found wanting (short
+     # data, no convergence). These are FINDINGS, not failures -- counted
+@@ -212,13 +226,15 @@
+     # used to print through the same clause.
+     ccm_dead_ends="$(cat "$SLURM_OUT" 2>/dev/null | grep -c 'CCM dead end:')"
+ 
+-    if [ "${PY_STATUS:-unset}" = "0" ] && [ -z "$STOP_REASON" ] && [ "$gpu_errors" -eq 0 ]; then
++    if [ "${PY_STATUS:-unset}" = "0" ] && [ -z "$STOP_REASON" ] && [ "$gpu_errors" -eq 0 ] \
++            && [ "$networks_skipped" -eq 0 ]; then
+         status=COMPLETED; reason="pipeline exited 0"
+         dest="$OUTPUT_ARCHIVE_ROOT/job_${SLURM_JOB_ID}"
+     else
+         status=FAIL
+         if [ -n "$STOP_REASON" ]; then reason="$STOP_REASON"
+-        elif [ "${PY_STATUS:-unset}" = "0" ]; then reason="pipeline exited 0 but the log has ${gpu_errors} CUDA error line(s) -- MDE nodes that hit them were silently recorded as dead ends"
++        elif [ "${PY_STATUS:-unset}" = "0" ] && [ "$gpu_errors" -gt 0 ]; then reason="pipeline exited 0 but the log has ${gpu_errors} CUDA error line(s) -- MDE nodes that hit them were silently recorded as dead ends"
++        elif [ "${PY_STATUS:-unset}" = "0" ]; then reason="pipeline exited 0 but ${networks_skipped} network(s) produced no output (Generate() never rebuilt) -- see the '*: FINAL Generate() rebuild FAILED' line(s) in the log"
+         elif [ -z "${PY_STATUS:-}" ]; then reason="job ended before the pipeline started (setup failure)"
+         else reason="pipeline exited with status ${PY_STATUS}"
+         fi
+@@ -232,6 +248,8 @@
+         echo "SLURM_STATE_AT_EXIT: ${slurm_state:-unknown (check: sacct -j $SLURM_JOB_ID)}"
+         echo "HOST: $(hostname)  PARTITION: ${SLURM_JOB_PARTITION:-?}  GPUS: ${SLURM_JOB_GPUS:-${CUDA_VISIBLE_DEVICES:-?}}"
+         echo "CUDA_ERROR_LINES: $gpu_errors"
++        echo "GPU_BUDGET_ADVISORIES: $budget_advisories  (UNDER-ESTIMATED; informational, not failures)"
++        echo "NETWORKS_SKIPPED: $networks_skipped"
+         echo "CCM_DEAD_ENDS: $ccm_dead_ends"
+         echo "MDE_CALL_FAILED_LINES: $mde_failures"
+         echo "ENDED: $(date -Iseconds)"
+```
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+### Plain-language summary
+
+**The first run of the fixed pipeline.** Same scope and parameters as
+job_4744294 (`PARALLEL_MDE_SCOPE=staged`, `LAG_STEP=8`,
+`REGION_CHANNEL_CAP=78`, `GENERATE_LENGTH=400`, 2 GPUs / 18 cores /
+240 G). Nothing about the science or the sizing changed; what changed is
+three bugs, none of which the diffs above can show, because
+generate_job_description.sh only diffs the sbatch and the ENTRY script
+and every fix landed in `mde_gmn/` or `gpu_budget.py`. Commits
+`ecbba37`, `4bd0f9b`, `2f8da11`.
+
+**1. Why job_4744294 lost a network (`ecbba37`).** It ran 19h, exited 0,
+and produced no plots, fidelity or output for
+`head_position_x_head_position_y`. `_generalized_embed` looked up a
+`(col, delay)` coordinate under the RAW observable name first and the
+pre-shifted `<obs>::delay<n>` name only as a fallback. During a
+`Generate()` run a node's frame carries every column in the network but
+populates only the coordinates that node owns, so a raw name can be
+present and still hold nothing: `OFC_10_tsls`'s coordinate
+`(CA1_55_tsls, -305)` found a raw column with 1 valid row of 37783,
+shifted it to all-NaN, and ignored the pre-shifted column beside it
+holding 37478 real values. pyEDM then dropped every row carrying a NaN
+-- all 37478 -- which emptied the library, made SMap's
+`knn = len(lib_i) - 1 = -1`, and reached scipy as a reduction over an
+empty array: `zero-size array to reduction operation maximum which has
+no identity`, 22 times. Pre-shifted now wins for any nonzero delay;
+delay 0 still reads the raw (growing, simulated) column, which it must.
+This completes `551b59b`, which added the pre-shifted branch but left
+raw-first priority. Verified by replaying the exact `Generate()` that
+died: it now completes 400 rows with 0 NaN.
+
+**2. Why that was silent, and is not any more (`ecbba37`, `2f8da11`).**
+`_generalized_embed` now refuses an all-NaN coordinate and names it,
+instead of letting it surface unrecognisably hundreds of frames later.
+And STATUS.txt now counts `NETWORKS_SKIPPED` and FAILs on it: a network
+that rebuilds nothing previously reached STATUS.txt nowhere at all,
+which is how job_4744294 reported `pipeline exited 0` while having lost
+a target pair.
+
+**3. Why job_4744294's FAIL reason was wrong (`2f8da11`).** It read
+"93 CUDA error line(s)". All 93 were `GPU budget: UNDER-ESTIMATED`
+advisories, printed AFTER a reservation is granted and the call has run;
+there were ZERO real CUDA errors in the whole run. `UNDER-ESTIMATED` is
+out of the CUDA-error pattern and now reports on its own line as
+`GPU_BUDGET_ADVISORIES`. The advisory itself was also untrustworthy: it
+compared the estimate against `max_memory_reserved()`, a process-wide
+high-water mark, so a small call inherited whatever a larger one had
+cached before it in the same worker -- hence job_4744295's 73x readings
+on `M=1003` calls whose own tensors come to ~0.1 GiB. It measures growth
+over a baseline now. `crossmap_bytes()`'s headroom factor is
+deliberately UNCHANGED: the old figures were partly measurement
+artefact, so the true factor is still unmeasured and a union run is the
+first thing that can report it honestly.
+
+**4. GPU memory failures can no longer become findings (`4bd0f9b`,
+`2f8da11`).** A candidate dropped for want of memory is a missing edge,
+and downstream it is indistinguishable from one measured and found
+absent -- so swallowing it fabricates a negative result. `gpu_budget`
+re-raises for exactly that reason and says so in its error text, but
+every caller answering a failed MDE call with `_failed_mde_result()`
+caught `Exception` broadly and wrote a dead end anyway: job_4744295
+printed "the run is stopping rather than recording it as a dead end" 20
+times and then recorded 20 dead ends. All six such sites now ask
+`mde.is_gpu_memory_failure()` first and stop the run. Genuine findings
+(short data, no CCM convergence) still fall through to the dead-end path.
+
+**What to expect.** This is `staged`, which had zero genuine OOMs in
+job_4744294, so change 4 should not trigger; it matters for `union`.
+The run reaches the `Generate()` stage that failed last time at roughly
+the 19h mark, and that is the checkpoint worth watching. Resubmitting
+after a timeout is cheap -- every finished MDE node is cached and synced
+hourly. NOT submitted as a scope pair: `union` is left until its worker
+count comes down, because at 9 workers/device the per-request ceiling is
+12.1 GiB (15.9 total, less 9 x 320 MiB of resident sibling CUDA contexts
+and a 1 G safety reserve) and job_4744295 asked for 13.22 GiB, so it
+would now stop at the first genuine OOM rather than quietly losing
+candidates.
+
+---
+
+
 ## Job 4744295
 
 **Scope-pair note:** ran `PARALLEL_MDE_SCOPE=union` with the sbatch's own lag settings. Submitted by submit_saion_scope_pair.sh at commit 551b59b2d474, paired with job 4744294. The sbatch file is identical for both jobs, so the parameter diff below does not show the scope.
