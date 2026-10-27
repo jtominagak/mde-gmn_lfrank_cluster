@@ -5,6 +5,199 @@ submissions (see scripts/batch/submit.sh), newest entry first.
 
 <!-- new entries inserted below this line -->
 
+## Job 4774136
+
+Generated: 2026-10-27T18:37:11+09:00
+
+Git commit at submission: `1ae5883` (clean vs. HEAD)
+
+Compared against: **job_4774133**
+
+### Parameter changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+### Plain-language summary
+
+**The same Stage-1-only run under the other scope.** `PARALLEL_MDE_SCOPE=union`
+with an empty lag set: one MDE per node over real and lagged candidates
+together -- except there are no lagged candidates, so each node's pool is the
+real observables alone, in a single pool with one barrier. Submitted as one of
+a pair with job_4774133, which is the same thing under `staged`.
+
+**What the pair is for.** Under lags the two scopes are genuinely different
+algorithms, and `union`'s per-node pool is (1 + len(LAG_SET))x wider -- which
+is what made job_4769437 unaffordable and ultimately OOM at 22h. With the lag
+set empty that difference disappears: both should reduce to the same per-node
+MDE over the same real-observable pool, with matching cache fingerprints. So
+this job is also the empirical check of that equivalence against job_4774133.
+Identical networks are the expected outcome; a difference would point at how
+each scope enumerates the node universe, not at the selections themselves.
+
+**Why the parameter table above says nothing changed.** All three knobs came
+from the submitting shell, not the file: the sbatch is byte-identical to the
+one job_4769464 ran, and `generate_job_description.sh` diffs the file. This
+summary is the only record of what this job actually ran, so, in full:
+
+| Knob | Value | Via |
+|---|---|---|
+| `DELAY_SOURCE` | `explicit` | `--export` |
+| `DELAY_SET` | `0` | `--export` |
+| `REGION_CHANNEL_CAP` | `999` | `--export` (made overridable in `1ae5883`) |
+| `CCM_PREFILTER_RHO_MIN` | `0.2` | file default, deliberately left on |
+| `PARALLEL_MDE_SCOPE` | `union` | `--export` |
+
+**Zero lags.** `DELAY_SOURCE=explicit` with `DELAY_SET=0` resolves to an EMPTY
+lag set -- `derive_lag_set()` strips every 0 entry on the explicit path. So
+there are no lagged candidate columns, no Stage 2 picks, and no lagged leaf
+nodes anywhere in the network.
+
+**All channels, but still skill-gated.** `REGION_CHANNEL_CAP=999` offers all
+468 real channels (CA1 147, OFC 234, mPFC 87) instead of 234. The CCM
+pre-filter stays at `rho >= 0.2`, so it is now the only gate on the candidate
+pool rather than the second of two. For reference, at CAP=78 it kept 127 of
+234.
+
+**Why.** job_4769178 (staged, lagged, 127 candidates) completed cleanly and
+still produced an almost flat network: of its 98 edges exactly ONE driver was
+a real observable (`CA1_53_tsls` -> both targets, delay 0, weight 0.42); all
+97 others were lagged leaves, and the two targets' fidelity rho came out
+negative (`head_position_x` -0.1253, `head_position_y` -0.0539) with every
+start offset in the sweep scoring below zero. Two explanations fit that: the
+real-observable pool was too thin (127 of 468 channels), or lagged candidates
+outcompeted real ones inside each forward selection. Removing the lags and
+widening the real pool separates the two -- whatever backbone this run finds
+is built from real observables only.
+
+**Cost.** Stage 2 is where essentially all of this pipeline's time goes, so
+dropping it should bring the run down from job_4769178's 10h48m to hours:
+job_4769464 (union, zero lags, 127 candidates) took 1h10m. The pool is ~3.7x
+wider before the pre-filter, which widens each forward selection but adds no
+(1 + len(LAG_SET))x lag expansion.
+
+**Nothing is reused.** Both `lag_set` and `REGION_CHANNEL_CAP` are in the
+per-node cache fingerprint, so this shares no cached node with any earlier
+run and recomputes from scratch. The two jobs of this pair also run
+CONCURRENTLY on saion-gpu11 (18+18 cores, 2+2 GPUs = exactly the per-partition
+allocation), so the second cannot reuse the first's nodes either -- the cache
+syncs hourly and is read from `/bucket` at startup. That duplicate compute is
+accepted to get both answers in one wall-clock window.
+
+**GPU sizing unchanged** (2 GPUs / 18 cores / 240 G). The OOM that stopped
+job_4769437 at 22h is not expected here: per-call library size is set by
+`MAX_WINDOW_ROWS`, not by how wide the candidate pool is, so a wider pool
+means more calls rather than bigger ones -- and job_4769464, the zero-lag
+union, logged zero CUDA errors.
+
+---
+
+
+## Job 4774133
+
+Generated: 2026-10-27T18:37:05+09:00
+
+Git commit at submission: `1ae5883` (clean vs. HEAD)
+
+Compared against: **job_4769464**
+
+### Parameter changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch)
+
+| Parameter | job_4769464 | job_4774133 |
+|---|---|---|
+| REGION_CHANNEL_CAP | 78 | ${REGION_CHANNEL_CAP:-78} |
+
+### Batch script design changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+### Plain-language summary
+
+**Stage 1 on its own, over every channel.** `PARALLEL_MDE_SCOPE=staged` with
+an empty lag set: Stage 1 (real observables, recursive) runs for the whole
+node universe, and Stage 2 has no candidates to work with, so this is
+effectively a Stage-1-only run. Submitted as one of a pair with job_4774136,
+which is the same thing under `union`.
+
+**A caveat on the pair.** With an empty lag set the two scopes may coincide.
+`staged` is Stage 1 then a Stage 2 with nothing in it; `union` is one MDE per
+node over real AND lagged candidates together, and with no lagged columns that
+pool is real-only. Both should therefore reduce to the same per-node MDE, and
+the per-node cache fingerprints should match. If the two networks come out
+identical that is the expected result, not a bug -- and it extends
+`tests/test_parallel_mde_equivalence.py`'s assertion (which covers the lagged
+case) to the degenerate one. If they differ, the difference is in how the node
+universe is enumerated, not in the selections, and that is worth knowing.
+
+**Why the parameter table above says nothing changed.** All three knobs came
+from the submitting shell, not the file: the sbatch is byte-identical to the
+one job_4769464 ran, and `generate_job_description.sh` diffs the file. This
+summary is the only record of what this job actually ran, so, in full:
+
+| Knob | Value | Via |
+|---|---|---|
+| `DELAY_SOURCE` | `explicit` | `--export` |
+| `DELAY_SET` | `0` | `--export` |
+| `REGION_CHANNEL_CAP` | `999` | `--export` (made overridable in `1ae5883`) |
+| `CCM_PREFILTER_RHO_MIN` | `0.2` | file default, deliberately left on |
+| `PARALLEL_MDE_SCOPE` | `staged` | `--export` |
+
+**Zero lags.** `DELAY_SOURCE=explicit` with `DELAY_SET=0` resolves to an EMPTY
+lag set -- `derive_lag_set()` strips every 0 entry on the explicit path. So
+there are no lagged candidate columns, no Stage 2 picks, and no lagged leaf
+nodes anywhere in the network.
+
+**All channels, but still skill-gated.** `REGION_CHANNEL_CAP=999` offers all
+468 real channels (CA1 147, OFC 234, mPFC 87) instead of 234. The CCM
+pre-filter stays at `rho >= 0.2`, so it is now the only gate on the candidate
+pool rather than the second of two. For reference, at CAP=78 it kept 127 of
+234.
+
+**Why.** job_4769178 (staged, lagged, 127 candidates) completed cleanly and
+still produced an almost flat network: of its 98 edges exactly ONE driver was
+a real observable (`CA1_53_tsls` -> both targets, delay 0, weight 0.42); all
+97 others were lagged leaves, and the two targets' fidelity rho came out
+negative (`head_position_x` -0.1253, `head_position_y` -0.0539) with every
+start offset in the sweep scoring below zero. Two explanations fit that: the
+real-observable pool was too thin (127 of 468 channels), or lagged candidates
+outcompeted real ones inside each forward selection. Removing the lags and
+widening the real pool separates the two -- whatever backbone this run finds
+is built from real observables only.
+
+**Cost.** Stage 2 is where essentially all of this pipeline's time goes, so
+dropping it should bring the run down from job_4769178's 10h48m to hours:
+job_4769464 (union, zero lags, 127 candidates) took 1h10m. The pool is ~3.7x
+wider before the pre-filter, which widens each forward selection but adds no
+(1 + len(LAG_SET))x lag expansion.
+
+**Nothing is reused.** Both `lag_set` and `REGION_CHANNEL_CAP` are in the
+per-node cache fingerprint, so this shares no cached node with any earlier
+run and recomputes from scratch. The two jobs of this pair also run
+CONCURRENTLY on saion-gpu11 (18+18 cores, 2+2 GPUs = exactly the per-partition
+allocation), so the second cannot reuse the first's nodes either -- the cache
+syncs hourly and is read from `/bucket` at startup. That duplicate compute is
+accepted to get both answers in one wall-clock window.
+
+**GPU sizing unchanged** (2 GPUs / 18 cores / 240 G). The OOM that stopped
+job_4769437 at 22h is not expected here: per-call library size is set by
+`MAX_WINDOW_ROWS`, not by how wide the candidate pool is, so a wider pool
+means more calls rather than bigger ones -- and job_4769464, the zero-lag
+union, logged zero CUDA errors.
+
+---
+
+
 ## Job 4769464
 
 Generated: 2026-10-22T20:01:09+09:00
