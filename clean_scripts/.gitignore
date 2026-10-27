@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[oc]
+
+# Scratch output from tests that build real gmn.GMN objects or real frames
+tests/_scratch_*/
+
+# Stray MDE output written when a test runs the real run_mde_for_target()
+# with results_dir=Path(".")
+mde_output_*.csv
