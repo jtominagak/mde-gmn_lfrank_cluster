@@ -308,7 +308,14 @@ NESTED_M=1                    # HALF PRODUCTION (see SIZING NOTE above; already 
 # offered as MDE candidates (or, when MODE=GMN, used directly as the
 # interaction-matrix's full node set). 999 is effectively uncapped (matches
 # notebooks/tsls-mde-gmn.ipynb's own full-channel-set decision).
-REGION_CHANNEL_CAP=78        # HALF PRODUCTION (see SIZING NOTE above): 78x3 = 234 of 468 channels -- default: 999
+# Overridable (2026-10-27), like DELAY_SOURCE/DELAY_SET/LAG_STEP below: it was
+# hardcoded, so `sbatch --export=...,REGION_CHANNEL_CAP=999` was silently
+# clobbered here and this file could only ever mean half production.
+# REGION_CHANNEL_CAP=999 is the edge case that unlocks: the full 468-channel
+# candidate pool, with the CCM pre-filter above still the only gate on it.
+# The cap is in the per-node cache fingerprint, so such a run shares nothing
+# with a capped one.
+REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP:-78}"   # overridable; default here: 78 = HALF PRODUCTION (see SIZING NOTE above), 78x3 = 234 of 468 channels -- code default: 999
 
 # Stage 2's (and every node's self_delay_set's) nonzero-delay list (in
 # rows, always negative) -- MODE=MDE-GMN only. Each real observable is
