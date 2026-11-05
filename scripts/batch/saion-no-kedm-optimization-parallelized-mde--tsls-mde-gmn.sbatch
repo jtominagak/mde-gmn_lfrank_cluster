@@ -224,8 +224,20 @@ MDE_D=10                       # HALF PRODUCTION (see SIZING NOTE above) -- defa
 # validates every candidate driver against -- ported from
 # simple-mde-gmn.py's own TP parameter (ranking, not just final scoring).
 TP=20                          # default: 1 (proper_mde's own default)
-EMBED_DIM_RHO_MIN=0.2         # default: 0.2, embedding-dimension skill gate
-CROSS_MAP_RHO_MIN=0.2         # default: 0.2, cross-map skill gate
+EMBED_DIM_RHO_MIN=0.2         # default: 0.2, embedding-dimension skill gate -- CORRELATION-scored nodes (the behavioural targets)
+CROSS_MAP_RHO_MIN=0.2         # default: 0.2, cross-map skill gate -- CORRELATION-scored nodes
+# The same two gates for F1-SCORED nodes, i.e. every TSLS neuron. Separate
+# because the metrics do not share a ceiling: correlation tops out at 1.0,
+# while r9_min_pred_events_curve.csv measured a NEAR-PERFECT predictor of a
+# real TSLS channel at f1 ~ 0.49-0.54 (never above 0.69). One 0.2 bar asked a
+# neuron for ~38% of achievable skill and a behavioural target for 20%, which
+# is part of why 101 nodes in job 4774136 had NO candidate clear the gate.
+# 0.1 restores parity (0.20 x 0.52 ~ 0.104). Cost: r9 puts the f1 estimator's
+# std at ~0.069 at MIN_PRED_EVENTS=20, so 0.1 is ~1.4 sigma at the event
+# floor (std falls to ~0.028 by 160 events; real windows in job 4774136 had
+# 67-188). Raise these first if admitted links stop replicating.
+EMBED_DIM_RHO_MIN_F1=0.1      # default: 0.1, embedding-dimension gate for f1-scored (neuronal) nodes
+CROSS_MAP_RHO_MIN_F1=0.1      # default: 0.1, cross-map gate for f1-scored (neuronal) nodes
 # CCM pre-filter: a cheap CCM(observable -> target) skill check run once
 # per target group (see GMN_MODE above), right before either nested-MDE
 # stage -- shrinks REGION_CHANNEL_CAP's candidate pool down to only
@@ -303,7 +315,20 @@ EXCLUSION_RADIUS=0            # default: 0. Static floor; proper_mde grows the e
 # of rounds. Combinatorially expensive -- see simple-mde-gmn.sbatch's own
 # NESTED_M comment for the full rationale (identical here); keep both
 # MDE_D and NESTED_M small for a first test run.
-NESTED_M=1                    # HALF PRODUCTION (see SIZING NOTE above; already the default) -- default: 1, additional nested-MDE rounds beyond each target's own selection. 0 = uncapped
+# RAISED TO 0 = UNCAPPED (2026-11-05). At NESTED_M=1 the BFS expanded the
+# targets and their drivers and then stopped, so everything one step further
+# out was classified as an external input no matter what the evidence said.
+# Job 4774136 ended with 6 interior nodes and 23 external ones, and 5 of those
+# 23 HAD discovered drivers in the precomputed table -- CA1_85_tsls found six
+# -- which the depth cap then discarded (`realized max depth=1`).
+#
+# Uncapping is nearly free for this pipeline. Both scopes precompute MDE for
+# the WHOLE node universe up front, so the depth budget only governs how much
+# of that existing table the BFS reads: job 4774136 precomputed 247 results
+# and consulted 21. The exception is scope='staged' WITH lags, where a larger
+# visited set means more Stage 2 calls -- so revisit this if you re-enable
+# lags on the staged scope.
+NESTED_M="${NESTED_M:-0}"      # overridable; 0 = UNCAPPED (see above). Code default: 1, additional nested-MDE rounds beyond each target's own selection
 # First N *raw* channels per region (CA1_/mPFC_/OFC_), TSLS-converted and
 # offered as MDE candidates (or, when MODE=GMN, used directly as the
 # interaction-matrix's full node set). 999 is effectively uncapped (matches
@@ -895,6 +920,8 @@ export TSLS_MDE_GMN_D="${MDE_D}"
 export TSLS_MDE_GMN_TP="${TP}"
 export TSLS_MDE_GMN_EMBED_DIM_RHO_MIN="${EMBED_DIM_RHO_MIN}"
 export TSLS_MDE_GMN_CROSS_MAP_RHO_MIN="${CROSS_MAP_RHO_MIN}"
+export TSLS_MDE_GMN_EMBED_DIM_RHO_MIN_F1="${EMBED_DIM_RHO_MIN_F1}"
+export TSLS_MDE_GMN_CROSS_MAP_RHO_MIN_F1="${CROSS_MAP_RHO_MIN_F1}"
 export TSLS_MDE_GMN_CCM_PREFILTER_RHO_MIN="${CCM_PREFILTER_RHO_MIN}"
 export TSLS_MDE_GMN_CCM_PREFILTER_E="${CCM_PREFILTER_E}"
 export TSLS_MDE_GMN_LIBSIZE_RATIOS="${LIBSIZE_RATIOS}"
