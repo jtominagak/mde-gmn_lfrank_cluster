@@ -412,30 +412,43 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # discovered. Every pick is a leaf, so there is nothing to recurse into
     # and no depth budget to apply: nested_m governs Stage 1 alone.
     # =================================================================
-    stage2_start = time.perf_counter()
-    _log_progress(progress_log_path, 'STAGE 2 START (lagged-driver attachment)')
-    stage2_nodes = sorted(visited1, key=lambda n: (node_depth[n], n))
-    print(f'nested MDE (Stage 2): {len(stage2_nodes)} node(s), candidate pool size '
-          f'{len(stage2_universe)} (lagged columns only, lag_set={lag_set})', flush=True)
+    # ZERO LAGS. DELAY_SOURCE='explicit' with DELAY_SET=0 resolves to an EMPTY
+    # lag set (derive_lag_set() strips every 0 entry on that path), leaving
+    # stage2_universe empty: nothing to select, nothing to attach, and
+    # effective_mde_dimension() would divide by stage2_num_delays == 0. The
+    # parallel builder died exactly there (job 4774133, 2026-10-27); this one
+    # has the same arithmetic. Skipped outright rather than guarded at the
+    # division: a stage with an empty pool has no work to do.
+    if not lag_set:
+        print('nested MDE (Stage 2): SKIPPED ENTIRELY -- the lag set is empty (zero lags), '
+              'so there are no lagged candidates to select or attach; this network is '
+              'Stage 1 only', flush=True)
+        _log_progress(progress_log_path, 'STAGE 2 SKIPPED -- empty lag_set (zero lags)')
+    else:
+        stage2_start = time.perf_counter()
+        _log_progress(progress_log_path, 'STAGE 2 START (lagged-driver attachment)')
+        stage2_nodes = sorted(visited1, key=lambda n: (node_depth[n], n))
+        print(f'nested MDE (Stage 2): {len(stage2_nodes)} node(s), candidate pool size '
+              f'{len(stage2_universe)} (lagged columns only, lag_set={lag_set})', flush=True)
 
-    window_estimate = {}
-    stage2_results = waves.run_mde_batch(
-        stage2_nodes,
-        stage_submitter(
-            stage2_df,
-            lambda n: [c for c in stage2_universe if stage2_observable[c] != n],
-            lag_set, stage2_num_delays, 'stage2', window_estimate),
-        cores, mp_start_method, progress_log_path,
-        'nested MDE (Stage 2)', window_estimate=window_estimate,
-    )
+        window_estimate = {}
+        stage2_results = waves.run_mde_batch(
+            stage2_nodes,
+            stage_submitter(
+                stage2_df,
+                lambda n: [c for c in stage2_universe if stage2_observable[c] != n],
+                lag_set, stage2_num_delays, 'stage2', window_estimate),
+            cores, mp_start_method, progress_log_path,
+            'nested MDE (Stage 2)', window_estimate=window_estimate,
+        )
 
-    for node in stage2_nodes:
-        # Every accepted pick is a lagged leaf, so nothing is enqueued.
-        _accept_mde_result_edges(graph, edges, node, stage2_results[node], raw_columns)
+        for node in stage2_nodes:
+            # Every accepted pick is a lagged leaf, so nothing is enqueued.
+            _accept_mde_result_edges(graph, edges, node, stage2_results[node], raw_columns)
 
-    _log_progress(progress_log_path,
-                  f'STAGE 2 END -- {len(stage2_nodes)} node(s), '
-                  f'{time.perf_counter() - stage2_start:.1f}s total')
+        _log_progress(progress_log_path,
+                      f'STAGE 2 END -- {len(stage2_nodes)} node(s), '
+                      f'{time.perf_counter() - stage2_start:.1f}s total')
 
     return graph, _finish(graph, edges, node_depth, nested_n, nested_m,
                           progress_log_path), nested_mde_results

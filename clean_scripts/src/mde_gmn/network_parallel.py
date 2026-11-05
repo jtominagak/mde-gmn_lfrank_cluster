@@ -478,7 +478,15 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # lagged candidates inside each node's single call.
     # =================================================================
     visited2 = set()
-    if parallel_mde_scope == 'staged':
+    # ZERO LAGS. DELAY_SOURCE='explicit' with DELAY_SET=0 resolves to an EMPTY
+    # lag set (derive_lag_set() strips every 0 entry on that path), leaving
+    # Stage 2 with an empty candidate pool: nothing to select, nothing to
+    # attach, and effective_mde_dimension() would divide by its num_delays of
+    # 0. Job 4774133 died exactly there (2026-10-27), after Stage 1 had
+    # completed. Skipped outright rather than guarded at the division: a stage
+    # with an empty pool has no work to do. scope='union' needs no guard --
+    # its num_delays is len(lag_set) + 1, so never 0.
+    if parallel_mde_scope == 'staged' and lag_set:
         # Stage 2 attaches lagged leaves and never recurses, so its node set
         # is EXACTLY Stage 1's visited set -- no overshoot at all, which is
         # the whole point of this scope. Sorted for the same reason the serial
@@ -505,6 +513,11 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         _log_progress(progress_log_path,
                       f'STAGE 2 REPLAY END -- {len(visited2)} node(s), '
                       f'{time.perf_counter() - stage2_start:.1f}s total')
+    elif parallel_mde_scope == 'staged':
+        print('nested MDE (parallelized): scope=staged -- Stage 2 SKIPPED ENTIRELY, the lag '
+              'set is empty (zero lags), so there are no lagged candidates to select or '
+              'attach; this network is Stage 1 only', flush=True)
+        _log_progress(progress_log_path, 'STAGE 2 SKIPPED -- empty lag_set (zero lags)')
 
     edges_df = _finish(graph, edges, node_depth, nested_n, nested_m, progress_log_path)
 
@@ -512,7 +525,8 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # barriers. `computed` is what Phase 0 ran; `consulted` is what the two
     # replays actually read.
     computed = sum(len(table) for table in mde_tables.values())
-    consulted = len(visited1) + len(visited2)   # union: visited2 is empty by design
+    # union, and staged with an empty lag set: visited2 is empty by design.
+    consulted = len(visited1) + len(visited2)
     print(f'nested MDE (parallelized): {computed} MDE result(s) precomputed, {consulted} '
           f'consulted by the BFS ({computed - consulted} computed but never reached -- '
           f'the cost of removing the wave barriers)', flush=True)

@@ -379,9 +379,18 @@ LAG_COUNT="${LAG_COUNT:-10}"  # overridable; default: 10, only used when DELAY_S
 # DELAY_SET=0 is the useful edge case it unlocks: derive_lag_set() strips every
 # 0 entry on the explicit path, so that resolves to an EMPTY lag set -- no
 # lagged candidates, hence no Stage 2 picks and no lagged leaf nodes at all.
-# Nothing downstream trips on it (the lag-depth guard reads max(..., default=0)
-# and expand_delay_columns() adds no columns), and lag_set is in the per-node
-# cache fingerprint, so such a run shares nothing with a lagged one.
+# Both builders SKIP Stage 2 entirely when the lag set is empty (b5b7da0,
+# pinned by tests/test_zero_lag_stage2_skip.py), and lag_set is in the
+# per-node cache fingerprint, so such a run shares nothing with a lagged one.
+#
+# That skip is why this is safe, and it was added only after this comment's
+# earlier claim -- "nothing downstream trips on it" -- turned out to be false.
+# Both builders used to run Stage 2 over the empty pool and divide by
+# len(lag_set) in effective_mde_dimension(): job 4774133 (2026-10-27, staged)
+# died there with ZeroDivisionError after Stage 1 had completed. Only
+# scope='union' had ever exercised zero lags before (job 4769464), and union
+# is immune because its num_delays counts the real observables too. Do not
+# re-weaken this note without re-reading that test.
 DELAY_SET="${DELAY_SET:-0,-1,-3,-5,-10}"
 # NOTE: STAGE2_ALLOW_REAL_OBSERVABLES is retired (2026-09-30). Stage 2's
 # candidates are lagged columns only, and every lagged pick becomes a leaf
