@@ -473,11 +473,26 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # to apply here -- nested_m governs Stage 1's recursion alone.
     # =====================================================================
     visited2 = set()
-    current_wave = [(node, node_depth[node]) for node in visited1]
+    # ZERO LAGS. DELAY_SOURCE='explicit' with DELAY_SET=0 resolves to an EMPTY
+    # lag set (derive_lag_set() strips every 0 entry on that path), which
+    # leaves stage2_candidate_universe empty: nothing to select and nothing to
+    # attach. Stage 2 is skipped outright rather than run over an empty pool
+    # -- it has no work to do by construction, and effective_mde_dimension()
+    # below would divide by stage2_num_delays == 0. The parallel builder died
+    # exactly there (job 4774133, 2026-10-27); this builder has the same
+    # arithmetic and would have failed the same way.
+    stage2_skipped = not lag_set
+    if stage2_skipped:
+        print('nested MDE (Stage 2): SKIPPED ENTIRELY -- the lag set is empty (zero lags), so '
+              'there are no lagged candidates to select or attach; this network is Stage 1 only',
+              flush=True)
+        _log_progress(progress_log_path, 'STAGE 2 SKIPPED -- empty lag_set (zero lags)')
+    current_wave = [] if stage2_skipped else [(node, node_depth[node]) for node in visited1]
     stage2_start = time.perf_counter()
     stage2_durations = []
     stage2_rates = []
-    _log_progress(progress_log_path, 'STAGE 2 START (lagged-driver attachment)')
+    if not stage2_skipped:
+        _log_progress(progress_log_path, 'STAGE 2 START (lagged-driver attachment)')
 
     while current_wave:
         wave_nodes, seen = [], set()
@@ -599,9 +614,10 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
 
         current_wave = []
 
-    _log_progress(progress_log_path,
-                  f'STAGE 2 END -- {len(visited2)} node(s), '
-                  f'{time.perf_counter() - stage2_start:.1f}s total')
+    if not stage2_skipped:
+        _log_progress(progress_log_path,
+                      f'STAGE 2 END -- {len(visited2)} node(s), '
+                      f'{time.perf_counter() - stage2_start:.1f}s total')
 
     edges_df = pd.DataFrame(edges, columns=['driver', 'node', 'delay', 'weight'])
 
