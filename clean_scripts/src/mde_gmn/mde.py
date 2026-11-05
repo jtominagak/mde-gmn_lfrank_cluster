@@ -63,7 +63,8 @@ from mde_gmn.caching import (
     _load_pickle_cache_entry, build_mde_selection_fingerprint,
     build_multi_mde_selection_fingerprint, find_cached, save_pickle_to_cache)
 from mde_gmn.columns import DELAY_MARKER, observable_and_delay
-from mde_gmn.tsls_data import _ccm_window, _metric_for, _resolve_target_ranking_window
+from mde_gmn.tsls_data import (
+    _ccm_window, _metric_for, _resolve_target_ranking_window, _rho_min_for_metric)
 
 
 # =====================================================================
@@ -243,6 +244,13 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     machine with a visible CUDA device, and falls back to the CPU silently
     otherwise.
     '''
+    # Both skill gates are resolved HERE, before the cache fingerprint is
+    # built and before proper_mde sees them, so a node cached under the f1
+    # gate can never be reused for one scored by correlation -- the resolved
+    # float is what goes into the fingerprint. `target_metric` is already the
+    # node's own metric: every call site passes _metric_for(node, ...).
+    embed_dim_rho_min = _rho_min_for_metric(embed_dim_rho_min, target_metric)
+    cross_map_rho_min = _rho_min_for_metric(cross_map_rho_min, target_metric)
     if max_e is None:
         # Fallback only; every real call site passes the raw MDE_D.
         max_e = mde_d
@@ -370,6 +378,13 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
     so there is no per-node event-count extension: one fixed window for the
     whole joint call.
     '''
+    # Both skill gates are resolved HERE, before the cache fingerprint is
+    # built and before proper_mde sees them, so a node cached under the f1
+    # gate can never be reused for one scored by correlation -- the resolved
+    # float is what goes into the fingerprint. `target_metric` is already the
+    # node's own metric: every call site passes _metric_for(node, ...).
+    embed_dim_rho_min = _rho_min_for_metric(embed_dim_rho_min, target_metric)
+    cross_map_rho_min = _rho_min_for_metric(cross_map_rho_min, target_metric)
     mde_df, usable_df, lib_ratio = _leakage_safe_window(
         df, list(targets) + list(observable_columns),
         prediction_start, prediction_length, delay_set, tp)

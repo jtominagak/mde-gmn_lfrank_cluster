@@ -255,8 +255,8 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
                 if joint:
                     result = mde.run_multi_mde_for_targets(
                         cfg['TARGETS'], df, candidate_pool, cfg['PREDICTION_START'],
-                        cfg['PREDICTION_LENGTH'], effective_d, cfg['EMBED_DIM_RHO_MIN'],
-                        cfg['CROSS_MAP_RHO_MIN'], cfg['EXCLUSION_RADIUS_VALUE'],
+                        cfg['PREDICTION_LENGTH'], effective_d, cfg['EMBED_DIM_RHO_MIN_BY_METRIC'],
+                        cfg['CROSS_MAP_RHO_MIN_BY_METRIC'], cfg['EXCLUSION_RADIUS_VALUE'],
                         cfg['RESULTS_DIR'], [],
                         tp=cfg['TP'], metric=cfg['METRIC'],
                         target_metric=cfg['TARGET_METRIC'],
@@ -280,8 +280,8 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
                 else:
                     result = mde.run_mde_for_target(
                         group[0], df, candidate_pool, cfg['PREDICTION_START'],
-                        cfg['PREDICTION_LENGTH'], effective_d, cfg['EMBED_DIM_RHO_MIN'],
-                        cfg['CROSS_MAP_RHO_MIN'], cfg['EXCLUSION_RADIUS_VALUE'],
+                        cfg['PREDICTION_LENGTH'], effective_d, cfg['EMBED_DIM_RHO_MIN_BY_METRIC'],
+                        cfg['CROSS_MAP_RHO_MIN_BY_METRIC'], cfg['EXCLUSION_RADIUS_VALUE'],
                         cfg['RESULTS_DIR'], [],
                         tp=cfg['TP'], metric=cfg['METRIC'],
                         target_metric=cfg['TARGET_METRIC'],
@@ -357,7 +357,7 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
             ccm_lib_sizes_rows=cfg['CCM_LIB_SIZES_ROWS'],
             observable_columns=filtered_pools.get(tuple(group), obs_cols),
             nested_n=cfg['MDE_D'], nested_m=cfg['NESTED_M'],
-            embed_dim_rho_min=cfg['EMBED_DIM_RHO_MIN'], cross_map_rho_min=cfg['CROSS_MAP_RHO_MIN'],
+            embed_dim_rho_min=cfg['EMBED_DIM_RHO_MIN_BY_METRIC'], cross_map_rho_min=cfg['CROSS_MAP_RHO_MIN_BY_METRIC'],
             exclusion_radius=cfg['EXCLUSION_RADIUS_VALUE'],
             lag_set=cfg['LAG_SET'], tp=cfg['TP'],
             reuse_cache=cfg['REUSE_BEST_PARAMS'], prev_runs_dir=cfg['PREV_RUNS_DIR'],

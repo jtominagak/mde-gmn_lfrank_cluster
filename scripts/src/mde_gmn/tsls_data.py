@@ -185,6 +185,28 @@ def _resolve_target_ranking_window(target, full_df, usable_df, lib_ratio,
     first = int(np.argmax(passing))
     return int(w_candidates[first]), int(pred_events_up_to_w[first])
 
+
+def _rho_min_for_metric(rho_min, node_metric):
+    '''One skill gate resolved for the node actually being explained.
+
+    `rho_min` is either a plain float -- the historical behaviour, one gate
+    for every node -- or a {metric: float} mapping, in which case the entry
+    for `node_metric` wins and 'default' covers anything unlisted.
+
+    WHY A MAPPING AT ALL. EMBED_DIM_RHO_MIN/CROSS_MAP_RHO_MIN were a single
+    number applied to two metrics that do not share a scale. A behavioural
+    target is scored by `correlation`, whose ceiling is 1.0. A TSLS neuron
+    node is scored by `f1`, and the r9 calibration
+    (scripts/calibration/r9_min_pred_events_curve.csv) measured what a
+    NEAR-PERFECT predictor of a TSLS channel actually scores: f1 ~ 0.49-0.54
+    on average, never above 0.69. So one 0.2 bar asked a neuron for ~38% of
+    achievable skill and a behavioural target for 20% of it -- a far harsher
+    test, which is part of why 101 of the nodes in job 4774136 had no
+    candidate clear the gate at all.'''
+    if isinstance(rho_min, dict):
+        return float(rho_min.get(node_metric, rho_min.get('default', 0.2)))
+    return float(rho_min)
+
 def _preview_window_rows(node, full_df, delay_set, prediction_start, prediction_length, tp,
                           is_behavioral_target, target_ranking_window_rows,
                           min_pred_events, max_window_rows):

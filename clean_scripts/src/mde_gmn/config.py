@@ -160,6 +160,30 @@ def load_config():
     cfg['TP'] = int(os.environ.get('TSLS_MDE_GMN_TP', 1))
     cfg['EMBED_DIM_RHO_MIN'] = float(os.environ.get('TSLS_MDE_GMN_EMBED_DIM_RHO_MIN', 0.2))
     cfg['CROSS_MAP_RHO_MIN'] = float(os.environ.get('TSLS_MDE_GMN_CROSS_MAP_RHO_MIN', 0.2))
+    # The two gates above are applied to whichever metric scores the node, and
+    # the two metrics do not share a ceiling. `correlation`, which scores a
+    # behavioural target, tops out at 1.0. `f1`, which scores a TSLS neuron
+    # node, does not: r9_min_pred_events_curve.csv measured a NEAR-PERFECT
+    # predictor of a real TSLS channel at f1 ~ 0.49-0.54 on average (never
+    # above 0.69). A single 0.2 bar therefore demanded ~38% of achievable
+    # skill from a neuron and 20% from a behavioural target.
+    #
+    # 0.1 restores parity in those terms (0.20 x 0.52 ~ 0.104), and is the
+    # looser gate for neuronal data that the asymmetry calls for. It is not
+    # free: r9 puts the f1 estimator's own std at ~0.069 at MIN_PRED_EVENTS=20,
+    # so 0.1 is only ~1.4 sigma there -- it falls to ~0.052 at 40 events and
+    # ~0.028 at 160, and real candidate windows in job 4774136 carried 67-188
+    # events, so the floor is the worst case rather than the typical one.
+    # Raise this first if the network starts admitting links that do not
+    # replicate.
+    cfg['EMBED_DIM_RHO_MIN_F1'] = float(os.environ.get('TSLS_MDE_GMN_EMBED_DIM_RHO_MIN_F1', 0.1))
+    cfg['CROSS_MAP_RHO_MIN_F1'] = float(os.environ.get('TSLS_MDE_GMN_CROSS_MAP_RHO_MIN_F1', 0.1))
+    # What actually travels to the MDE calls: _rho_min_for_metric() picks the
+    # entry matching the node's own metric, 'default' for anything else.
+    cfg['EMBED_DIM_RHO_MIN_BY_METRIC'] = {'default': cfg['EMBED_DIM_RHO_MIN'],
+                                          'f1': cfg['EMBED_DIM_RHO_MIN_F1']}
+    cfg['CROSS_MAP_RHO_MIN_BY_METRIC'] = {'default': cfg['CROSS_MAP_RHO_MIN'],
+                                          'f1': cfg['CROSS_MAP_RHO_MIN_F1']}
     # CCM pre-filter (see ccm_prefilter_observables()'s docstring): a cheap
     # CCM(observable -> target) skill check run once per target group,
     # right before either nested-MDE stage, to shrink REGION_CHANNEL_CAP's
