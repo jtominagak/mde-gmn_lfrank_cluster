@@ -251,8 +251,19 @@ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
     actual-vs-Generate()-vs-Forecast() figure for this network.
 
     plot_range_mode='full' plots the whole recording; 'windowed' plots only the
-    generated window. Returns (None, {}) instead of raising if the Forecast()
-    build or call fails, so one bad network does not lose the others.'''
+    generated window.
+
+    Returns `(Gf, rhos, passthrough_nodes)`. Only simulated nodes are scored,
+    for the reason gmn_fidelity_rho()'s docstring gives at length: a node with
+    no discovered drivers has its recording replayed by Forecast() under
+    EXTERNAL_INPUT_MODE='real_data', so scoring it compares the recording
+    against itself. Unlike the fidelity score, every node is still PLOTTED --
+    its panel showing the real trajectory beside the Generate() curve is worth
+    having -- and the panel title says 'real-data passthrough (not scored)'
+    rather than carrying a meaningless number.
+
+    Returns (None, {}, []) instead of raising if the Forecast() build or call
+    fails, so one bad network does not lose the others.'''
     generate_length = generate_length if generate_length is not None else prediction_length
     generate_start = generate_start if generate_start is not None else generate_validation_start
 
@@ -275,12 +286,21 @@ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
         print(f"{net_result['network_id']}: Forecast() diagnostic FAILED: {exc!r} -- "
               f"skipping its plot/rho for this network (Generate()-based outputs are unaffected)",
               flush=True)
-        return None, {}
+        return None, {}, []
 
     actual_df = pd.read_csv(net_result['DATA_AFTER_MDE'])
     forecast_out = Gf.DataOut.dropna().reset_index(drop=True)
     time_idx = forecast_out['Time'].to_numpy().astype(int)
     nodes = [c for c in forecast_out.columns if c != 'Time']
+    # A node with no discovered drivers is a real-data passthrough under
+    # EXTERNAL_INPUT_MODE='real_data': Forecast() replays its recording, so
+    # scoring it compares the recording against itself and reports a perfect
+    # result that means nothing -- the same circularity gmn_fidelity_rho()
+    # refuses, for the same reason (see its docstring). Such nodes are still
+    # PLOTTED below, because the panel showing the real trajectory next to
+    # the Generate() curve is useful; only the score is withheld.
+    scored = set(_simulated_nodes(net_result['network']['Graph']))
+    passthrough_nodes = [c for c in nodes if c not in scored]
 
     generate_out = G.DataOut.reset_index(drop=True)
     generate_time = np.arange(generate_start, generate_start + len(generate_out))
@@ -304,7 +324,9 @@ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
             node_metric = _metric_for(node, net_result['targets'], metric, target_metric)
             actual = actual_df[node].to_numpy()
             forecast_pred = forecast_out[node].to_numpy()
-            rhos[node] = tsls._score(actual[time_idx], forecast_pred, node_metric, gammaDelta=gamma_delta)
+            if node in scored:
+                rhos[node] = tsls._score(actual[time_idx], forecast_pred, node_metric,
+                                       gammaDelta=gamma_delta)
 
             ax.plot(np.arange(plot_start, plot_end), actual[plot_start:plot_end],
                      color='tab:blue', lw=1, alpha=0.6, label='Lib/actual')
@@ -318,7 +340,10 @@ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
             # stretch matplotlib's autoscale and hide the mislabelling this
             # section exists to avoid.
             ax.set_xlim(plot_start, plot_end)
-            ax.set_title(f"{node}   Forecast {node_metric}={rhos[node]:.3f}", fontsize=10)
+            if node in scored:
+                ax.set_title(f"{node}   Forecast {node_metric}={rhos[node]:.3f}", fontsize=10)
+            else:
+                ax.set_title(f'{node}   real-data passthrough (not scored)', fontsize=10)
             ax.legend(fontsize=7, loc='upper right')
 
         fig.suptitle(f"Generate() vs Forecast() vs actual -- {net_result['network_id']} "
@@ -329,7 +354,7 @@ def run_forecast_diagnostic(net_result, G, prediction_start, prediction_length,
         fig.savefig(part_path, dpi=300)
         plt.close(fig)
 
-    return Gf, rhos
+    return Gf, rhos, passthrough_nodes
 
 def gmn_fidelity_rho(net_result, G, generate_start, metric, target_metric, gamma_delta,
                       default_E=3, tau=-1):

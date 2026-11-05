@@ -427,7 +427,7 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
 
         forecast_start = time.perf_counter()
         _log_progress(progress_log_path, f'{network_id}: Forecast() diagnostic START')
-        Gf, forecast_rho = run_forecast_diagnostic(
+        Gf, forecast_rho, forecast_passthrough = run_forecast_diagnostic(
             run['net_result'], run['G'], cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'],
             run['best_node_theta'],
             cfg['RESULTS_DIR'], cfg['CORES'],
@@ -446,7 +446,15 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
         if Gf is None:
             print(f'{network_id}: no Forecast() rho to report for this network', flush=True)
         else:
-            print(f"{network_id} Forecast() rho per node (weakest first):", flush=True)
+            # Same rule as the fidelity table below: a node with no
+            # discovered drivers had its recording replayed, so there is
+            # nothing to score. It is still drawn in the Forecast figure.
+            if forecast_passthrough:
+                print(f'{network_id}: {len(forecast_passthrough)} node(s) NOT scored by '
+                      f'Forecast() -- real-data passthrough, plotted but not scored: '
+                      f'{sorted(forecast_passthrough)}', flush=True)
+            print(f'{network_id} Forecast() rho, {len(forecast_rho)} simulated node(s) '
+                  f'(weakest first):', flush=True)
             for node, rho in sorted(forecast_rho.items(), key=lambda kv: kv[1]):
                 print(f"  {node:20s} {rho:.4f}", flush=True)
 

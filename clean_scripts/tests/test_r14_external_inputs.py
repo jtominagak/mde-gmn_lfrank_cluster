@@ -222,6 +222,91 @@ def _check_partition_report_and_3d_figure(module, name, results_dir,
     print(f'{name}: plot_3d_network elevated-entity check PASS ({lag_figure_path})')
 
 
+def _check_fidelity_skips_passthrough(module, name, results_dir):
+    '''gmn_fidelity_rho() must NOT score a real-data passthrough node.
+
+    Under EXTERNAL_INPUT_MODE='real_data', A has zero drivers, so Generate()
+    replays A's recording verbatim -- _check_real_data_mode() above asserts
+    exactly that. Scoring A would then cross-map a channel onto an identical
+    copy of itself and report it as generative fidelity: circular in the same
+    way partition_network() already refuses for a target. Job 4774136
+    (2026-10-27) made that concrete -- 23 of its 29 nodes were passthroughs
+    and supplied every fidelity rho above 0.44, two of them 1.0000, while all
+    six simulated nodes scored <= 0.054.
+
+    Under 'self_simulate' the same node IS simulated, so it must be scored --
+    which is why this asserts the mode is respected rather than that
+    zero-driver nodes are always excluded.'''
+    for mode, expect_scored, expect_passthrough in (('real_data', {'T'}, ['A']),
+                                                    ('self_simulate', {'T', 'A'}, [])):
+        G, _data, generate_start, _length = _generate_run(module, mode, results_dir)
+        with open(results_dir / f'network_toy_{mode}.pkl', 'rb') as f:
+            network = pickle.load(f)
+        net_result = {
+            'targets': ['T'],
+            'network': network,
+            'DATA_AFTER_MDE': results_dir / 'data_after_mde_toy.csv',
+            'node_dimensions': {},
+        }
+        rho, passthrough = module.gmn_fidelity_rho(
+            net_result, G, generate_start, 'correlation', 'correlation', 2)
+        assert passthrough == expect_passthrough, (
+            f'{name}: EXTERNAL_INPUT_MODE={mode!r} should report passthrough='
+            f'{expect_passthrough}, got {passthrough}')
+        assert set(rho) == expect_scored, (
+            f'{name}: EXTERNAL_INPUT_MODE={mode!r} should score {expect_scored}, '
+            f'got {set(rho)}')
+        # The node is excluded from SCORING only -- it is still a node of the
+        # network, and both network figures still draw it.
+        assert set(network['Graph'].nodes) == {'T', 'A'}, (
+            f'{name}: the graph itself must be unchanged: {set(network["Graph"].nodes)}')
+    print(f'{name}: fidelity scores only simulated nodes, passthrough reported separately PASS')
+
+
+def _check_forecast_skips_passthrough(module, name, results_dir):
+    '''run_forecast_diagnostic() must not score a passthrough node either --
+    but must still PLOT it.
+
+    Forecast() replays the recording for a zero-driver node just as Generate()
+    does, so tsls._score(actual, forecast_pred) compares the recording with
+    itself. Unlike the fidelity score, the node keeps its panel in the
+    figure: seeing the real trajectory beside the Generate() curve is the
+    point of that diagnostic. This also exercises the real call path, where
+    the returned tuple is unpacked -- the kind of slip that otherwise only
+    shows up hours into a job.'''
+    G, data_after_mde, generate_start, generate_length = _generate_run(
+        module, 'real_data', results_dir)
+    with open(results_dir / 'network_toy_real_data.pkl', 'rb') as f:
+        network = pickle.load(f)
+    net_result = {
+        'targets': ['T'],
+        'network_id': 'toy_forecast',
+        'network': network,
+        'DATA_AFTER_MDE': results_dir / 'data_after_mde_toy.csv',
+        'NETWORK_FILE': results_dir / 'network_toy_real_data.pkl',
+    }
+    save_path = results_dir / 'forecast_toy.png'
+    Gf, rhos, passthrough = module.run_forecast_diagnostic(
+        net_result, G, generate_start, generate_length,
+        {'T': 3, 'A': 3}, results_dir, 1, save_path,
+        'correlation', 'correlation', 2,
+        generate_length=generate_length, generate_start=generate_start,
+        total_rows=len(data_after_mde),
+    )
+    assert Gf is not None, (
+        f'{name}: the toy Forecast() run failed, so this check proved nothing '
+        f'(rhos={rhos}, passthrough={passthrough})')
+    assert passthrough == ['A'], (
+        f"{name}: A is a real-data passthrough and must be reported as one, got {passthrough}")
+    assert 'A' not in rhos, f'{name}: A must not be scored by Forecast(), got {rhos}'
+    assert 'T' in rhos, f'{name}: T is simulated and must be scored, got {rhos}'
+    # Plotted, not dropped: the figure is written and covers both nodes.
+    parts = sorted(results_dir.glob('forecast_toy_part*.png'))
+    assert parts, f'{name}: run_forecast_diagnostic() wrote no figure'
+    print(f'{name}: Forecast() scores only simulated nodes, passthrough still plotted PASS '
+          f'({[p.name for p in parts]})')
+
+
 def _run_for_module(filename, module_name, name, expected_suffix='.png', check_elevated_entities=False):
     module = load_pipeline_module(filename, module_name)
     results_dir = SCRATCH / module_name
@@ -234,6 +319,10 @@ def _run_for_module(filename, module_name, name, expected_suffix='.png', check_e
         module, name, results_dir,
         expected_suffix=expected_suffix, check_elevated_entities=check_elevated_entities,
     )
+    # Unconditional here: the 1 Hz pipeline, which keeps its own older
+    # one-file versions of these two functions, is not part of this tree.
+    _check_fidelity_skips_passthrough(module, name, results_dir)
+    _check_forecast_skips_passthrough(module, name, results_dir)
 
 
 def test_tsls():
