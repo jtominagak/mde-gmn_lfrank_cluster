@@ -457,10 +457,20 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
             for node, rho in sorted(forecast_rho.items(), key=lambda kv: kv[1]):
                 print(f"  {node:20s} {rho:.4f}", flush=True)
 
-        rho = gmn_fidelity_rho(run['net_result'], run['G'], run['generate_start'],
-                                cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'])
+        rho, passthrough = gmn_fidelity_rho(
+            run['net_result'], run['G'], run['generate_start'],
+            cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'])
         plot_fidelity(rho, network_id, cfg['RESULTS_DIR'] / f'gmn_fidelity_{network_id}.png')
-        print(f'{network_id} fidelity rho (weakest first):', flush=True)
+        # Named, not silently absent: no discovered drivers means Generate()
+        # replayed the recording and there is nothing simulated to score (see
+        # gmn_fidelity_rho()). They remain nodes of the network and still
+        # appear in both network figures.
+        if passthrough:
+            print(f'{network_id}: {len(passthrough)} node(s) NOT scored -- real-data '
+                  f'passthrough, no discovered drivers, nothing simulated to score: '
+                  f'{sorted(passthrough)}', flush=True)
+        print(f'{network_id} fidelity rho, {len(rho)} simulated node(s) '
+              f'(strongest first):', flush=True)
         for node in sorted(rho, key=lambda n: (np.isnan(rho[n]), -(rho[n] if not np.isnan(rho[n]) else 0))):
             print(f'  {node:20s} {rho[node]:.4f}', flush=True)
 

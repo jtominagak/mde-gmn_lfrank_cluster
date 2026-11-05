@@ -49,6 +49,7 @@ import pandas as pd
 from mde_gmn.caching import build_start_sweep_fingerprint, find_cached, save_json_to_cache
 from mde_gmn.gmn_build import build_gmn_config
 from mde_gmn.gmn_embedding import network_max_embedding_offset
+from mde_gmn.network import _simulated_nodes
 from mde_gmn.progress import _log_progress
 from mde_gmn.theta import evaluate_smap_candidate
 from mde_gmn.tsls_data import _metric_for
@@ -338,10 +339,43 @@ def gmn_fidelity_rho(net_result, G, generate_start, metric, target_metric, gamma
     rather than pyEDM's plain Simplex/ComputeError (see config.py's METRIC
     entry for why TSLS signals need the TSLS-aware version). E defaults to
     node_dimensions, build_network()'s per-node estimate, when it computed
-    one.'''
+    one.
+
+    ONLY SIMULATED NODES ARE SCORED. Under EXTERNAL_INPUT_MODE='real_data' an
+    external input (0 discovered drivers) does not go through gmn's SMap/
+    embedding machinery at all: Generate() short-circuits it to a real-data
+    passthrough, so its "generated" column IS the recording, byte for byte.
+    Scoring it here would cross-map a channel onto an identical copy of
+    itself and report the result as generative fidelity -- which is circular
+    in exactly the way partition_network() already refuses to allow for a
+    TARGET, and for exactly the same reason. The same argument applies to a
+    neuronal node; only the guard was missing.
+
+    This mattered: in job 4774136 (2026-10-27, zero lags) 23 of 29 nodes were
+    external inputs, all 23 verified identical to the real series, and they
+    supplied every fidelity rho above 0.44 in the run log -- including two at
+    1.0000 -- while all six genuinely simulated nodes scored <= 0.054. The
+    same artifact also yields spurious ZEROES, when a sparse channel has too
+    few events in the scored half for the event-timing metric to match
+    anything, so it cannot be read off as "high means fake" either.
+
+    `_simulated_nodes()` is the authoritative set (interior nodes, plus
+    external inputs too under EXTERNAL_INPUT_MODE='self_simulate', where they
+    really are simulated and their fidelity really is meaningful). A graph
+    that never went through partition_network() -- MODE='GMN', whose plain
+    DiGraph has no such classification -- has no external inputs recorded, so
+    every node is scored exactly as before.
+
+    Returns `(fidelity_rho, passthrough_nodes)`: the per-node scores, and the
+    nodes deliberately NOT scored, so the caller can report them as
+    passthrough instead of letting them vanish silently.'''
     actual_df = pd.read_csv(net_result['DATA_AFTER_MDE'])
     generated = G.DataOut.reset_index(drop=True)
-    nodes = [c for c in generated.columns if c != 'Time']
+    graph = net_result['network']['Graph']
+    scored = set(_simulated_nodes(graph))
+    all_nodes = [c for c in generated.columns if c != 'Time']
+    nodes = [c for c in all_nodes if c in scored]
+    passthrough_nodes = [c for c in all_nodes if c not in scored]
     n_gen = len(generated)
     split = n_gen // 2
     node_dimensions = net_result.get('node_dimensions', {})
@@ -367,7 +401,7 @@ def gmn_fidelity_rho(net_result, G, generate_start, metric, target_metric, gamma
             fidelity_rho[node] = out['metrics'][node_metric]
         except Exception:
             fidelity_rho[node] = np.nan
-    return fidelity_rho
+    return fidelity_rho, passthrough_nodes
 
 def plot_fidelity(rho, network_id, save_path):
     order = sorted(rho, key=lambda n: (np.isnan(rho[n]), -(rho[n] if not np.isnan(rho[n]) else 0)))

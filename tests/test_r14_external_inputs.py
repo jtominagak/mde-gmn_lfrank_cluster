@@ -222,7 +222,49 @@ def _check_partition_report_and_3d_figure(module, name, results_dir,
     print(f'{name}: plot_3d_network elevated-entity check PASS ({lag_figure_path})')
 
 
-def _run_for_module(filename, module_name, name, expected_suffix='.png', check_elevated_entities=False):
+def _check_fidelity_skips_passthrough(module, name, results_dir):
+    '''gmn_fidelity_rho() must NOT score a real-data passthrough node.
+
+    Under EXTERNAL_INPUT_MODE='real_data', A has zero drivers, so Generate()
+    replays A's recording verbatim -- _check_real_data_mode() above asserts
+    exactly that. Scoring A would then cross-map a channel onto an identical
+    copy of itself and report it as generative fidelity: circular in the same
+    way partition_network() already refuses for a target. Job 4774136
+    (2026-10-27) made that concrete -- 23 of its 29 nodes were passthroughs
+    and supplied every fidelity rho above 0.44, two of them 1.0000, while all
+    six simulated nodes scored <= 0.054.
+
+    Under 'self_simulate' the same node IS simulated, so it must be scored --
+    which is why this asserts the mode is respected rather than that
+    zero-driver nodes are always excluded.'''
+    for mode, expect_scored, expect_passthrough in (('real_data', {'T'}, ['A']),
+                                                    ('self_simulate', {'T', 'A'}, [])):
+        G, _data, generate_start, _length = _generate_run(module, mode, results_dir)
+        with open(results_dir / f'network_toy_{mode}.pkl', 'rb') as f:
+            network = pickle.load(f)
+        net_result = {
+            'targets': ['T'],
+            'network': network,
+            'DATA_AFTER_MDE': results_dir / 'data_after_mde_toy.csv',
+            'node_dimensions': {},
+        }
+        rho, passthrough = module.gmn_fidelity_rho(
+            net_result, G, generate_start, 'correlation', 'correlation', 2)
+        assert passthrough == expect_passthrough, (
+            f'{name}: EXTERNAL_INPUT_MODE={mode!r} should report passthrough='
+            f'{expect_passthrough}, got {passthrough}')
+        assert set(rho) == expect_scored, (
+            f'{name}: EXTERNAL_INPUT_MODE={mode!r} should score {expect_scored}, '
+            f'got {set(rho)}')
+        # The node is excluded from SCORING only -- it is still a node of the
+        # network, and both network figures still draw it.
+        assert set(network['Graph'].nodes) == {'T', 'A'}, (
+            f'{name}: the graph itself must be unchanged: {set(network["Graph"].nodes)}')
+    print(f'{name}: fidelity scores only simulated nodes, passthrough reported separately PASS')
+
+
+def _run_for_module(filename, module_name, name, expected_suffix='.png', check_elevated_entities=False,
+                     check_fidelity_passthrough=False):
     module = load_pipeline_module(filename, module_name)
     results_dir = SCRATCH / module_name
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -234,11 +276,16 @@ def _run_for_module(filename, module_name, name, expected_suffix='.png', check_e
         module, name, results_dir,
         expected_suffix=expected_suffix, check_elevated_entities=check_elevated_entities,
     )
+    # tsls only: simple-mde-gmn.py keeps its own older gmn_fidelity_rho (one
+    # file, different signature) and is deliberately out of scope.
+    if check_fidelity_passthrough:
+        _check_fidelity_skips_passthrough(module, name, results_dir)
 
 
 def test_tsls():
     _run_for_module('tsls-mde-gmn.py', '_test_tsls_mde_gmn_r14', 'tsls-mde-gmn.py',
-                     expected_suffix='.html', check_elevated_entities=True)
+                     expected_suffix='.html', check_elevated_entities=True,
+                     check_fidelity_passthrough=True)
 
 
 def test_simple():

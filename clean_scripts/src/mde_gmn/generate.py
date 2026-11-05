@@ -49,6 +49,7 @@ import pandas as pd
 from mde_gmn.caching import build_start_sweep_fingerprint, find_cached, save_json_to_cache
 from mde_gmn.gmn_build import build_gmn_config
 from mde_gmn.gmn_embedding import network_max_embedding_offset
+from mde_gmn.network import simulated_nodes
 from mde_gmn.progress import _log_progress
 from mde_gmn.theta import evaluate_smap_candidate
 from mde_gmn.tsls_data import _metric_for, network_data_frame
@@ -338,10 +339,36 @@ def gmn_fidelity_rho(net_result, G, generate_start, metric, target_metric, gamma
     rather than pyEDM's plain Simplex/ComputeError (see config.py's METRIC
     entry for why TSLS signals need the TSLS-aware version). E defaults to
     node_dimensions, build_network()'s per-node estimate, when it computed
-    one.'''
+    one.
+
+    ONLY SIMULATED NODES ARE SCORED. Under EXTERNAL_INPUT_MODE='real_data' an
+    external input (0 discovered drivers) never reaches gmn's SMap/embedding
+    machinery: Generate() short-circuits it to a real-data passthrough, so its
+    "generated" column IS the recording. Scoring it would cross-map a channel
+    onto an identical copy of itself and report that as generative fidelity --
+    circular in exactly the way partition_network() already refuses for a
+    TARGET, and for the same reason; only the guard for a neuronal node was
+    missing. In job 4774136 (2026-10-27, zero lags) 23 of 29 nodes were
+    external inputs, all 23 verified identical to the real series, and they
+    supplied every fidelity rho above 0.44 -- two of them 1.0000 -- while all
+    six simulated nodes scored <= 0.054. The artifact also produces spurious
+    ZEROES, when a sparse channel has too few events in the scored half to
+    match, so it cannot be spotted by looking for high values.
+
+    simulated_nodes() is the authoritative set (interior nodes, plus external
+    inputs under EXTERNAL_INPUT_MODE='self_simulate', where they really are
+    simulated). A graph that never went through partition_network() records no
+    external inputs, so every node is scored exactly as before.
+
+    Returns `(fidelity_rho, passthrough_nodes)`: the scores, and the nodes
+    deliberately not scored, so the caller can name them rather than let them
+    vanish.'''
     actual_df = network_data_frame(net_result)
     generated = G.DataOut.reset_index(drop=True)
-    nodes = [c for c in generated.columns if c != 'Time']
+    scored = set(simulated_nodes(net_result['network']['Graph']))
+    all_nodes = [c for c in generated.columns if c != 'Time']
+    nodes = [c for c in all_nodes if c in scored]
+    passthrough_nodes = [c for c in all_nodes if c not in scored]
     n_gen = len(generated)
     split = n_gen // 2
     node_dimensions = net_result.get('node_dimensions', {})
@@ -367,7 +394,7 @@ def gmn_fidelity_rho(net_result, G, generate_start, metric, target_metric, gamma
             fidelity_rho[node] = out['metrics'][node_metric]
         except Exception:
             fidelity_rho[node] = np.nan
-    return fidelity_rho
+    return fidelity_rho, passthrough_nodes
 
 def plot_fidelity(rho, network_id, save_path):
     order = sorted(rho, key=lambda n: (np.isnan(rho[n]), -(rho[n] if not np.isnan(rho[n]) else 0)))
