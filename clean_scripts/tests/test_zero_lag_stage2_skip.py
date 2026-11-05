@@ -189,8 +189,10 @@ def test_parallel_union_still_works(fork, serial_edges):
 def test_skip_is_not_over_broad(parent, fork):
     '''A NON-empty lag set must still run Stage 2 in both builders -- otherwise
     the fix above would have silently deleted the stage.'''
-    for name, module, extra in (('serial', parent, None),
-                                ('parallel/staged', fork, {'parallel_mde_scope': 'staged'})):
+    cases = [('serial', parent, None)]
+    if fork is not None:
+        cases.append(('parallel/staged', fork, {'parallel_mde_scope': 'staged'}))
+    for name, module, extra in cases:
         _graph, edges_df, call_log = _run(module, lag_set=[-1], extra_kwargs=extra)
         stage2_calls = [c for c in call_log if c[0] == 'stage2']
         assert stage2_calls, (
@@ -207,11 +209,22 @@ def main():
     # same way test_parallel_mde_equivalence.py does it.
     load_pipeline_module(PARENT_FILE, '_test_zero_lag_tsls_mde_gmn')
     from mde_gmn import network as parent           # noqa: E402 -- needs the sys.path above
-    from mde_gmn import network_parallel as fork     # noqa: E402
+    try:
+        from mde_gmn import network_parallel as fork  # noqa: E402
+    except ImportError:
+        # network_parallel.py is GPU-branch-only (see CLAUDE.md on branches),
+        # so on main there is no parallel builder to check. The serial half is
+        # shared code and runs on both branches, which is the point of keeping
+        # this one file identical on both rather than forking it.
+        fork = None
 
     serial_edges = test_serial_builder_skips_stage2(parent)
-    test_parallel_staged_skips_stage2(fork, serial_edges)
-    test_parallel_union_still_works(fork, serial_edges)
+    if fork is None:
+        print('SKIP: mde_gmn.network_parallel is absent on this branch -- the parallel '
+              'builder is GPU-branch-only, so only the serial checks ran')
+    else:
+        test_parallel_staged_skips_stage2(fork, serial_edges)
+        test_parallel_union_still_works(fork, serial_edges)
     test_skip_is_not_over_broad(parent, fork)
     print('ALL PASS')
 
