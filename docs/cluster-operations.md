@@ -71,6 +71,19 @@ Consequences worth internalising:
   there only until the job archives them to `/bucket`.
 - `/home` is shared between deigo and saion, which is why the venvs and Slurm
   logs can be referenced by both.
+- **`/bucket` on deigo is `rw`, but intermittently fails read-only.** A job
+  can die at startup on `mkdir: cannot create directory
+  '/bucket/.../job_<id>': Read-only file system` even though the table above
+  says `rw`, and even though ~33 earlier `compute` jobs archived there fine.
+  It is a **per-node mount fault**, not a policy: the same submission fails on
+  one node and succeeds on another minutes later (failing: `deigo010901`,
+  `deigo010919`, `deigo010933`, `deigo010924`, `deigo010903`; working:
+  `deigo011222`, `deigo011224`, `deigo011102`). It recurred at least six times
+  between 2026-08-23 and 08-31. **Remedy: resubmit until the scheduler lands a
+  healthy node** — a 15-minute retry loop has always cleared it in ~30–50
+  minutes. Full records: `bucket-outage-2026-08-28.md`,
+  `bucket-outage-2026-08-30.md`. Escalation to OIST IT was flagged as worth
+  doing if the frequency continued, and was never done.
 
 ### The safety guards in `saion_env.sh`
 

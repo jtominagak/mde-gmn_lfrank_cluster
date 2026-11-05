@@ -35,6 +35,17 @@ echo "=========================================================="
 echo "$LABEL  $LOCAL_DIR  ->  ${CLUSTER}:${REMOTE_DIR}"
 echo "=========================================================="
 
+# After the 2026-10-28 cluster cleanup the remote checkout may not exist at
+# all. rsync on deigo is 3.1.3, which has no --mkpath and cannot create
+# missing INTERMEDIATE parents: pushing into $REMOTE_DIR/scripts/ when
+# $REMOTE_DIR itself is gone fails with "mkdir ... No such file or directory".
+# So create the subtrees first. Harmless when they already exist.
+if [ "${1:-}" = "--go" ]; then
+    echo "--- ensuring remote directories exist"
+    ssh "${USER_REMOTE}@${HOST}" \
+        "mkdir -p '${REMOTE_DIR}/scripts' '${REMOTE_DIR}/tests' '${REMOTE_DIR}/docs'"
+fi
+
 # --delete is scoped to these code subtrees only, so a file you deleted
 # locally also disappears on the cluster -- but nothing outside them is ever
 # considered. data/, results/ and the venvs are not in this list at all.

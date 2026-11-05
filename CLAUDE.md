@@ -1,6 +1,12 @@
 # pao_rotation — orientation for Claude Code
 
 ## Read this first
+**`../CLUSTER.md`** — the cross-project cluster contract (storage tiers, the
+intermittent `/bucket` read-only fault, the `tominaga` vs `j-tominaga` path
+split). This project's own `docs/cluster-operations.md` is more detailed and
+**wins on any conflict**; `../CLUSTER.md` exists so the other projects here
+share the same baseline.
+
 **`docs/mde-gmn-architecture.md`** — what the pipeline is made of, the stage
 order, the dependency diagram, and the three things that surprise people
 (gmn is patched on import; MDE is called through the module object; the cache
