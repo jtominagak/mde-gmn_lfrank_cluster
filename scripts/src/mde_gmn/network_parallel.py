@@ -521,6 +521,20 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     union_candidate_universe = stage2_expanded_columns
     union_num_delays = len(lag_set) + 1
 
+    # ZERO LAGS. DELAY_SOURCE='explicit' with DELAY_SET=0 resolves to an EMPTY
+    # lag set (derive_lag_set() strips every 0 entry on that path), which
+    # leaves Stage 2 with an empty candidate pool: nothing to select and
+    # nothing to attach. Stage 2 is therefore skipped outright rather than run
+    # over an empty pool -- it has no work to do by construction, and
+    # effective_mde_dimension() would divide by stage2_num_delays == 0, which
+    # is how job 4774133 died (2026-10-27, ZeroDivisionError at the Stage 2
+    # handoff, after Stage 1 had completed). Guarding the division instead
+    # would invent an answer for a stage that should not run at all.
+    # scope='union' needs no such guard: union_num_delays counts the real
+    # observables too, so it is >= 1 for any lag set -- which is why
+    # job_4774136 completed where its staged twin crashed.
+    run_stage2 = parallel_mde_scope == 'staged' and bool(lag_set)
+
     edges = []
     nested_mde_results = {}
     node_depth = {t: 0 for t in targets}
@@ -660,7 +674,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
           f'backbone, Stage 2 starts now', flush=True)
 
     # ---- scope='staged': Stage 2's own precompute, now that visited1 is known
-    if parallel_mde_scope == 'staged':
+    if run_stage2:
         # Stage 2 attaches lagged leaves and never recurses, so its node set
         # is EXACTLY Stage 1's visited set -- no overshoot at all, which is
         # the whole point of this scope.
@@ -671,15 +685,22 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
             [('stage2', n) for n in stage2_nodes], stage_specs, common, cores,
             mp_start_method, progress_log_path, 'phase0b stage2')
         mde_tables['stage2'].update(stage2_tables['stage2'])
+    elif parallel_mde_scope == 'staged':
+        print('nested MDE (parallelized): scope=staged -- Stage 2 SKIPPED ENTIRELY, the lag set '
+              'is empty (zero lags), so there are no lagged candidates to select or attach; '
+              'this network is Stage 1 only', flush=True)
+        _log_progress(progress_log_path, 'STAGE 2 SKIPPED -- empty lag_set (zero lags)')
 
     # =====================================================================
     # PHASE 2 -- Stage 2: attach lagged leaf drivers. ONE pass over the nodes
     # Stage 1 discovered, no recursion (every pick is a leaf), so no depth
     # budget applies. Skipped entirely under scope='union', where each node's
-    # single MDE call already ranked lagged candidates alongside real ones.
+    # single MDE call already ranked lagged candidates alongside real ones,
+    # and under an empty lag set, where there is nothing to attach (see
+    # run_stage2 above).
     # =====================================================================
     visited2 = set()
-    if parallel_mde_scope == 'staged':
+    if run_stage2:
         stage2_start = time.perf_counter()
         _log_progress(progress_log_path, 'STAGE 2 REPLAY START (lagged drivers, no compute)')
         wave_nodes = [(node, node_depth[node]) for node in visited1]
@@ -713,7 +734,8 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # barriers. |computed| is what Phase 0 ran; |consulted| is what the two
     # BFS replays actually read.
     computed = sum(len(t) for t in mde_tables.values())
-    consulted = len(visited1) + len(visited2)   # union: visited2 is empty by design
+    # union, and staged with an empty lag set: visited2 is empty by design.
+    consulted = len(visited1) + len(visited2)
     print(f'nested MDE: {len(graph.nodes)} nodes, {len(edges_df)} edges '
           f'(N={nested_n}, M={nested_m_display}, realized max depth={realized_max_depth})',
           flush=True)
