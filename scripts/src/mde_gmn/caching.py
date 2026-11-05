@@ -114,6 +114,8 @@ def build_search_fingerprint(cfg, net_result, data_file_sha256, code_fingerprint
         'tp': cfg['TP'],
         'embed_dim_rho_min': cfg['EMBED_DIM_RHO_MIN'],
         'cross_map_rho_min': cfg['CROSS_MAP_RHO_MIN'],
+        'embed_dim_rho_min_f1': cfg['EMBED_DIM_RHO_MIN_F1'],
+        'cross_map_rho_min_f1': cfg['CROSS_MAP_RHO_MIN_F1'],
         'exclusion_radius': cfg['EXCLUSION_RADIUS_VALUE'],
         'gmn_exclusion_radius': cfg['GMN_EXCLUSION_RADIUS'],
         'nested_m': cfg['NESTED_M'],

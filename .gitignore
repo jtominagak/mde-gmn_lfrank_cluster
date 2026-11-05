@@ -19,3 +19,8 @@ tests/_scratch_*/
 # Stray MDE output written when a test runs the real run_mde_for_target()
 # with results_dir=Path(".")
 mde_output_*.csv
+
+# Regenerable: 170k parsed CCM evaluations (16M). Rebuild with
+# scripts/calibration/ccm_slope_distribution.py; the summary CSV and the
+# figure beside it are committed, this raw dump is not.
+scripts/calibration/ccm_slope_observations.csv

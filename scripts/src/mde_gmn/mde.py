@@ -55,7 +55,8 @@ from mde_gmn.caching import (
     _load_pickle_cache_entry, build_mde_selection_fingerprint,
     build_multi_mde_selection_fingerprint, find_cached, save_pickle_to_cache)
 from mde_gmn.columns import DELAY_MARKER, observable_and_delay
-from mde_gmn.tsls_data import _ccm_window, _metric_for, _resolve_target_ranking_window
+from mde_gmn.tsls_data import (
+    _ccm_window, _metric_for, _resolve_target_ranking_window, _rho_min_for_metric)
 
 
 def run_mde_for_target(target, df, observable_columns, prediction_start, prediction_length,
@@ -182,6 +183,13 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     800-row frame and at an 8000-row frame gave the same qualitative shape for
     the same absolute values. See config.py's CCM_LIB_SIZES_ROWS entry for the
     calibrated default.'''
+    # Both skill gates are resolved HERE, before the cache fingerprint is
+    # built and before proper_mde sees them, so a node cached under the f1
+    # gate can never be reused for one scored by correlation -- the resolved
+    # float is what goes into the fingerprint. `target_metric` is already the
+    # node's own metric: every call site passes _metric_for(node, ...).
+    embed_dim_rho_min = _rho_min_for_metric(embed_dim_rho_min, target_metric)
+    cross_map_rho_min = _rho_min_for_metric(cross_map_rho_min, target_metric)
     # Fallback only -- every real call site (main()'s depth-0 seed, and
     # both of build_nested_mde_network()'s per-wave passes) passes this
     # explicitly as the raw TSLS_MDE_GMN_MDE_D value. Falls back to mde_d
@@ -372,6 +380,13 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
     (shared) across every target in the group: the joint selection doesn't
     produce a per-target breakdown, by design (it's the same drivers,
     accepted because they predict the *group*, not any one target alone).'''
+    # Both skill gates are resolved HERE, before the cache fingerprint is
+    # built and before proper_mde sees them, so a node cached under the f1
+    # gate can never be reused for one scored by correlation -- the resolved
+    # float is what goes into the fingerprint. `target_metric` is already the
+    # node's own metric: every call site passes _metric_for(node, ...).
+    embed_dim_rho_min = _rho_min_for_metric(embed_dim_rho_min, target_metric)
+    cross_map_rho_min = _rho_min_for_metric(cross_map_rho_min, target_metric)
     mde_df = df[list(targets) + list(observable_columns)].iloc[:prediction_start + prediction_length]
 
     # See run_mde_for_target()'s own LEAKAGE docstring -- identical windowing
