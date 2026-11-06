@@ -33,7 +33,8 @@ def _toy_graph():
     return graph
 
 
-def _run_for_module(filename, module_name, name, extra_kwargs):
+def _run_for_module(filename, module_name, name, extra_kwargs,
+                    passthrough_unscored=True):
     module = load_pipeline_module(filename, module_name)
     results_dir = SCRATCH / module_name
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -84,8 +85,30 @@ def _run_for_module(filename, module_name, name, extra_kwargs):
     a_row = table[table['node'] == 'A'].iloc[0]
     assert t_row['role'] == 'TARGET', f'{name}: T should be tagged TARGET -- {t_row}'
     assert a_row['role'] == 'driver', f'{name}: A should be tagged driver -- {a_row}'
-    assert np.isfinite(t_row['score']) and np.isfinite(a_row['score']), (
-        f'{name}: scores should be finite -- {table}'
+    assert np.isfinite(t_row['score']), (
+        f'{name}: the simulated TARGET must carry a real score -- {table}'
+    )
+    # A drives T and has no drivers of its own, so under
+    # EXTERNAL_INPUT_MODE='real_data' Generate() replays A's recording
+    # verbatim. Scoring that compares the recording against itself, which is
+    # why it is listed but deliberately NOT scored (changed 2026-11-06: job
+    # 4799018's table carried 44 such rows at a guaranteed f1=1.000 and 9 more
+    # at 0.000, indistinguishable from real results). The row must still be
+    # PRESENT -- the table stays a complete inventory of the network.
+    if not passthrough_unscored:
+        # simple-mde-gmn.py is OUT OF SCOPE (see CLAUDE.md) and still scores
+        # real-data passthrough nodes against their own recording, so A comes
+        # back at a guaranteed rho=1.000. Asserted as-is so this test records
+        # the divergence instead of hiding it; if that pipeline is ever
+        # brought in line, drop this branch.
+        assert np.isfinite(a_row['score']), f'{name}: expected the legacy scored row -- {table}'
+        print(f'{name}: PASS (legacy: passthrough still scored)\n{table}')
+        return
+    assert a_row['metric'] == 'passthrough', (
+        f'{name}: A has no drivers, so it must be marked a real-data passthrough -- {table}'
+    )
+    assert not np.isfinite(a_row['score']), (
+        f'{name}: a passthrough row must not carry a score -- {table}'
     )
     print(f'{name}: PASS\n{table}')
 
@@ -98,7 +121,8 @@ def test_tsls():
 
 
 def test_simple():
-    _run_for_module('simple-mde-gmn.py', '_test_simple_mde_gmn_r11', 'simple-mde-gmn.py', {})
+    _run_for_module('simple-mde-gmn.py', '_test_simple_mde_gmn_r11', 'simple-mde-gmn.py', {},
+                    passthrough_unscored=False)
 
 
 if __name__ == '__main__':

@@ -299,6 +299,82 @@ def detect_reset_events_from_tsls(x,near_zero_threshold,drop_threshold = 0.0):
     return events.astype(int)
 
 
+# Default prediction-side event tolerance, as a fraction of the observed
+# series' own median above the reset level. Chosen from a circular-shift
+# surrogate calibration -- see detect_reset_events_from_prediction().
+PRED_EVENT_TOL_FRAC = 0.1
+
+
+def detect_reset_events_from_prediction(x_pred, x_true, near_zero_threshold,
+                                        tol_frac=None, drop_threshold=0.0):
+    """Decode reset events from a CONTINUOUS *predicted* TSLS series.
+
+    WHY THIS IS NOT detect_reset_events_from_tsls: that function requires
+    the post-drop value to be <= near_zero_threshold, which is calibrated on
+    the OBSERVED series -- where a reset lands on exactly 0.0, so
+    infer_near_zero_threshold_from_true_tsls returns exactly 0.0 (verified
+    for all 92 channels of J1620210605 epoch 8, in every window tried).
+    Applied to a prediction, that demands the predicted value be <= 0.0
+    exactly, which a continuous regressor satisfies with probability ~0.
+    In job 4799018, 38 of 39 simulated nodes produced ZERO predicted events
+    and so scored f1 = 0 no matter how good the prediction was; the single
+    exception scored nonzero only because its trajectory happened to dip to
+    -0.017. On the selection side the same test fires only where a Simplex
+    neighbourhood is all-zero, and only 5 of 22 such hits on CA1_44_tsls
+    coincided with a real reset -- so the surviving signal was mostly
+    coincidence.
+
+    A predicted reset is instead "a local minimum close to the reset level":
+    the series just fell, it rises again on the next step, and it sits within
+    `tol_frac` of the observed series' median above the reset level. The
+    tolerance is RELATIVE because TSLS is in seconds and its scale is
+    per-neuron (a 4 Hz cell's median TSLS is ~0.1 s, a 0.05 Hz cell's ~10 s),
+    so no single absolute tolerance serves both.
+
+    `tol_frac` defaults to PRED_EVENT_TOL_FRAC. That value was measured, not
+    guessed: against circular-shift surrogate drivers (6 targets x 3
+    surrogates each, which preserve each driver's own dynamics but destroy
+    its timing relation to the target), the real driver set outscored all
+    three of its own surrogates in 5/6 cases at 0.1, against 2/6 for the
+    exact-zero test this replaces -- i.e. the old test was at chance. Mean
+    real-minus-surrogate separation rose from 0.020 to 0.070. A larger 0.25
+    detects more events but separates worse (4/6, 0.066).
+
+    CAVEAT, so nobody over-reads the default: that calibration is 6 targets
+    and 18 surrogate runs at E=3, Tp=20, not a full sweep, and even at 0.1
+    the surrogate mean is 0.054 -- so f1 alone remains a weak discriminator
+    next to plain `correlation`, which scored 0.130 real vs 0.012 surrogate
+    (6/6) on the same cases. Treat the f1 gate as a floor, not as evidence.
+
+    INPUT: x_pred -- predicted TSLS series. x_true -- the observed series it
+    is being scored against; used only for its scale and reset level.
+    near_zero_threshold -- the observed reset level, normally from
+    infer_near_zero_threshold_from_true_tsls(x_true). tol_frac -- see above;
+    None means PRED_EVENT_TOL_FRAC. drop_threshold -- minimum downward step,
+    as in detect_reset_events_from_tsls.
+
+    OUTPUT: 1D int array of predicted reset-event bin indices.
+    """
+    x = np.asarray(x_pred, dtype=float)
+    if x.size < 2:
+        return np.array([], dtype=int)
+    if tol_frac is None:
+        tol_frac = PRED_EVENT_TOL_FRAC
+    scale = float(np.nanmedian(np.asarray(x_true, dtype=float))) - near_zero_threshold
+    threshold = near_zero_threshold + max(tol_frac * scale, 0.0)
+    drops = np.diff(x, prepend=x[0])
+    is_drop = drops < -drop_threshold
+    # "Stops falling", not "rises": a prediction that saturates and sits flat
+    # at its minimum for several bins is still a reset, and requiring a strict
+    # rise would score it as no event at all. Because the bin must ALSO be a
+    # drop, a flat run fires exactly once -- at the bin it dropped into --
+    # while a monotone decline through the threshold fires nowhere, which is
+    # the behaviour that keeps a drifting trajectory from inventing events.
+    stops_falling = np.append(np.diff(x) >= 0, True)
+    events = np.where(is_drop & (x <= threshold) & stops_falling)[0]
+    return events.astype(int)
+
+
 def local_event_tolerances(event_times,alpha = 0.25,min_tol = 0,max_tol = 2):
     """
     Adaptive tolerance per true event based on local spacing.
@@ -430,7 +506,7 @@ def adaptive_match_events(true_events,pred_events,tolerances):
         "used_pred_mask": used_pred,
     }
 
-def adaptive_event_metrics_from_tsls(x_true,x_pred,near_zero_threshold = None,drop_threshold = 0.0,alpha = 0.25,min_tol = 0,max_tol = 2):
+def adaptive_event_metrics_from_tsls(x_true,x_pred,near_zero_threshold = None,drop_threshold = 0.0,alpha = 0.25,min_tol = 0,max_tol = 2,pred_tol_frac = None):
     """
     Full pipeline:
       1) infer threshold from x_true if not provided
@@ -477,9 +553,11 @@ def adaptive_event_metrics_from_tsls(x_true,x_pred,near_zero_threshold = None,dr
         drop_threshold=drop_threshold,
     )
 
-    pred_events = detect_reset_events_from_tsls(
+    pred_events = detect_reset_events_from_prediction(
         x_pred,
+        x_true,
         near_zero_threshold=near_zero_threshold,
+        tol_frac=pred_tol_frac,
         drop_threshold=drop_threshold,
     )
 
@@ -498,11 +576,23 @@ def adaptive_event_metrics_from_tsls(x_true,x_pred,near_zero_threshold = None,dr
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else np.nan
     recall = tp / (tp + fn) if (tp + fn) > 0 else np.nan
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if np.isfinite(precision) and np.isfinite(recall) and (precision + recall) > 0
-        else 0
-    )
+    if len(true_events) == 0:
+        # Nothing to be right or wrong about: the observed window holds no
+        # reset at all, so event-timing skill is undefined rather than zero.
+        # This used to return 0, which is how 9 real-data passthrough nodes
+        # in job 4799018 scored f1=0.000 against a BIT-IDENTICAL copy of
+        # themselves -- indistinguishable, in the logs, from a node whose
+        # prediction was simply wrong. NaN is also what _score's own
+        # docstring already promises for a degenerate case.
+        f1 = np.nan
+    elif (not np.isfinite(precision) or not np.isfinite(recall)
+            or (precision + recall) <= 0):
+        # Real events existed and the prediction matched none of them. That
+        # is a genuine miss and still scores 0, NOT NaN -- a predictor that
+        # produces nothing must not be excused as "no data".
+        f1 = 0.0
+    else:
+        f1 = 2 * precision * recall / (precision + recall)
 
     #abs_errors = np.array([m["abs_error"] for m in match_result["matches"]], dtype=float)
     #norm_errors = np.array([m["norm_error"] for m in match_result["matches"]], dtype=float)
@@ -786,7 +876,7 @@ def _coincidence_factor(true_events, pred_events, delta, T):
     return min(gamma, 1.0)
 
 
-def _score(obs, preds, kind, gammaDelta=2):
+def _score(obs, preds, kind, gammaDelta=2, predTolFrac=None):
     """Apply the requested metric to aligned obs/preds vectors.
 
     INTUITION: the single dispatch point every prediction-scoring
@@ -832,14 +922,16 @@ def _score(obs, preds, kind, gammaDelta=2):
         return adaptive_event_metrics_from_tsls(
             o, p,
             drop_threshold=0.0, alpha=0.25, min_tol=0, max_tol=2,
+            pred_tol_frac=predTolFrac,
         )['f1']
     if kind == 'gamma':
         thr = infer_near_zero_threshold_from_true_tsls(o)
         true_events = detect_reset_events_from_tsls(
             o, near_zero_threshold=thr, drop_threshold=0.0,
         )
-        pred_events = detect_reset_events_from_tsls(
-            p, near_zero_threshold=thr, drop_threshold=0.0,
+        pred_events = detect_reset_events_from_prediction(
+            p, o, near_zero_threshold=thr, tol_frac=predTolFrac,
+            drop_threshold=0.0,
         )
         return _coincidence_factor(true_events, pred_events,
                                    delta=gammaDelta, T=len(o))
@@ -901,7 +993,7 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
                target, columns, target_measurement, columns_measurement,
                embedded=False, exclusionRadius=0, seed=None,
                gammaDelta=2,
-               show_plot=False, pass_fail=False, pool=None):
+               show_plot=False, pass_fail=False, pool=None, use_gpu=False):
     """CCM with random-library subsampling and pluggable metric.
 
     Parameters
@@ -930,7 +1022,24 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
         a given ``seed`` reproduces bit-identical results either way --
         only wall-clock time changes. ``None`` (default) runs the exact
         same work inline via the builtin ``map``, unchanged from before
-        this parameter existed.
+        this parameter existed. Ignored when ``use_gpu`` actually engages
+        (see below) -- the GPU path replaces the per-cell dispatch this
+        pool would otherwise parallelize with one batched call per
+        libSize, so there is nothing left for threads to split.
+    use_gpu : bool
+        When True AND a CUDA device is visible (``gpu_edm.is_available()``
+        -- see ``scripts/src/gpu_edm.py``), routes the CCM gate's
+        cross-map step through a batched torch/CUDA primitive instead of
+        the per-cell ``_crossmap_predict`` loop: docs/no-kEDM-gpu-
+        optimization-plan.md section 8 has the full design. Reuses the
+        exact same ``rng``-drawn library indices the CPU path would have
+        used (see the "every random draw happens first" note above) --
+        a given ``seed`` reproduces the identical library draws, and
+        ``_score()`` (with its ``f1``/``gamma`` handling) stays on CPU
+        unchanged either way, so only ``_crossmap_predict`` itself is
+        replaced. False (default), or True on a machine with no GPU,
+        runs the exact ``pool``/``map`` path described above -- this
+        never raises for a missing GPU, it silently falls back.
 
     HOW TO USE
     ----------
@@ -1054,10 +1163,87 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
         t2c = _score(obs_rev, preds_rev, columns_measurement, gammaDelta=gammaDelta)
         return t, i, c2t, t2c
 
-    mapper = pool.map if pool is not None else map
-    for t, i, c2t, t2c in mapper(_run_one_cell, tasks):
-        c2t_measurements[t, i] = c2t
-        t2c_measurements[t, i] = t2c
+    # GPU path (docs/no-kEDM-gpu-optimization-plan.md section 8.3): only
+    # attempted at all when use_gpu is truthy, so use_gpu=False (the
+    # default) never even imports gpu_edm -- byte-for-byte the same code
+    # path as before this parameter existed.
+    gpu_ready = False
+    if use_gpu:
+        from gpu_edm import is_available as _gpu_is_available
+        gpu_ready = _gpu_is_available()
+
+    if gpu_ready:
+        from gpu_edm import batched_crossmap_predict
+        import gpu_budget
+
+        # Group the already-drawn tasks by i (libSize index): every task
+        # at a given i has the same fwd library length (min(libSizes[i],
+        # M_fwd)) and the same rev library length (min(libSizes[i],
+        # M_rev)) across every t -- exactly the (B, L) shape the batch
+        # dimension needs. This does NOT touch how lib_idx_fwd/lib_idx_rev
+        # were drawn above, so a given seed reproduces identical library
+        # draws regardless of use_gpu.
+        by_i_fwd = [[] for _ in range(n_L)]
+        by_i_rev = [[] for _ in range(n_L)]
+        for t, i, lib_idx_fwd, lib_idx_rev in tasks:
+            by_i_fwd[i].append((t, lib_idx_fwd))
+            by_i_rev[i].append((t, lib_idx_rev))
+
+        # One reservation for the WHOLE section, not per batched call:
+        # the two (M, M) distance caches below stay alive across every
+        # libSize iteration, so a per-call reserve/release would hand back
+        # budget for memory still being held. See gpu_budget.reserve().
+        est_bytes = gpu_budget.crossmap_bytes(
+            m_rows=max(M_fwd, M_rev),
+            batch=sample,
+            lib_len=min(max(libSizes), max(M_fwd, M_rev)),
+            k_query=k + 1 + 2 * max(0, exclusionRadius),
+        )
+        label = f'proper_ccm {columns}->{target} M={max(M_fwd, M_rev)} B={sample}'
+
+        def _run_gpu_crossmaps():
+            '''The GPU section as one retryable unit. Both full_dist
+            caches are built INSIDE, so a retry after an OOM starts from a
+            clean allocator instead of reusing tensors from the attempt
+            that just failed. Writes into c2t/t2c_measurements are
+            position-indexed and therefore idempotent across a retry.'''
+            # Cached (M, M) pairwise distance matrix, one per direction,
+            # reused across every libSize's batched call within that
+            # direction -- NEVER share this between fwd and rev, they're
+            # different embeddings. See batched_crossmap_predict's own
+            # docstring for why this is the dominant cost this caching
+            # avoids recomputing, and crossmap_bytes() for why holding
+            # both of them is the first term of the memory estimate.
+            full_dist_fwd = None
+            full_dist_rev = None
+            for i in range(n_L):
+                t_fwd = [t for t, _ in by_i_fwd[i]]
+                lib_batch_fwd = np.stack([lib for _, lib in by_i_fwd[i]])
+                preds_fwd, full_dist_fwd = batched_crossmap_predict(
+                    embed_fwd, obs_fwd, lib_batch_fwd, k, exclusionRadius, idx_fwd,
+                    full_dist=full_dist_fwd,
+                )
+                for row, t in zip(preds_fwd, t_fwd):
+                    c2t_measurements[t, i] = _score(
+                        obs_fwd, row, target_measurement, gammaDelta=gammaDelta)
+
+                t_rev = [t for t, _ in by_i_rev[i]]
+                lib_batch_rev = np.stack([lib for _, lib in by_i_rev[i]])
+                preds_rev, full_dist_rev = batched_crossmap_predict(
+                    embed_rev, obs_rev, lib_batch_rev, k, exclusionRadius, idx_rev,
+                    full_dist=full_dist_rev,
+                )
+                for row, t in zip(preds_rev, t_rev):
+                    t2c_measurements[t, i] = _score(
+                        obs_rev, row, columns_measurement, gammaDelta=gammaDelta)
+
+        with gpu_budget.reserve(est_bytes, label=label):
+            gpu_budget.retry_on_oom(_run_gpu_crossmaps, label=label)
+    else:
+        mapper = pool.map if pool is not None else map
+        for t, i, c2t, t2c in mapper(_run_one_cell, tasks):
+            c2t_measurements[t, i] = c2t
+            t2c_measurements[t, i] = t2c
 
     if pass_fail:
         # Quick convergence verdict instead of the full measurement arrays:
@@ -1165,6 +1351,7 @@ def proper_mde(
     pool=None,
     column_delay=None,
     column_observable=None,
+    use_gpu=False,
 ):
     """Forward-stepwise Manifold Dimensional Expansion.
 
@@ -1280,6 +1467,15 @@ def proper_mde(
         for sizing and the pool's lifetime -- see ``run_mde_for_target``
         in tsls-mde-gmn.py for the intended one-pool-per-node-call
         pattern (opened once for this whole call, not once per candidate).
+    use_gpu : bool
+        Threaded straight through to every ``proper_ccm`` call in the CCM
+        gate below -- see that function's own ``use_gpu`` docstring for
+        the full behaviour (transparent CPU fallback when no GPU is
+        visible, reproducible library draws regardless of the flag).
+        Does not affect the ranking stage (``_simplex_metric``), which
+        stays on CPU/pyEDM.Simplex unconditionally -- docs/no-kEDM-gpu-
+        optimization-plan.md section 0 UPDATE 2 found that target loses
+        at production scale on GPU for algorithmic reasons.
     column_delay : dict[str, int] or None
         R21 (docs/review-actions-v1.md): dynamic per-dimension exclusion
         radius. This function has no built-in notion of "delay" attached
@@ -1588,10 +1784,26 @@ def proper_mde(
                     seed=ccmSeed,
                     gammaDelta=gammaDelta,
                     pool=pool,
+                    use_gpu=use_gpu,
                 )
             except Exception as exc:
+                if use_gpu:
+                    # NEVER swallow a GPU memory failure. A candidate
+                    # dropped for want of memory is a MISSING EDGE that
+                    # looks downstream exactly like a measured absence --
+                    # job 4741044 lost 51 of them through this clause and
+                    # still exited into network construction. A real dead
+                    # end ("Maximum libSize 800 exceeds data size 703")
+                    # IS a finding and still falls through to `continue`;
+                    # an OOM is not a finding about anything. The import
+                    # stays inside `if use_gpu` so a CPU-only run still
+                    # never imports torch (see proper_ccm's gpu_ready
+                    # gate for that contract).
+                    from gpu_budget import is_gpu_memory_error
+                    if is_gpu_memory_error(exc):
+                        raise
                 if verbose:
-                    print(f'    {newColumn}: proper_ccm raised {exc}')
+                    print(f'    CCM dead end: {newColumn}: proper_ccm raised {exc}')
                 continue
 
             # Average the t2c direction (target's manifold cross-mapping to
@@ -1713,6 +1925,7 @@ def multi_proper_ccm(
     gammaDelta=2,
     show_plot=False,
     pass_fail=False,
+    use_gpu=False,
 ):
     """CCM with a multi-variable target manifold.
 
@@ -1764,6 +1977,22 @@ def multi_proper_ccm(
     target_select_E : int or None
         Number of columns to randomly draw from the pool to form the
         target embedding. Defaults to E.
+    use_gpu : bool
+        Same contract as ``proper_ccm``'s own ``use_gpu`` (transparent
+        CPU fallback with no GPU, reproducible library draws regardless
+        of the flag, ``_score`` stays on CPU unchanged) -- see that
+        function's docstring for the full behaviour. Two differences
+        specific to this function (docs/no-kEDM-gpu-optimization-plan.md
+        section 9.2): the fwd direction batches across ``sample`` for
+        each ``(libSize, target)`` pair independently (one call per pair,
+        since each target has its own predicted values) rather than one
+        call per libSize; the rev direction is only GPU-batched when
+        ``target_select_E is None`` (the full joint pool, constant across
+        every sample -- the precondition the cached distance-matrix trick
+        needs), and stays on the CPU path otherwise (an int
+        ``target_select_E`` redraws the target embedding at random every
+        sample, so there is no single embedding to cache a distance
+        matrix against).
     Other parameters: same as ``proper_ccm``.
 
     HOW TO USE
@@ -1779,6 +2008,10 @@ def multi_proper_ccm(
     """
     if isinstance(targets, str):
         targets = [targets]
+    if target_aggregate not in ('mean', 'min'):
+        raise ValueError(
+            f'target_aggregate must be mean/min, got {target_aggregate!r}'
+        )
     if target_pool_depth is None:
         target_pool_depth = E
     # target_select_E=None  -> use the FULL joint pool deterministically.
@@ -1874,41 +2107,41 @@ def multi_proper_ccm(
 
     M_fwd = embed_fwd.shape[0]
 
+    gpu_ready = False
+    if use_gpu:
+        from gpu_edm import is_available as _gpu_is_available
+        gpu_ready = _gpu_is_available()
+    if gpu_ready:
+        from gpu_edm import batched_crossmap_predict
+        import gpu_budget
+
+    # Draw every (i, t[, target]) library index SEQUENTIALLY, in EXACTLY
+    # the order and from the exact same per-i rng_fwd/rng_rev Generators
+    # the original inline (draw-then-compute-immediately) loop used --
+    # this is what keeps a given seed reproducible bit-for-bit regardless
+    # of use_gpu (docs/no-kEDM-gpu-optimization-plan.md section 9.2 item
+    # 1: this function's rng draws are NOT collected up front the way
+    # proper_ccm's are, so getting this order wrong is the likeliest way
+    # to silently break reproducibility). Only the draw is sequential; the
+    # expensive part (KDTree build+query, or the batched GPU primitive)
+    # happens in the separate passes below.
+    fwd_draws = {i: {tname: [] for tname in targets} for i in range(n_L)}
+    rev_draws = {i: [] for i in range(n_L)}  # each entry: (t, lib_idx_rev, col_idx)
+
     for i, L in enumerate(libSizes):
         rng_fwd = np.random.default_rng(child_seqs[2 * i])
         rng_rev = np.random.default_rng(child_seqs[2 * i + 1])
         for t in range(sample):
-            # ---- fwd: predict each target with source embedding ----
-            per_target = []
+            # _crossmap_predict no longer draws its own library -- see
+            # that function's own docstring -- so the draw that used to
+            # happen inside it happens here, in the same per-target spot
+            # in the loop, preserving this function's existing rng_fwd
+            # consumption order/count exactly.
             for tname in targets:
-                # _crossmap_predict no longer draws its own library --
-                # see that function's own docstring -- so the draw that
-                # used to happen inside it now happens here, in the same
-                # per-target spot in the loop, preserving this function's
-                # existing rng_fwd consumption order/count exactly.
                 lib_idx_fwd = rng_fwd.choice(M_fwd, size=min(L, M_fwd), replace=False)
                 lib_idx_fwd.sort()
-                preds = _crossmap_predict(
-                    embed_fwd, obs_fwd_dict[tname], lib_idx_fwd, k_fwd,
-                    exclusionRadius=exclusionRadius,
-                    time_indices=idx_fwd,
-                )
-                per_target.append(_score(
-                    obs_fwd_dict[tname], preds, target_measurement,
-                    gammaDelta=gammaDelta,
-                ))
-            arr = np.asarray(per_target, dtype=float)
-            if target_aggregate == 'mean':
-                c2t_measurements[t, i] = np.nanmean(arr)
-            elif target_aggregate == 'min':
-                c2t_measurements[t, i] = np.nanmin(arr)
-            else:
-                raise ValueError(
-                    f'target_aggregate must be mean/min, got '
-                    f'{target_aggregate!r}'
-                )
+                fwd_draws[i][tname].append((t, lib_idx_fwd))
 
-            # ---- rev: target embedding ---------------------------------
             # full pool (deterministic) or lag-0 + random delayed draws.
             if use_full_pool:
                 col_idx = full_pool_idx
@@ -1924,15 +2157,106 @@ def multi_proper_ccm(
                 target_embed.shape[0], size=min(L, target_embed.shape[0]), replace=False,
             )
             lib_idx_rev.sort()
-            preds_rev = _crossmap_predict(
-                target_embed, obs_rev, lib_idx_rev, k_rev,
-                exclusionRadius=exclusionRadius,
-                time_indices=idx_rev,
-            )
-            t2c_measurements[t, i] = _score(
-                obs_rev, preds_rev, columns_measurement,
-                gammaDelta=gammaDelta,
-            )
+            rev_draws[i].append((t, lib_idx_rev, col_idx))
+
+    # ---- fwd: predict each target from the source embedding, score each
+    # target separately, aggregate over SCORES (not predictions) via
+    # target_aggregate -- section 9.2 item 2. embed_fwd never changes
+    # across this whole call (unaffected by use_full_pool), so a single
+    # cached (M_fwd, M_fwd) distance matrix is reused across every
+    # (libSize, target) group when GPU-batched; each group batches across
+    # `sample` for one (i, tname) pair, since each target has its own
+    # predicted values (`batched_crossmap_predict` takes one pred_vals
+    # array per call, not one per batch row).
+    fwd_scores = {i: {tname: [None] * sample for tname in targets} for i in range(n_L)}
+
+    if gpu_ready:
+        est_bytes = gpu_budget.crossmap_bytes(
+            m_rows=M_fwd, batch=sample,
+            lib_len=min(max(libSizes), M_fwd),
+            k_query=k_fwd + 1 + 2 * max(0, exclusionRadius), dist_matrices=1)
+        label = f'multi_proper_ccm fwd M={M_fwd} B={sample}'
+
+        def _run_gpu_fwd():
+            # Built inside, so an OOM retry starts from a clean allocator
+            # rather than reusing a tensor from the failed attempt.
+            full_dist_fwd = None
+            for i in range(n_L):
+                for tname in targets:
+                    group = fwd_draws[i][tname]
+                    t_order = [t for t, _ in group]
+                    lib_batch = np.stack([lib for _, lib in group])
+                    preds, full_dist_fwd = batched_crossmap_predict(
+                        embed_fwd, obs_fwd_dict[tname], lib_batch, k_fwd, exclusionRadius, idx_fwd,
+                        full_dist=full_dist_fwd,
+                    )
+                    for row, t in zip(preds, t_order):
+                        fwd_scores[i][tname][t] = _score(
+                            obs_fwd_dict[tname], row, target_measurement, gammaDelta=gammaDelta)
+
+        with gpu_budget.reserve(est_bytes, label=label):
+            gpu_budget.retry_on_oom(_run_gpu_fwd, label=label)
+    else:
+        for i in range(n_L):
+            for tname in targets:
+                for t, lib_idx_fwd in fwd_draws[i][tname]:
+                    preds = _crossmap_predict(
+                        embed_fwd, obs_fwd_dict[tname], lib_idx_fwd, k_fwd,
+                        exclusionRadius=exclusionRadius, time_indices=idx_fwd,
+                    )
+                    fwd_scores[i][tname][t] = _score(
+                        obs_fwd_dict[tname], preds, target_measurement, gammaDelta=gammaDelta)
+
+    for i in range(n_L):
+        for t in range(sample):
+            arr = np.asarray([fwd_scores[i][tname][t] for tname in targets], dtype=float)
+            if target_aggregate == 'mean':
+                c2t_measurements[t, i] = np.nanmean(arr)
+            else:  # 'min' -- only other value target_aggregate can hold, validated at entry
+                c2t_measurements[t, i] = np.nanmin(arr)
+
+    # ---- rev: target embedding cross-maps columns. GPU-batched only when
+    # use_full_pool -- the embedding is then constant across every sample,
+    # the same precondition the cached-distance-matrix trick needs
+    # (section 9.2 item 3). When False, the embedding is redrawn at
+    # random per (i, t), so this stays on the CPU path -- an acceptable
+    # first cut per that section, not yet measured as a bottleneck worth
+    # the extra complexity (mirrors the "don't add a batching tier before
+    # measuring" lesson from section 7c's H1 result).
+    if gpu_ready and use_full_pool:
+        target_embed_full = np.ascontiguousarray(pool_valid[:, full_pool_idx])
+        est_bytes = gpu_budget.crossmap_bytes(
+            m_rows=target_embed_full.shape[0], batch=sample,
+            lib_len=min(max(libSizes), target_embed_full.shape[0]),
+            k_query=k_rev + 1 + 2 * max(0, exclusionRadius), dist_matrices=1)
+        label = f'multi_proper_ccm rev M={target_embed_full.shape[0]} B={sample}'
+
+        def _run_gpu_rev():
+            full_dist_rev = None
+            for i in range(n_L):
+                group = rev_draws[i]
+                t_order = [t for t, _, _ in group]
+                lib_batch = np.stack([lib for _, lib, _ in group])
+                preds, full_dist_rev = batched_crossmap_predict(
+                    target_embed_full, obs_rev, lib_batch, k_rev, exclusionRadius, idx_rev,
+                    full_dist=full_dist_rev,
+                )
+                for row, t in zip(preds, t_order):
+                    t2c_measurements[t, i] = _score(
+                        obs_rev, row, columns_measurement, gammaDelta=gammaDelta)
+
+        with gpu_budget.reserve(est_bytes, label=label):
+            gpu_budget.retry_on_oom(_run_gpu_rev, label=label)
+    else:
+        for i in range(n_L):
+            for t, lib_idx_rev, col_idx in rev_draws[i]:
+                target_embed = np.ascontiguousarray(pool_valid[:, col_idx])
+                preds_rev = _crossmap_predict(
+                    target_embed, obs_rev, lib_idx_rev, k_rev,
+                    exclusionRadius=exclusionRadius, time_indices=idx_rev,
+                )
+                t2c_measurements[t, i] = _score(
+                    obs_rev, preds_rev, columns_measurement, gammaDelta=gammaDelta)
 
     if pass_fail:
         from sklearn.linear_model import LinearRegression
@@ -2104,6 +2428,7 @@ def multi_proper_mde(
     noTime=True,
     verbose=False,
     pool=None,
+    use_gpu=False,
 ):
     """Multi-target MDE: forward-stepwise selection of neurons that
     jointly predict (and causally drive) all variables in ``targets``.
@@ -2152,6 +2477,12 @@ def multi_proper_mde(
         ``multi_proper_embed_dimension()``'s own sweep when ``E <= 0``
         (each E in that sweep is independent -- same convention as
         ``proper_mde``'s own ``pool``). Unused when ``E > 0``.
+    use_gpu : bool
+        Threaded straight through to every ``multi_proper_ccm`` call in
+        the CCM gate below -- see that function's own ``use_gpu``
+        docstring. Does not affect the ranking stage
+        (``_simplex_multi_metric``), which stays on CPU/pyEDM.Simplex
+        unconditionally, same as ``proper_mde``'s own ``use_gpu``.
     Other parameters: same meaning as in ``proper_mde``.
 
     INTUITION (plain-language)
@@ -2323,10 +2654,26 @@ def multi_proper_mde(
                     exclusionRadius=exclusionRadius,
                     seed=ccmSeed,
                     gammaDelta=gammaDelta,
+                    use_gpu=use_gpu,
                 )
             except Exception as exc:
+                if use_gpu:
+                    # NEVER swallow a GPU memory failure. A candidate
+                    # dropped for want of memory is a MISSING EDGE that
+                    # looks downstream exactly like a measured absence --
+                    # job 4741044 lost 51 of them through this clause and
+                    # still exited into network construction. A real dead
+                    # end ("Maximum libSize 800 exceeds data size 703")
+                    # IS a finding and still falls through to `continue`;
+                    # an OOM is not a finding about anything. The import
+                    # stays inside `if use_gpu` so a CPU-only run still
+                    # never imports torch (see proper_ccm's gpu_ready
+                    # gate for that contract).
+                    from gpu_budget import is_gpu_memory_error
+                    if is_gpu_memory_error(exc):
+                        raise
                 if verbose:
-                    print(f'    {newColumn}: multi_proper_ccm raised {exc}')
+                    print(f'    CCM dead end: {newColumn}: multi_proper_ccm raised {exc}')
                 continue
 
             ccmVals = np.nan_to_num(np.nanmean(t2c, axis=0))
