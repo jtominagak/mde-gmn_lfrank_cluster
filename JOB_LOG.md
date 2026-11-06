@@ -5,6 +5,179 @@ submissions (see scripts/batch/submit.sh), newest entry first.
 
 <!-- new entries inserted below this line -->
 
+## Job 4799407
+
+Generated: 2026-11-06T15:13:05+09:00
+
+Git commit at submission: `a0eb44b` (clean vs. HEAD)
+
+Compared against: **job_4799404**
+
+### Parameter changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Does adding delayed observables improve the network?** Identical to
+job_4799404 in every respect except the lag set, so the pair is a clean
+two-point test of that one question. Both carry the event-metric fix.
+
+**The lag set: `-1, -2, -4` rows = 25, 50, 100 ms at 40 Hz.** Three lags, as
+asked, spaced by DOUBLING rather than uniformly: a uniform stride spends all
+three columns on one timescale, while 25/50/100 ms spans monosynaptic through
+polysynaptic and short behavioural delays for the same candidate-pool cost.
+Set via `DELAY_SOURCE=explicit`, which pins every value (`derive_lag_set()`
+strips any 0 entry on that path, so the set is exactly these three).
+
+**Cost, and why it is affordable this time.** Under `union` the lagged columns
+compete in ONE pool with the real ones, so each node's pool is (1 + 3) = 4x
+job_4799404's. That width is what made job_4769437 (union + 4 lags) unaffordable
+and OOM at 22h. The headroom is there now: job_4799018 peaked at 31.8 GB of the
+240 GB requested and finished in 8h54m, against a 6-day limit. If this one does
+die, the sbatch's own advice applies -- lower `--cpus-per-task` (the worker
+count), not `MDE_D`.
+
+**The metric fix.** Both jobs run the fix committed in `5d8300b` / `de52bee`.
+An observed TSLS series resets to exactly 0.0, so the event decoder's
+"post-drop value <= threshold" test resolved to `prediction <= 0.0` -- a
+measure-zero condition for a continuous regressor. In job 4799018 that made
+38 of 39 simulated nodes score f1 = 0 no matter how good they were (the one
+exception only because its trajectory dipped to -0.017), and on the selection
+side it fired only where a Simplex neighbourhood was all-zero: 25 of 5875
+predictions for `CA1_44_tsls`, of which only 5 of the resulting 22 events
+coincided with a real reset.
+
+**Why that matters for what these jobs are measuring.** Against circular-shift
+surrogate drivers (6 targets x 3 surrogates), the real driver set beat all of
+its own surrogates in only 2 of 6 cases -- the f1 gate was at chance, so the
+neuronal half of job 4799018's network was selected on evidence that cannot be
+distinguished from noise. After the fix: 5 of 6, and mean real-minus-surrogate
+separation 0.020 -> 0.070. The f1 gate also goes 0.1 -> 0.15, because the same
+null put surrogate f1 as high as 0.097 -- 0.1 sat exactly on the noise floor.
+
+**What is still not fixed, so nobody over-reads these networks.** On the same
+cases plain `correlation` separated real from surrogate far better than the
+repaired f1 (0.130 vs 0.012, beating every surrogate 6/6, against f1's 0.124
+vs 0.054 at 5/6). f1 remains the weaker scorer for neuronal nodes; the gate is
+a floor, not evidence. And the calibration behind the 0.1 tolerance and the
+0.15 gate is 6 targets / 18 surrogate runs at E=3, Tp=20 -- not a full sweep.
+
+**Everything recomputes.** `cleaned_helper_functions.py` is content-hashed into
+the per-node fingerprint (`caching.py:89`), so no stage reuses anything from
+job 4799018.
+
+| Knob | Value | Via |
+|---|---|---|
+| `DELAY_SOURCE` | `explicit` | `--export` |
+| `DELAY_SET` | **`-1,-2,-4`** (3 lags: 25/50/100 ms) | `--export` |
+| `REGION_CHANNEL_CAP` | `999` (all 468) | `--export` |
+| `PARALLEL_MDE_SCOPE` | `union` | `--export` |
+| `NESTED_M` | `0` = uncapped | file |
+| `EMBED_DIM_RHO_MIN_F1` / `CROSS_MAP_RHO_MIN_F1` | **0.15** | file, RAISED from 0.1 |
+| `MDE_D` | 10 | file (half production) |
+
+**What would count as lags helping.** Not a bigger network -- a better one:
+more nodes with discovered drivers (a smaller external-input count than
+job_4799404's), and higher generative fidelity on the nodes both jobs share. A
+denser network with no fidelity gain means the extra columns are buying
+overfit, which is exactly what the raised gate is meant to make visible.
+
+---
+
+
+## Job 4799404
+
+Generated: 2026-11-06T15:12:58+09:00
+
+Git commit at submission: `a0eb44b` (clean vs. HEAD)
+
+Compared against: **job_4799018**
+
+### Parameter changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch)
+
+| Parameter | job_4799018 | job_4799404 |
+|---|---|---|
+| CROSS_MAP_RHO_MIN_F1 | 0.1 | 0.15 |
+| EMBED_DIM_RHO_MIN_F1 | 0.1 | 0.15 |
+
+### Batch script design changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Job 4799018 again, with the event metric repaired.** Every knob matches
+job_4799018 -- `union` scope, an EMPTY lag set, all 468 channels, uncapped
+`NESTED_M` -- so this isolates the metric fix from everything else. It is the
+control half of a pair with job_4799407, which adds lags and changes nothing
+else.
+
+**The metric fix.** Both jobs run the fix committed in `5d8300b` / `de52bee`.
+An observed TSLS series resets to exactly 0.0, so the event decoder's
+"post-drop value <= threshold" test resolved to `prediction <= 0.0` -- a
+measure-zero condition for a continuous regressor. In job 4799018 that made
+38 of 39 simulated nodes score f1 = 0 no matter how good they were (the one
+exception only because its trajectory dipped to -0.017), and on the selection
+side it fired only where a Simplex neighbourhood was all-zero: 25 of 5875
+predictions for `CA1_44_tsls`, of which only 5 of the resulting 22 events
+coincided with a real reset.
+
+**Why that matters for what these jobs are measuring.** Against circular-shift
+surrogate drivers (6 targets x 3 surrogates), the real driver set beat all of
+its own surrogates in only 2 of 6 cases -- the f1 gate was at chance, so the
+neuronal half of job 4799018's network was selected on evidence that cannot be
+distinguished from noise. After the fix: 5 of 6, and mean real-minus-surrogate
+separation 0.020 -> 0.070. The f1 gate also goes 0.1 -> 0.15, because the same
+null put surrogate f1 as high as 0.097 -- 0.1 sat exactly on the noise floor.
+
+**What is still not fixed, so nobody over-reads these networks.** On the same
+cases plain `correlation` separated real from surrogate far better than the
+repaired f1 (0.130 vs 0.012, beating every surrogate 6/6, against f1's 0.124
+vs 0.054 at 5/6). f1 remains the weaker scorer for neuronal nodes; the gate is
+a floor, not evidence. And the calibration behind the 0.1 tolerance and the
+0.15 gate is 6 targets / 18 surrogate runs at E=3, Tp=20 -- not a full sweep.
+
+**Everything recomputes.** `cleaned_helper_functions.py` is content-hashed into
+the per-node fingerprint (`caching.py:89`), so no stage reuses anything from
+job 4799018.
+
+| Knob | Value | Via |
+|---|---|---|
+| `DELAY_SOURCE` | `explicit` | `--export` |
+| `DELAY_SET` | `0` (-> EMPTY lag set) | `--export` |
+| `REGION_CHANNEL_CAP` | `999` (all 468) | `--export` |
+| `PARALLEL_MDE_SCOPE` | `union` | `--export` |
+| `NESTED_M` | `0` = uncapped | file |
+| `EMBED_DIM_RHO_MIN_F1` / `CROSS_MAP_RHO_MIN_F1` | **0.15** | file, RAISED from 0.1 |
+| `EMBED_DIM_RHO_MIN` / `CROSS_MAP_RHO_MIN` | 0.2 | file, behavioural targets |
+| `MDE_D` | 10 | file (half production) |
+
+**Read it against job_4799018.** The comparison that matters is not "are the
+scores higher" -- a looser decoder guarantees that -- but whether the NETWORK
+changed: how many edges survive a gate that noise can no longer clear, and
+whether the interior/external split (41/53 in job_4799018) moves. Expect
+FEWER edges, not more. Also: the generative fidelity table should stop being a
+column of 0.0000, and the per-node table should lose its 53 passthrough
+artefact rows (44 of them at a guaranteed f1=1.000).
+
+---
+
+
 ## Job 4799018
 
 Generated: 2026-11-05T22:45:53+09:00
