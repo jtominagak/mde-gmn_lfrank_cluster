@@ -236,8 +236,16 @@ CROSS_MAP_RHO_MIN=0.2         # default: 0.2, cross-map skill gate -- CORRELATIO
 # std at ~0.069 at MIN_PRED_EVENTS=20, so 0.1 is ~1.4 sigma at the event
 # floor (std falls to ~0.028 by 160 events; real windows in job 4774136 had
 # 67-188). Raise these first if admitted links stop replicating.
-EMBED_DIM_RHO_MIN_F1=0.1      # default: 0.1, embedding-dimension gate for f1-scored (neuronal) nodes
-CROSS_MAP_RHO_MIN_F1=0.1      # default: 0.1, cross-map gate for f1-scored (neuronal) nodes
+EMBED_DIM_RHO_MIN_F1=0.15     # default: 0.15, embedding-dimension gate for f1-scored (neuronal) nodes -- RAISED from 0.1 (see below)
+CROSS_MAP_RHO_MIN_F1=0.15     # default: 0.15, cross-map gate for f1-scored (neuronal) nodes -- RAISED from 0.1 (see below)
+# RAISED 0.1 -> 0.15 (2026-11-06). Job 4799018 ran at 0.1, which turned out to
+# sit exactly on the noise floor: against circular-shift surrogate drivers,
+# f1 for SURROGATE drivers averaged 0.054 and reached 0.097, and the real
+# driver set beat all three of its own surrogates in only 2 of 6 cases. 0.15
+# is the lowest round value above every surrogate score observed. The same
+# calibration found plain `correlation` separates real from surrogate far
+# better than f1 does (0.130 vs 0.012, 6/6) -- so if neuronal links still do
+# not replicate, change the metric, not this number. See config.py.
 # CCM pre-filter: a cheap CCM(observable -> target) skill check run once
 # per target group (see GMN_MODE above), right before either nested-MDE
 # stage -- shrinks REGION_CHANNEL_CAP's candidate pool down to only

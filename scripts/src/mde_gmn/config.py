@@ -161,16 +161,31 @@ def load_config():
     # above 0.69). A single 0.2 bar therefore demanded ~38% of achievable
     # skill from a neuron and 20% from a behavioural target.
     #
-    # 0.1 restores parity in those terms (0.20 x 0.52 ~ 0.104), and is the
-    # looser gate for neuronal data that the asymmetry calls for. It is not
-    # free: r9 puts the f1 estimator's own std at ~0.069 at MIN_PRED_EVENTS=20,
-    # so 0.1 is only ~1.4 sigma there -- it falls to ~0.052 at 40 events and
-    # ~0.028 at 160, and real candidate windows in job 4774136 carried 67-188
-    # events, so the floor is the worst case rather than the typical one.
-    # Raise this first if the network starts admitting links that do not
-    # replicate.
-    cfg['EMBED_DIM_RHO_MIN_F1'] = float(os.environ.get('TSLS_MDE_GMN_EMBED_DIM_RHO_MIN_F1', 0.1))
-    cfg['CROSS_MAP_RHO_MIN_F1'] = float(os.environ.get('TSLS_MDE_GMN_CROSS_MAP_RHO_MIN_F1', 0.1))
+    # 0.1 restored parity in those terms (0.20 x 0.52 ~ 0.104) and was the
+    # value job 4799018 ran. It was TOO LOW, and the ceiling argument above is
+    # the wrong basis for the floor: it says what a perfect predictor scores,
+    # not what a worthless one does. The latter needs a null, which has since
+    # been measured. Against circular-shift surrogate drivers (6 targets x 3
+    # surrogates, E=3, Tp=20 -- see detect_reset_events_from_prediction()),
+    # f1 for SURROGATE drivers averaged 0.054 and reached 0.097. A 0.1 gate
+    # therefore sat exactly on the noise floor: a surrogate cleared it about
+    # as often as a real driver, and in job 4799018 the real driver set beat
+    # all three of its own surrogates in only 2 of 6 cases.
+    #
+    # 0.15 is the lowest round value above every surrogate score observed
+    # (max 0.097), with margin. It is still inside the f1 ceiling budget
+    # (0.15 / 0.52 ~ 29% of achievable skill, against 20% for a behavioural
+    # target) and still above the estimator's own noise (r9 puts the f1 std at
+    # ~0.069 at MIN_PRED_EVENTS=20, ~0.052 at 40, ~0.028 at 160; real
+    # candidate windows in job 4774136 carried 67-188 events).
+    #
+    # THE REAL LIMITATION IS THE METRIC, NOT THIS NUMBER. On the same
+    # surrogate cases plain `correlation` scored 0.130 real vs 0.012 surrogate
+    # and beat every surrogate 6/6, against f1's 0.124 vs 0.054 at 5/6. If
+    # neuronal links keep failing to replicate, the next move is to score
+    # neurons on something other than f1 alone -- not to keep tuning this.
+    cfg['EMBED_DIM_RHO_MIN_F1'] = float(os.environ.get('TSLS_MDE_GMN_EMBED_DIM_RHO_MIN_F1', 0.15))
+    cfg['CROSS_MAP_RHO_MIN_F1'] = float(os.environ.get('TSLS_MDE_GMN_CROSS_MAP_RHO_MIN_F1', 0.15))
     # What actually travels to the MDE calls: _rho_min_for_metric() picks the
     # entry matching the node's own metric, 'default' for anything else.
     cfg['EMBED_DIM_RHO_MIN_BY_METRIC'] = {'default': cfg['EMBED_DIM_RHO_MIN'],

@@ -259,6 +259,82 @@ def detect_reset_events_from_tsls(x,near_zero_threshold,drop_threshold = 0.0):
     return events.astype(int)
 
 
+# Default prediction-side event tolerance, as a fraction of the observed
+# series' own median above the reset level. Chosen from a circular-shift
+# surrogate calibration -- see detect_reset_events_from_prediction().
+PRED_EVENT_TOL_FRAC = 0.1
+
+
+def detect_reset_events_from_prediction(x_pred, x_true, near_zero_threshold,
+                                        tol_frac=None, drop_threshold=0.0):
+    """Decode reset events from a CONTINUOUS *predicted* TSLS series.
+
+    WHY THIS IS NOT detect_reset_events_from_tsls: that function requires
+    the post-drop value to be <= near_zero_threshold, which is calibrated on
+    the OBSERVED series -- where a reset lands on exactly 0.0, so
+    infer_near_zero_threshold_from_true_tsls returns exactly 0.0 (verified
+    for all 92 channels of J1620210605 epoch 8, in every window tried).
+    Applied to a prediction, that demands the predicted value be <= 0.0
+    exactly, which a continuous regressor satisfies with probability ~0.
+    In job 4799018, 38 of 39 simulated nodes produced ZERO predicted events
+    and so scored f1 = 0 no matter how good the prediction was; the single
+    exception scored nonzero only because its trajectory happened to dip to
+    -0.017. On the selection side the same test fires only where a Simplex
+    neighbourhood is all-zero, and only 5 of 22 such hits on CA1_44_tsls
+    coincided with a real reset -- so the surviving signal was mostly
+    coincidence.
+
+    A predicted reset is instead "a local minimum close to the reset level":
+    the series just fell, it rises again on the next step, and it sits within
+    `tol_frac` of the observed series' median above the reset level. The
+    tolerance is RELATIVE because TSLS is in seconds and its scale is
+    per-neuron (a 4 Hz cell's median TSLS is ~0.1 s, a 0.05 Hz cell's ~10 s),
+    so no single absolute tolerance serves both.
+
+    `tol_frac` defaults to PRED_EVENT_TOL_FRAC. That value was measured, not
+    guessed: against circular-shift surrogate drivers (6 targets x 3
+    surrogates each, which preserve each driver's own dynamics but destroy
+    its timing relation to the target), the real driver set outscored all
+    three of its own surrogates in 5/6 cases at 0.1, against 2/6 for the
+    exact-zero test this replaces -- i.e. the old test was at chance. Mean
+    real-minus-surrogate separation rose from 0.020 to 0.070. A larger 0.25
+    detects more events but separates worse (4/6, 0.066).
+
+    CAVEAT, so nobody over-reads the default: that calibration is 6 targets
+    and 18 surrogate runs at E=3, Tp=20, not a full sweep, and even at 0.1
+    the surrogate mean is 0.054 -- so f1 alone remains a weak discriminator
+    next to plain `correlation`, which scored 0.130 real vs 0.012 surrogate
+    (6/6) on the same cases. Treat the f1 gate as a floor, not as evidence.
+
+    INPUT: x_pred -- predicted TSLS series. x_true -- the observed series it
+    is being scored against; used only for its scale and reset level.
+    near_zero_threshold -- the observed reset level, normally from
+    infer_near_zero_threshold_from_true_tsls(x_true). tol_frac -- see above;
+    None means PRED_EVENT_TOL_FRAC. drop_threshold -- minimum downward step,
+    as in detect_reset_events_from_tsls.
+
+    OUTPUT: 1D int array of predicted reset-event bin indices.
+    """
+    x = np.asarray(x_pred, dtype=float)
+    if x.size < 2:
+        return np.array([], dtype=int)
+    if tol_frac is None:
+        tol_frac = PRED_EVENT_TOL_FRAC
+    scale = float(np.nanmedian(np.asarray(x_true, dtype=float))) - near_zero_threshold
+    threshold = near_zero_threshold + max(tol_frac * scale, 0.0)
+    drops = np.diff(x, prepend=x[0])
+    is_drop = drops < -drop_threshold
+    # "Stops falling", not "rises": a prediction that saturates and sits flat
+    # at its minimum for several bins is still a reset, and requiring a strict
+    # rise would score it as no event at all. Because the bin must ALSO be a
+    # drop, a flat run fires exactly once -- at the bin it dropped into --
+    # while a monotone decline through the threshold fires nowhere, which is
+    # the behaviour that keeps a drifting trajectory from inventing events.
+    stops_falling = np.append(np.diff(x) >= 0, True)
+    events = np.where(is_drop & (x <= threshold) & stops_falling)[0]
+    return events.astype(int)
+
+
 def local_event_tolerances(event_times,alpha = 0.25,min_tol = 0,max_tol = 2):
     """
     Adaptive tolerance per true event based on local spacing.
@@ -390,7 +466,7 @@ def adaptive_match_events(true_events,pred_events,tolerances):
         "used_pred_mask": used_pred,
     }
 
-def adaptive_event_metrics_from_tsls(x_true,x_pred,near_zero_threshold = None,drop_threshold = 0.0,alpha = 0.25,min_tol = 0,max_tol = 2):
+def adaptive_event_metrics_from_tsls(x_true,x_pred,near_zero_threshold = None,drop_threshold = 0.0,alpha = 0.25,min_tol = 0,max_tol = 2,pred_tol_frac = None):
     """
     Full pipeline:
       1) infer threshold from x_true if not provided
@@ -437,9 +513,11 @@ def adaptive_event_metrics_from_tsls(x_true,x_pred,near_zero_threshold = None,dr
         drop_threshold=drop_threshold,
     )
 
-    pred_events = detect_reset_events_from_tsls(
+    pred_events = detect_reset_events_from_prediction(
         x_pred,
+        x_true,
         near_zero_threshold=near_zero_threshold,
+        tol_frac=pred_tol_frac,
         drop_threshold=drop_threshold,
     )
 
@@ -458,11 +536,23 @@ def adaptive_event_metrics_from_tsls(x_true,x_pred,near_zero_threshold = None,dr
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else np.nan
     recall = tp / (tp + fn) if (tp + fn) > 0 else np.nan
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if np.isfinite(precision) and np.isfinite(recall) and (precision + recall) > 0
-        else 0
-    )
+    if len(true_events) == 0:
+        # Nothing to be right or wrong about: the observed window holds no
+        # reset at all, so event-timing skill is undefined rather than zero.
+        # This used to return 0, which is how 9 real-data passthrough nodes
+        # in job 4799018 scored f1=0.000 against a BIT-IDENTICAL copy of
+        # themselves -- indistinguishable, in the logs, from a node whose
+        # prediction was simply wrong. NaN is also what _score's own
+        # docstring already promises for a degenerate case.
+        f1 = np.nan
+    elif (not np.isfinite(precision) or not np.isfinite(recall)
+            or (precision + recall) <= 0):
+        # Real events existed and the prediction matched none of them. That
+        # is a genuine miss and still scores 0, NOT NaN -- a predictor that
+        # produces nothing must not be excused as "no data".
+        f1 = 0.0
+    else:
+        f1 = 2 * precision * recall / (precision + recall)
 
     #abs_errors = np.array([m["abs_error"] for m in match_result["matches"]], dtype=float)
     #norm_errors = np.array([m["norm_error"] for m in match_result["matches"]], dtype=float)
@@ -776,7 +866,7 @@ def _coincidence_factor(true_events, pred_events, delta, T):
     return min(gamma, 1.0)
 
 
-def _score(obs, preds, kind, gammaDelta=2):
+def _score(obs, preds, kind, gammaDelta=2, predTolFrac=None):
     """Apply the requested metric to aligned obs/preds vectors.
 
     INTUITION: the single dispatch point every prediction-scoring
@@ -822,14 +912,16 @@ def _score(obs, preds, kind, gammaDelta=2):
         return adaptive_event_metrics_from_tsls(
             o, p,
             drop_threshold=0.0, alpha=0.25, min_tol=0, max_tol=2,
+            pred_tol_frac=predTolFrac,
         )['f1']
     if kind == 'gamma':
         thr = infer_near_zero_threshold_from_true_tsls(o)
         true_events = detect_reset_events_from_tsls(
             o, near_zero_threshold=thr, drop_threshold=0.0,
         )
-        pred_events = detect_reset_events_from_tsls(
-            p, near_zero_threshold=thr, drop_threshold=0.0,
+        pred_events = detect_reset_events_from_prediction(
+            p, o, near_zero_threshold=thr, tol_frac=predTolFrac,
+            drop_threshold=0.0,
         )
         return _coincidence_factor(true_events, pred_events,
                                    delta=gammaDelta, T=len(o))

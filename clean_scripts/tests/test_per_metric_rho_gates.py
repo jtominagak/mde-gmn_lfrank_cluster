@@ -139,9 +139,12 @@ def test_config_builds_the_mapping(ns):
     scratch.mkdir(parents=True, exist_ok=True)
     os.environ['TSLS_MDE_GMN_RESULTS_DIR'] = str(scratch)
     cfg = ns.load_config()
-    assert cfg['EMBED_DIM_RHO_MIN_BY_METRIC'] == {'default': 0.2, 'f1': 0.1}, \
+    # 0.15, not 0.1: raised 2026-11-06 once a circular-shift surrogate null
+    # showed surrogate drivers reaching f1=0.097, so a 0.1 gate sat on the
+    # noise floor. See config.py's EMBED_DIM_RHO_MIN_F1 comment.
+    assert cfg['EMBED_DIM_RHO_MIN_BY_METRIC'] == {'default': 0.2, 'f1': 0.15}, \
         cfg['EMBED_DIM_RHO_MIN_BY_METRIC']
-    assert cfg['CROSS_MAP_RHO_MIN_BY_METRIC'] == {'default': 0.2, 'f1': 0.1}, \
+    assert cfg['CROSS_MAP_RHO_MIN_BY_METRIC'] == {'default': 0.2, 'f1': 0.15}, \
         cfg['CROSS_MAP_RHO_MIN_BY_METRIC']
     os.environ['TSLS_MDE_GMN_CROSS_MAP_RHO_MIN_F1'] = '0.05'
     try:

@@ -5,6 +5,121 @@ submissions (see scripts/batch/submit.sh), newest entry first.
 
 <!-- new entries inserted below this line -->
 
+## Job 4799018
+
+Generated: 2026-11-05T22:45:53+09:00
+
+Git commit at submission: `6d01f02` (clean vs. HEAD)
+
+Compared against: **job_4774136**
+
+### Parameter changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch)
+
+| Parameter | job_4774136 | job_4799018 |
+|---|---|---|
+| CROSS_MAP_RHO_MIN_F1 | _(unset)_ | 0.1 |
+| EMBED_DIM_RHO_MIN_F1 | _(unset)_ | 0.1 |
+| NESTED_M | 1 | ${NESTED_M:-0} |
+
+### Batch script design changes (saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch, excludes parameter block above)
+
+```diff
+--- job_4774136/saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch
++++ job_4799018/saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch
+@@ -371,6 +371,8 @@
+ export TSLS_MDE_GMN_TP="${TP}"
+ export TSLS_MDE_GMN_EMBED_DIM_RHO_MIN="${EMBED_DIM_RHO_MIN}"
+ export TSLS_MDE_GMN_CROSS_MAP_RHO_MIN="${CROSS_MAP_RHO_MIN}"
++export TSLS_MDE_GMN_EMBED_DIM_RHO_MIN_F1="${EMBED_DIM_RHO_MIN_F1}"
++export TSLS_MDE_GMN_CROSS_MAP_RHO_MIN_F1="${CROSS_MAP_RHO_MIN_F1}"
+ export TSLS_MDE_GMN_CCM_PREFILTER_RHO_MIN="${CCM_PREFILTER_RHO_MIN}"
+ export TSLS_MDE_GMN_CCM_PREFILTER_E="${CCM_PREFILTER_E}"
+ export TSLS_MDE_GMN_LIBSIZE_RATIOS="${LIBSIZE_RATIOS}"
+```
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+### Plain-language summary
+
+**Job 4774136's run again, with a different pipeline underneath it.** Every knob
+is what job_4774136 used -- `union` scope, an empty lag set, all 468 channels --
+so this is not a parameter experiment. It is the first real-data run of the code
+written since, and the question it answers is whether the backbone gets deeper
+when the two things that were starving it are removed.
+
+**What changed in the code.** Two things, both aimed at the same symptom
+(job_4774136 ended with 6 interior nodes and 23 external inputs):
+
+1. **The depth cap is gone** (`NESTED_M` 1 -> 0 = uncapped). At `NESTED_M=1` the
+   BFS expanded the targets and their drivers and then stopped, so anything one
+   step further out was filed as an external input regardless of the evidence.
+   Five of those 23 externals HAD drivers sitting in the precomputed table --
+   `CA1_85_tsls` had six -- and the cap discarded them. The run precomputed 247
+   MDE results and consulted 21. Uncapping is nearly free here because both
+   scopes precompute the whole node universe up front; the budget only governs
+   how much of that existing table the BFS reads. (The exception is `staged`
+   WITH lags, where a larger visited set means more Stage 2 calls -- not this
+   job.)
+
+2. **The skill gates are now per metric**, looser for neurons. One 0.2 bar was
+   applied to two metrics with different ceilings: `correlation` (the behavioural
+   targets) can reach 1.0, while a near-perfect predictor of a real TSLS channel
+   scores `f1` ~0.49-0.54 (`scripts/calibration/r9_min_pred_events_curve.csv`).
+   So the shared bar demanded ~38% of achievable skill from a neuron and 20%
+   from a behavioural target. The f1 gate is now 0.1 (= 0.20 x 0.52), about
+   1.4 sigma above estimator noise at `MIN_PRED_EVENTS=20`. In job_4774136, 101
+   nodes had no candidate clear the gate at all at 1-D; this is the direct
+   attempt on that number.
+
+Also in this run, though not aimed at the node count: Stage 2 is now skipped
+outright when the lag set is empty (the `ZeroDivisionError` that killed
+job_4774133), and generative fidelity / forecast rho are no longer reported for
+real-data passthrough nodes, which were being cross-mapped against copies of
+themselves and scoring 1.0. Those nodes are still drawn in the network figures;
+only their scores are withheld.
+
+**Why the tables above look so quiet.** `generate_job_description.sh` diffs the
+sbatch file and the entry `.py`. Nearly all of the above lives in
+`scripts/src/mde_gmn/`, which it does not diff, so "Python pipeline changes: no
+changes" is true of the 45-line entry script and misleading about the run. The
+`NESTED_M` row reads `${NESTED_M:-0}` for the same reason -- the generator sees
+the file's text, not the resolved value; it resolved to 0, uncapped.
+
+**Nothing is reused from the cache.** The per-node fingerprint hashes every
+`*.py` in the package, so all four stages recompute from scratch. The resolved
+gate (not the mapping) is in the fingerprint too, so a node computed under 0.2
+can never be served to a run that asked for 0.1.
+
+| Knob | Value | Via |
+|---|---|---|
+| `DELAY_SOURCE` | `explicit` | `--export` |
+| `DELAY_SET` | `0` (-> EMPTY lag set) | `--export` |
+| `REGION_CHANNEL_CAP` | `999` (all 468) | `--export` |
+| `PARALLEL_MDE_SCOPE` | `union` | `--export` |
+| `NESTED_M` | `0` = uncapped | file (new) |
+| `EMBED_DIM_RHO_MIN` / `CROSS_MAP_RHO_MIN` | 0.2 | file, behavioural targets |
+| `EMBED_DIM_RHO_MIN_F1` / `CROSS_MAP_RHO_MIN_F1` | 0.1 | file (new), neuronal nodes |
+| `MDE_D` | 10 | file (half production) |
+| `CCM_PREFILTER_RHO_MIN` | 0.2 | file default, deliberately left on |
+| `CCM_SLOPE` | 0.01 | file; NOT split per type -- see below |
+
+**What this job does not test.** `CCM_SLOPE` is still one threshold for both
+target types. The slope harness
+(`scripts/calibration/ccm_slope_distribution.py`) measured the distributions --
+neuronal n=5,692, 15.7% at or above 0.01; behavioural n=163,927, 0.3% -- but the
+logged slopes are only those of SELECTED candidates, censored at the current
+threshold by construction, so no percentile of them can locate the right bar.
+That needs a surrogate null, which has not been run.
+
+**Read it against job_4774136.** Interior vs. external node counts, `realized
+max depth`, and how many nodes still have no candidate clear the gate. If the
+interior count does not move, the cause is not the depth cap or the f1 ceiling.
+
+---
+
+
 ## Job 4774136
 
 Generated: 2026-10-27T18:37:11+09:00

@@ -93,8 +93,8 @@ CROSS_MAP_RHO_MIN=0.2         # cross-map skill gate -- CORRELATION-scored nodes
 # while a NEAR-PERFECT predictor of a real TSLS channel scores f1 ~ 0.49-0.54
 # (r9_min_pred_events_curve.csv). One 0.2 bar asked a neuron for ~38% of
 # achievable skill and a behavioural target for 20%; 0.1 restores parity.
-EMBED_DIM_RHO_MIN_F1=0.1      # embedding-dimension gate for f1-scored (neuronal) nodes
-CROSS_MAP_RHO_MIN_F1=0.1      # cross-map gate for f1-scored (neuronal) nodes
+EMBED_DIM_RHO_MIN_F1=0.15     # embedding-dimension gate for f1-scored (neuronal) nodes -- raised from 0.1, see config.py
+CROSS_MAP_RHO_MIN_F1=0.15     # cross-map gate for f1-scored (neuronal) nodes -- raised from 0.1, see config.py
 CCM_PREFILTER_RHO_MIN=0.2     # drop observables cross-mapping no target above this. 0 disables the pre-filter
 CCM_PREFILTER_E=7             # the pre-filter's own static E -- NOT a reuse of MULTI_MDE_E; see parameters.md
 LIBSIZE_RATIOS="0.05,0.10,0.20,0.40,0.6,0.8,0.9"   # pre-filter library sizes, as fractions of its window

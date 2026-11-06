@@ -84,8 +84,21 @@ def _run_for_module(filename, module_name, name, extra_kwargs):
     a_row = table[table['node'] == 'A'].iloc[0]
     assert t_row['role'] == 'TARGET', f'{name}: T should be tagged TARGET -- {t_row}'
     assert a_row['role'] == 'driver', f'{name}: A should be tagged driver -- {a_row}'
-    assert np.isfinite(t_row['score']) and np.isfinite(a_row['score']), (
-        f'{name}: scores should be finite -- {table}'
+    assert np.isfinite(t_row['score']), (
+        f'{name}: the simulated TARGET must carry a real score -- {table}'
+    )
+    # A drives T and has no drivers of its own, so under
+    # EXTERNAL_INPUT_MODE='real_data' Generate() replays A's recording
+    # verbatim. Scoring that compares the recording against itself, which is
+    # why it is listed but deliberately NOT scored (changed 2026-11-06: job
+    # 4799018's table carried 44 such rows at a guaranteed f1=1.000 and 9 more
+    # at 0.000, indistinguishable from real results). The row must still be
+    # PRESENT -- the table stays a complete inventory of the network.
+    assert a_row['metric'] == 'passthrough', (
+        f'{name}: A has no drivers, so it must be marked a real-data passthrough -- {table}'
+    )
+    assert not np.isfinite(a_row['score']), (
+        f'{name}: a passthrough row must not carry a score -- {table}'
     )
     print(f'{name}: PASS\n{table}')
 

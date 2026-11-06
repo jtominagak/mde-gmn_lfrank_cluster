@@ -224,13 +224,35 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
         generated = G.DataOut.reset_index(drop=True)
         nodes = [c for c in generated.columns if c != 'Time']
 
+        # Only SIMULATED nodes are scored, for the same reason
+        # gmn_fidelity_rho() gives: under EXTERNAL_INPUT_MODE='real_data' a
+        # node with no discovered drivers has its recording replayed
+        # verbatim, so scoring it compares the recording against itself. In
+        # job 4799018 that put 44 external inputs in this table at a
+        # guaranteed f1=1.000 and another 9 at f1=0.000 (their window held no
+        # event at all) -- 53 rows of pure artefact, mixed in with the real
+        # ones and impossible to tell apart by eye. They are still LISTED,
+        # so the table stays a complete inventory of the network.
+        # net_result always carries 'network' when build_network() made it,
+        # but NETWORK_FILE is the same graph on disk and is the only handle
+        # some callers pass, so accept either.
+        graph_for_scoring = (net_result.get('network') or {}).get('Graph')
+        if graph_for_scoring is None:
+            with open(net_result['NETWORK_FILE'], 'rb') as f:
+                graph_for_scoring = pickle.load(f)['Graph']
+        scored = set(simulated_nodes(graph_for_scoring))
         print(f"{network_id} Generate() score, held-out window (start row {generate_start}):", flush=True)
         per_node_rows = []
         for node in nodes:
+            tag = 'TARGET' if node in net_result['targets'] else 'driver'
+            if node not in scored:
+                print(f"  {node:20s} {tag:7s} real-data passthrough (not scored)", flush=True)
+                per_node_rows.append({'node': node, 'role': tag, 'metric': 'passthrough',
+                                      'score': float('nan')})
+                continue
             node_metric = _metric_for(node, net_result['targets'], metric, target_metric)
             a = actual_df[node].to_numpy()[generate_start:generate_start + len(generated)]
             r = edm._score(a, generated[node].to_numpy(), node_metric, gammaDelta=gamma_delta)
-            tag = 'TARGET' if node in net_result['targets'] else 'driver'
             print(f"  {node:20s} {tag:7s} {node_metric}={r:7.3f}", flush=True)
             per_node_rows.append({'node': node, 'role': tag, 'metric': node_metric, 'score': r})
 
