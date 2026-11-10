@@ -511,9 +511,24 @@ FORECAST_PLOT_RANGE="windowed"        # default: full. Other value: windowed
 # for the full rationale (identical here, ported unchanged -- this sweep
 # doesn't exist in this pipeline's own previous architecture at all).
 # Defaults to MIN=0, MAX=1 -- only offset 0. Widen MAX to actually sweep.
-GENERATE_START_MIN_OFFSET=0
-GENERATE_START_MAX_OFFSET=20
-GENERATE_START_STEP=1
+#
+# MADE OVERRIDABLE 2026-11-10, because this sweep is the single most expensive
+# phase of a lagged run and it is pure refinement -- it only picks which row
+# Generate() free-runs from. Each offset costs one full Generate() over the
+# whole network: ~63 min in job 4799404 (116 simulated nodes, no lags), and
+# job 4799407's nodes carry ~4x wider embeddings, so 20 offsets there does not
+# fit inside the 6-day limit. Nothing downstream can run until the sweep ends,
+# so an over-wide sweep does not just cost time -- it loses the whole result.
+#
+# Trimming it is cheap: job 4799404's 20 offsets scored 0.646-0.697 across the
+# top four, so a 2-3 offset sweep gives up very little. The offsets are NOT in
+# build_search_fingerprint(), so changing them reuses a cached theta search
+# (best_params_*.json) and only recomputes the sweep itself -- which is what
+# makes a trimmed resubmit after a timeout worth doing. GENERATE_LENGTH, by
+# contrast, IS in that fingerprint: change it and theta recomputes too.
+GENERATE_START_MIN_OFFSET="${GENERATE_START_MIN_OFFSET:-0}"   # overridable
+GENERATE_START_MAX_OFFSET="${GENERATE_START_MAX_OFFSET:-20}"  # overridable; 20 offsets -- see above before widening
+GENERATE_START_STEP="${GENERATE_START_STEP:-1}"               # overridable
 
 # ---- E/tau search (MODE=GMN only) --------------------------------------------
 # Used exclusively by that mode's own interaction-matrix construction
