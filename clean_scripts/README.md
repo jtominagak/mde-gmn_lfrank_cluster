@@ -67,7 +67,7 @@ clean_scripts/
     submit_saion.sh             pick the GPU partition that starts soonest
     submit_saion_scope_pair.sh  submit both parallel scopes as one comparison
     setup_gpu_venv.sh           build the CUDA venv
-  tests/                 24 scripts, no pytest needed
+  tests/                 27 scripts, no pytest needed
   docs/
     parameters.md        where every number comes from, and which are guesses
     deployment.md        running it, reading the outcome, resuming, troubleshooting
@@ -140,7 +140,7 @@ edge for edge, which `tests/test_parallel_mde_equivalence.py` asserts.
 
 Grouped by what each change was for. **No change alters what the pipeline
 computes**, except where explicitly noted, and the full test suite passes
-identically before and after (24/24).
+identically before and after (27/27).
 
 ### Redundant compute removed
 

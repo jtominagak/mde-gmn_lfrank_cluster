@@ -190,6 +190,25 @@ recomputed.
 This is the real protection against exceeding the wall clock: exceeding it costs
 a resubmission, not the work.
 
+**Trim the Generate() start sweep on the resubmit.** It is usually what ran out
+of clock: each offset is one full `Generate()` over the whole network (~63 min
+in job 4799404), nothing downstream starts until the sweep finishes, and the
+offsets are **not** part of `build_search_fingerprint()` — so narrowing them
+reuses the cached theta search and recomputes only the sweep:
+
+```bash
+GENERATE_START_MAX_OFFSET=3 saion/submit_saion.sh saion_parallel_mde.sbatch
+```
+
+(Set it in the submitting shell, not in the file. `sbatch` exports that shell's
+environment by default -- the same mechanism `submit_saion.sh` uses to pass
+`SBATCH_PARTITION` -- so the override reaches the job while the submission still
+goes through `submit.sh` and gets its `JOB_LOG.md` entry.)
+
+Cheap in accuracy: job 4799404's top four offsets scored 0.646–0.697.
+`GENERATE_LENGTH` is the opposite case — it *is* in that fingerprint, so
+changing it recomputes theta too.
+
 ### Cancelling
 
 ```bash

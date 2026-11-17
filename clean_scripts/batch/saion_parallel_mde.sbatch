@@ -107,7 +107,13 @@ EXCLUSION_RADIUS=0            # Theiler-window FLOOR for MDE; proper_mde raises 
 # discovered drivers that way. Nearly free here: both scopes precompute the
 # whole universe, so this only governs how much of that table the BFS reads.
 NESTED_M="${NESTED_M:-0}"     # overridable; 0 = uncapped. additional nested-MDE rounds beyond each target's own selection
-REGION_CHANNEL_CAP=78         # first N raw channels per region (CA1_/mPFC_/OFC_). 78x3 = 234 of 468. 999 = uncapped
+# Overridable like NESTED_M above, and for the same reason: hardcoded, a
+# `sbatch --export=...,REGION_CHANNEL_CAP=999` was silently clobbered here and
+# this file could only ever mean half production. 999 unlocks the full
+# 468-channel candidate pool, with the CCM pre-filter above still the only gate
+# on it. The cap is in the per-node cache fingerprint, so an uncapped run
+# shares no cached nodes with a capped one.
+REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP:-78}"   # overridable; first N raw channels per region (CA1_/mPFC_/OFC_). 78x3 = 234 of 468. 999 = uncapped
 
 # ---- Stage 2: the lag set --------------------------------------------------
 # Three ways to define it, differing only in which quantity you pin -- a lag
@@ -160,9 +166,23 @@ FORECAST_PLOT_RANGE="windowed"   # x-axis of the final diagnostic figure: full |
 # ---- Generate() start-point sweep ------------------------------------------
 # Try starting Generate() at several rows and keep whichever best matches the
 # held-out data. MIN=0/MAX=1 tries only offset 0.
-GENERATE_START_MIN_OFFSET=0
-GENERATE_START_MAX_OFFSET=20
-GENERATE_START_STEP=1
+#
+# OVERRIDABLE, AND THE KNOB MOST WORTH TRIMMING. Each offset costs one full
+# Generate() over the whole network -- ~63 min in job 4799404 (116 simulated
+# nodes, no lags) -- and nothing downstream starts until the sweep finishes,
+# so a sweep too wide for the wall clock does not just cost time, it loses the
+# whole result. Job 4799407's nodes carry ~4x wider embeddings, and 20 offsets
+# there does not fit inside the 6-day limit.
+#
+# Trimming it is cheap: job 4799404's top four offsets scored 0.646-0.697, so
+# a 2-3 offset sweep gives up very little. These offsets are NOT part of
+# build_search_fingerprint(), so changing them reuses the cached theta search
+# (best_params_*.json) and recomputes only the sweep itself -- which is what
+# makes a trimmed resubmit after a timeout worth doing. GENERATE_LENGTH above
+# IS in that fingerprint: change it and theta recomputes too.
+GENERATE_START_MIN_OFFSET="${GENERATE_START_MIN_OFFSET:-0}"    # overridable
+GENERATE_START_MAX_OFFSET="${GENERATE_START_MAX_OFFSET:-20}"   # overridable; see above before widening
+GENERATE_START_STEP="${GENERATE_START_STEP:-1}"                # overridable
 
 # ---- E/tau search (MODE=GMN only; THETA_RANGE is used by both modes) -------
 E_MIN=3      # inclusive lower bound of the E search; must stay >= 2

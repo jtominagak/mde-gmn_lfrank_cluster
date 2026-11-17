@@ -16,13 +16,16 @@ how people end up afraid to change it.
 (all 468 real channels — CA1 147, OFC 234, mPFC 87), `MDE_D=20`, `NESTED_M=1`,
 `GENERATE_LENGTH=0` (the full held-out window).
 
-The shipped sbatch is **half** that:
+The shipped sbatch is **half** that. `REGION_CHANNEL_CAP` and `NESTED_M` are
+overridable from the submitting shell -- `REGION_CHANNEL_CAP=999
+saion/submit_saion.sh saion_parallel_mde.sbatch` -- so a production-scale run
+needs no edit to the file:
 
 | Parameter | Production | Shipped | Why |
 |---|---|---|---|
 | `REGION_CHANNEL_CAP` | 999 | 78 | 78×3 = 234 channels, exactly half of 468 |
 | `MDE_D` | 20 | 10 | Half |
-| `NESTED_M` | 1 | 1 | Already the default; the next step down (0) means UNCAPPED, not smaller |
+| `NESTED_M` | 1 | 0 = **uncapped** | Raised, not halved: at 1 the BFS stopped one step past the targets' own drivers, so anything further out became an external input regardless of the evidence (job 4774136 discarded five nodes' drivers that way). Nearly free — both scopes precompute the whole universe anyway |
 | `GENERATE_LENGTH` | 0 | 400 | **Deliberately not halved** — see below |
 
 ### Why `GENERATE_LENGTH` is not halved
