@@ -40,7 +40,8 @@ COLORS = {'sawtooth': '#555555', 'A_calcium': '#1f77b4', 'B_adapt_nr': '#d62728'
 METRICS = ['corr_head_position_x', 'corr_head_position_y', 'vwcorr_head_position_x',
            'vwcorr_head_position_y', 'nrmse_head_position_x', 'nrmse_head_position_y',
            'path_err_mean', 'path_err_final', 'unit_corr_mean', 'unit_nrmse_median',
-           'manifold_ratio', 'motion_ratio', 'blew_up']
+           'manifold_ratio', 'motion_ratio', 'blew_up',
+           'path_err_mean_hold', 'path_err_final_hold', 'unit_nrmse_median_hold']
 
 
 def job_dir(root, job):
@@ -130,7 +131,8 @@ def main():
         one = pd.concat(one, ignore_index=True)
         os_ = one.groupby(['label', 'family', 'role']).agg(
             corr_median=('corr', 'median'), corr_mean=('corr', 'mean'),
-            nrmse_median=('nrmse', 'median'), n=('node', 'size')).reset_index()
+            nrmse_median=('nrmse', 'median'), nrmse_persistence_median=('nrmse_persistence', 'median'),
+            skill_vs_persistence_median=('skill_vs_persistence', 'median'), n=('node', 'size')).reset_index()
         os_.to_csv(out / 'onestep_summary.csv', index=False)
     if graphs:
         pd.DataFrame(graphs).to_csv(out / 'graph_summary.csv', index=False)

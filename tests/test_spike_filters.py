@@ -233,6 +233,7 @@ def test_rollout_scoring_on_a_perfect_and_a_frozen_run():
     r = rows[-1]
     assert np.isclose(r['corr_head_position_x'], 1) and r['path_err_mean'] == 0
     assert np.isclose(r['manifold_ratio'], 1) and np.isclose(r['motion_ratio'], 1)
+    assert r['path_err_mean_hold'] > 0 and r['unit_nrmse_median_hold'] > 0
     assert not r['blew_up']
     frozen = pd.DataFrame(np.tile(perfect.iloc[0].to_numpy(float), (len(perfect), 1)),
                           columns=perfect.columns)

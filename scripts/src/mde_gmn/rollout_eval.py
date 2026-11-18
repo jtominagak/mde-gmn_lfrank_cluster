@@ -31,6 +31,12 @@ recording over the same rows:
                    Near 0 = collapsed to a fixed point.
   blew_up          any non-finite value, or |z| above 10x the library's max.
 
+BASELINES. One-step rows carry a persistence forecast (x[t-Tp] predicts
+x[t]) and skill_vs_persistence = 1 - NRMSE_model / NRMSE_persistence; rollout
+rows carry a hold-the-seed baseline (`*_hold`). At 40 Hz a smooth series is
+almost persistent over one step, so raw one-step correlations near 1 say
+little on their own.
+
 NRMSE is RMSE divided by the sd of the real series over the whole held-out
 segment, a fixed normaliser, so short horizons are not judged against the
 small variance of a short window.
@@ -162,6 +168,11 @@ def score_rollout(generated, start, ref, horizon_rows):
                            gen[ty].to_numpy(float) - act[ty].to_numpy(float))
             row['path_err_mean'] = float(np.nanmean(err))
             row['path_err_final'] = float(err[-1])
+            # Naive baseline: stay where the seed left you.
+            hold = np.hypot(act[tx].to_numpy(float) - act[tx].iloc[0],
+                            act[ty].to_numpy(float) - act[ty].iloc[0])
+            row['path_err_mean_hold'] = float(np.nanmean(hold))
+            row['path_err_final_hold'] = float(hold[-1])
         row['n_units'] = len(units)
         if units:
             uc = [_corr(act[u].to_numpy(float), gen[u].to_numpy(float)) for u in units]
@@ -169,6 +180,9 @@ def score_rollout(generated, start, ref, horizon_rows):
             row['unit_corr_mean'] = float(np.nanmean(uc)) if np.isfinite(uc).any() else np.nan
             row['unit_corr_median'] = float(np.nanmedian(uc)) if np.isfinite(uc).any() else np.nan
             row['unit_nrmse_median'] = float(np.nanmedian(un)) if np.isfinite(un).any() else np.nan
+            uh = [_nrmse(act[u].to_numpy(float), np.full(h_eff, act[u].iloc[0]), ref.scale[u])
+                  for u in units]
+            row['unit_nrmse_median_hold'] = float(np.nanmedian(uh)) if np.isfinite(uh).any() else np.nan
             tree, lib_max = ref.tree(units)
             zg, za = ref.z(gen, units), ref.z(act, units)
             row['blew_up'] = bool((~np.isfinite(zg)).any() or np.abs(zg[np.isfinite(zg)]).max(initial=0)
@@ -279,9 +293,17 @@ def run_rollout_evaluation(gmn_runs, cfg, df, progress_log_path=None):
             one = []
             for node in [c for c in fc.columns if c != 'Time' and DELAY_MARKER not in c]:
                 a, p = df[node].to_numpy(float)[idx], fc[node].to_numpy(float)
+                # Persistence baseline: predict the last observed value. At
+                # 25 ms a smooth trace is nearly persistent, so one-step skill
+                # only means something relative to this.
+                persist = df[node].to_numpy(float)[idx - int(net_result.get('gmn_tp', 1))]
+                n_model = _nrmse(a, p, ref.scale[node])
+                n_pers = _nrmse(a, persist, ref.scale[node])
                 one.append({**tag, 'network_id': network_id, 'node': node,
                             'role': 'target' if node in net_result['targets'] else 'unit',
-                            'corr': _corr(a, p), 'nrmse': _nrmse(a, p, ref.scale[node]),
+                            'corr': _corr(a, p), 'nrmse': n_model,
+                            'corr_persistence': _corr(a, persist), 'nrmse_persistence': n_pers,
+                            'skill_vs_persistence': (1 - n_model / n_pers) if n_pers else np.nan,
                             'rows': len(idx)})
             pd.DataFrame(one).to_csv(out_dir / f'onestep_metrics_{network_id}.csv', index=False)
         except Exception as exc:

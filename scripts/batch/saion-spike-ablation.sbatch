@@ -81,7 +81,7 @@ FORECAST_PLOT_RANGE="windowed"
 
 # ---- SCALE (reduced so ~20 configurations fit) -----------------------------
 # The first REGION_CHANNEL_CAP units of each region form the candidate pool.
-REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP:-20}"
+REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP:-30}"   # 90 candidate units; smoke job 4831191 (12 units) took 13 min
 MDE_D="${MDE_D:-6}"
 NESTED_M="${NESTED_M:-2}"
 THETA_RANGE="${THETA_RANGE:-0.1,0.5,1,2,4,8}"
