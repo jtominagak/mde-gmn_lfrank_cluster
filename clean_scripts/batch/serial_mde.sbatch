@@ -93,16 +93,18 @@ TARGETS="head_position_x,head_position_y"   # target columns (never TSLS-convert
 # ---- MDE: variable selection (unused when MODE=GMN) ------------------------
 MDE_D=10                      # drivers per node; also the ceiling on per-candidate auto-selected E. Half of the documented 20
 TP=20                         # prediction interval every candidate is ranked against
-EMBED_DIM_RHO_MIN=0.2         # embedding-dimension skill gate
-CROSS_MAP_RHO_MIN=0.2         # cross-map skill gate
+EMBED_DIM_RHO_MIN=0.2         # embedding-dimension skill gate -- CORRELATION-scored nodes (the behavioural targets)
+CROSS_MAP_RHO_MIN=0.2         # cross-map skill gate -- CORRELATION-scored nodes
+EMBED_DIM_RHO_MIN_F1=0.15     # the same gate for f1-scored (neuronal) nodes; see saion_parallel_mde.sbatch for why it differs
+CROSS_MAP_RHO_MIN_F1=0.15     # the same gate for f1-scored (neuronal) nodes
 CCM_PREFILTER_RHO_MIN=0.2     # drop observables cross-mapping no target above this. 0 disables the pre-filter
 CCM_PREFILTER_E=7             # the pre-filter's own static E -- NOT a reuse of MULTI_MDE_E; see parameters.md
 LIBSIZE_RATIOS="0.05,0.10,0.20,0.40,0.6,0.8,0.9"   # pre-filter library sizes, as fractions of its window
 MULTI_MDE_E=8                 # ceiling for the joint call's per-candidate auto-selected E (GMN_MODE=combined only)
 MULTI_MDE_TARGET_AGGREGATE="mean"   # how per-target scores combine: mean (don't penalise uneven drivers) or min (demand both)
 EXCLUSION_RADIUS=0            # Theiler-window FLOOR for MDE; proper_mde raises the effective value per dimension on top of it
-NESTED_M=1                    # additional nested-MDE rounds beyond each target's own selection. 0 = uncapped
-REGION_CHANNEL_CAP=78         # first N raw channels per region (CA1_/mPFC_/OFC_). 78x3 = 234 of 468. 999 = uncapped
+NESTED_M="${NESTED_M:-0}"     # overridable; 0 = uncapped. additional nested-MDE rounds beyond each target's own selection
+REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP:-78}"   # overridable; first N raw channels per region (CA1_/mPFC_/OFC_). 78x3 = 234 of 468. 999 = uncapped
 
 # ---- Stage 2: the lag set --------------------------------------------------
 # Three ways to define it, differing only in which quantity you pin -- a lag
@@ -141,10 +143,11 @@ FORECAST_PLOT_RANGE="windowed"   # x-axis of the final diagnostic figure: full |
 
 # ---- Generate() start-point sweep ------------------------------------------
 # Try starting Generate() at several rows and keep whichever best matches the
-# held-out data. MIN=0/MAX=1 tries only offset 0.
-GENERATE_START_MIN_OFFSET=0
-GENERATE_START_MAX_OFFSET=20
-GENERATE_START_STEP=1
+# held-out data. MIN=0/MAX=1 tries only offset 0. Each offset is one full
+# Generate() of the whole network; see saion_parallel_mde.sbatch before widening.
+GENERATE_START_MIN_OFFSET="${GENERATE_START_MIN_OFFSET:-0}"    # overridable
+GENERATE_START_MAX_OFFSET="${GENERATE_START_MAX_OFFSET:-20}"   # overridable
+GENERATE_START_STEP="${GENERATE_START_STEP:-1}"                # overridable
 
 # ---- E/tau search (MODE=GMN only; THETA_RANGE is used by both modes) -------
 E_MIN=3      # inclusive lower bound of the E search; must stay >= 2
@@ -420,6 +423,7 @@ export TSLS_MDE_GMN_RUN_CACHE_DIR="$RUN_CACHE_DIR"
 # that is already set is exactly what each of those lines did, and the two
 # names that do not follow the prefix convention are handled beside it.
 for _p in MODE GMN_MODE TARGETS TP EMBED_DIM_RHO_MIN CROSS_MAP_RHO_MIN \
+          EMBED_DIM_RHO_MIN_F1 CROSS_MAP_RHO_MIN_F1 \
           CCM_PREFILTER_RHO_MIN CCM_PREFILTER_E LIBSIZE_RATIOS MULTI_MDE_E \
           MULTI_MDE_TARGET_AGGREGATE EXCLUSION_RADIUS NESTED_M \
           REGION_CHANNEL_CAP DELAY_SOURCE LAG_MODE \

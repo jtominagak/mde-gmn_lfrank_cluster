@@ -1,0 +1,346 @@
+{
+ "files": {
+  "scripts/batch/generate_job_description.sh": {
+   "blob": "cd6919a5f231bde76607bad7572ccd4a5da77d32",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/batch/saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch": {
+   "blob": "9c0d92aa32698666c5ef0f323661accb0a0cc571",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/batch/submit.sh": {
+   "blob": "ae513ca679dd36ff55f6545e77281cb1d646d76c",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/env/sitecustomize.py": {
+   "blob": "e0289af9ae82b0a2503952af911b552bd5da0fcb",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/saion/saion_env.sh": {
+   "blob": "1665b9f9d3065fd3eac5913ecda9c7086aa2300b",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/saion/setup_gpu_venv.sh": {
+   "blob": "9828e20ecf0d97e01d088f047d698ca143f526bd",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/saion/submit_saion.sh": {
+   "blob": "296c4868c877b3c2b69b18023b9d5d302faed462",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/saion/submit_saion_scope_pair.sh": {
+   "blob": "ac308ed4420cee9336232a93af8d5ca532f9ca1f",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/cleaned_helper_functions.py": {
+   "blob": "a16e22d4f33a759be47e3955260e8f1448618bff",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/gpu_budget.py": {
+   "blob": "3b5daab1bb84527b3d85bd46de28447c56232ac2",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/gpu_edm.py": {
+   "blob": "d971680a04a03379907879a2207d6f346c76aef6",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/__init__.py": {
+   "blob": "4595549ed3b8b8829c564179183f8cc139913faa",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/caching.py": {
+   "blob": "850933e9d08c932150eb7cb25eb7c5f3628b3f64",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/columns.py": {
+   "blob": "04a6fb08e34df97aa103d5418c65e1b003364cfe",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/config.py": {
+   "blob": "8fa8e7d6bf7458736cf3529896edc75bbe5eb7dd",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/diagnostics.py": {
+   "blob": "c9dd8355979fc69d5c1c8908ee5c16963386ddb0",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/generate.py": {
+   "blob": "50c429352b29546a69d7ba0b8b7aa1108d4ce25c",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/gmn_build.py": {
+   "blob": "de6a37d4100dfd568ee7ad1466e77b6a6992d391",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/gmn_embedding.py": {
+   "blob": "bcd5d14c496d88e7c82e2d026eac5681a7847507",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/mde.py": {
+   "blob": "3359fc0f9848fdfb272d5d528b708cd2dbfb080f",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/network.py": {
+   "blob": "832c704ed42222f470a6df8ba12b57f6828772d8",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/network_parallel.py": {
+   "blob": "726bde81cf5260931792517d6a9fd028c37f0c46",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/pipeline.py": {
+   "blob": "ff3d0eca231a19f4ebf9571a099b779916105cb9",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/plots.py": {
+   "blob": "9a65a3d2221c2ab9cb2b851fe2a9a14b8b3c0830",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/progress.py": {
+   "blob": "a70720a257596d7269875cdc6d607e011a078e5c",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/theta.py": {
+   "blob": "a1d5834fcb05f7e35fef14e415a4000c38691adc",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/mde_gmn/tsls_data.py": {
+   "blob": "cb77795ac29d9045e79b2971f17102ae065cc780",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py": {
+   "blob": "2341547d5610d8d2b61ad63a3e63588a8a3a19d5",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "scripts/src/tsls-mde-gmn.py": {
+   "blob": "0eecca7b9c9b55a6984acdb33b808cf88fade4f2",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/_pipeline_test_utils.py": {
+   "blob": "35590d97f36b0220f3a0163f68620faad668c172",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_gpu_ccm_equivalence.py": {
+   "blob": "b868a3576a4b3c5332d9c8dad43cca1ba9069b2a",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_gpu_fork_safety.py": {
+   "blob": "bb7b9046c56366764e8bb3539e010d1757b5cba7",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_gpu_multi_ccm_equivalence.py": {
+   "blob": "71d5ae9e42cf57b6fd04d9646c7fc79e73dbdde5",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_lag_set_sources.py": {
+   "blob": "11b53cc91f97da88d160470da4fe44d8f1a7b090",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_lagged_leaf_data_export.py": {
+   "blob": "d5143955fa01a269bdc3b3044c3572e0ddd2e7dc",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_lagged_leaf_nodes.py": {
+   "blob": "20e1d64e7483b2f839385ee24f88c33de2ef6a4e",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_metric_routing_depth_ge1.py": {
+   "blob": "48c89554bf27431a564778e9d4f04cd40d1802c0",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_multi_mde_auto_embed_dimension.py": {
+   "blob": "ae6a88285a200256d42f699c8da7cfab098af464",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_network_cache_builder_kwargs.py": {
+   "blob": "e81652d42de9580dcb61a56d86bfdc0c32a1d25a",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_parallel_mde_equivalence.py": {
+   "blob": "4f3c7aa98ad02060ffa1017cca865313b031e28c",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_per_metric_rho_gates.py": {
+   "blob": "548cb9dd30263450bae1b540ae1de724f1066d4a",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_progress_monitoring.py": {
+   "blob": "f50ef0107427aea94ef22595f546c4143bee60b0",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_r11_per_node_table.py": {
+   "blob": "440a59461be2b435cb050b6962b7fb5e32a30fb3",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_r12_stage_serialization.py": {
+   "blob": "90856746c84ea41c761f2d0c5d026a94f6b6b1c0",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_r13_shared_depth_budget.py": {
+   "blob": "b367946d5d9bb73a85eca65c2327ca594baf8d4d",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_r14_external_inputs.py": {
+   "blob": "af46fb30fdbac5ce0ac4cf0206197f9fc254aed6",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_r15_termination_causes.py": {
+   "blob": "4ae5560a7e62df18ef8c53fdf428e88b9ec32abc",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_r19_mde_evaluate.py": {
+   "blob": "db74e7ce2e5b173f0ec2eec4d0fc86078f23abdd",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_r1_tsls_vectorized.py": {
+   "blob": "f460d2d069113195ffb253837b1f3dab1e61e53d",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_r20_predict_nonlinear.py": {
+   "blob": "ac6e2b97a70b14df2bb52b111f369bb812f8aaa2",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_r21_dynamic_exclusion_radius.py": {
+   "blob": "d004efbf78781262d5358a63b3be0e993720a2b8",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_r22_forecast_window_alignment.py": {
+   "blob": "83ae9dde671b5947a9b41d33e0ab3f5a3f10748b",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_r2_prefilter_guard.py": {
+   "blob": "95d51cef3fe516b23ab506b91077f015793f6bb9",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_r7_diagnostics_figures.py": {
+   "blob": "98b3bf5a0933ea2d054f9d6c895b19bd07afda59",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_tsls_event_metric.py": {
+   "blob": "9eb04fe47363615a97cf4ad08c34c7ea3e2f8061",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_window_sizing.py": {
+   "blob": "aee70dedbb16bb1f77623882af95617b2b222bad",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_zero_lag_stage2_skip.py": {
+   "blob": "6d5199332b8f7a046334a2f5bf875360350f6f18",
+   "head": "74e996d",
+   "note": "",
+   "synced_on": "2026-11-18"
+  }
+ }
+}

@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/dev/clean_sync.py\"; [ ! -f \"$f\" ] || python3 \"$f\" hook-post-edit",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/scripts/dev/clean_sync.py\"; [ ! -f \"$f\" ] || python3 \"$f\" hook-stop",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

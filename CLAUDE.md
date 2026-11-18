@@ -57,6 +57,17 @@ Since 2026-10-23 this repo is edited locally and run only on the cluster.
 - `data/` and `results/` are gitignored. They never travel through git, and
   the authoritative copies live on `/bucket`.
 
+## clean_scripts/ must follow scripts/
+`clean_scripts/` (this branch only) is the shareable copy of the pipeline:
+behaviour-identical to `scripts/`, restructured to be readable. Every change
+to `scripts/` or `tests/` gets ported there, never copied verbatim. Use the
+`/sync-clean-scripts` skill. `scripts/dev/clean_sync.py status` reports what
+is unported. A Stop hook in `.claude/settings.json` blocks finishing a turn
+while code drift remains, and `scripts/dev/git-hooks/pre-commit` warns (it
+never blocks). If a new file in `scripts/` or `tests/` has no clean
+counterpart, add it to `IGNORE` in `clean_sync.py` and give the reason. Set
+`CLEAN_SYNC_HOOK=off` to pause the hooks.
+
 ## Branches
 - `main` — CPU pipeline.
 - `no-kEDM-gpu-optimization` — adds the GPU CCM path (`gpu_edm.py`) and

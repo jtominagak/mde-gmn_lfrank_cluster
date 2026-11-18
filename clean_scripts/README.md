@@ -67,6 +67,8 @@ clean_scripts/
     submit_saion.sh             pick the GPU partition that starts soonest
     submit_saion_scope_pair.sh  submit both parallel scopes as one comparison
     setup_gpu_venv.sh           build the CUDA venv
+  env/
+    sitecustomize.py     pyEDM startup patch -- install into every venv (env/README.md)
   tests/                 27 scripts, no pytest needed
   docs/
     parameters.md        where every number comes from, and which are guesses
@@ -225,6 +227,12 @@ cleanup is wrong.
 real code is in the package beside it. Every entry in the existing `JOB_LOG.md`
 therefore says `_No changes._` while the pipeline underneath was being
 rewritten. It now snapshots and diffs **every `.py` under `src/`**.
+
+### Behaviours that differ from the original, on purpose
+
+- **An unrecognised metric name raises** where the original silently treated
+  it as lower-is-better. On a run with a valid metric, the output is
+  identical.
 
 ### Reproducibility
 

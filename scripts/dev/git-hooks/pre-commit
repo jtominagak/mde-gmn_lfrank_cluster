@@ -1,0 +1,6 @@
+#!/bin/sh
+# Warn -- never block -- when a commit leaves clean_scripts/ behind scripts/.
+# Enabled per clone with:  git config core.hooksPath scripts/dev/git-hooks
+f="$(git rev-parse --show-toplevel)/scripts/dev/clean_sync.py"
+[ -f "$f" ] && python3 "$f" hook-pre-commit
+exit 0

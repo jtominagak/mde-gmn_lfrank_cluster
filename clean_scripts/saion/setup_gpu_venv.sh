@@ -15,7 +15,7 @@
 #
 # Why this exists: the pipeline needs a CUDA torch build AND every package the
 # CPU venv has (gmn, dimx/apps.*, pydiffmap, sklearn, networkx, matplotlib,
-# ...) AND -- just as important -- the CPU venv's sitecustomize.py, which
+# ...) AND -- just as important -- ../env/sitecustomize.py, which
 # patches pyEDM's per-call Pool spawning. Without that last one, jobs slow down
 # by an order of magnitude.
 #
@@ -26,7 +26,7 @@
 #      nodes top out at CUDA 12.8, and cu128+ wheels dropped Pascal (sm_60).
 #      The same wheel runs on the V100 nodes, which is what lets
 #      saion/submit_saion.sh send a job to either partition.
-#   3. Copies sitecustomize.py across.
+#   3. Installs ../env/sitecustomize.py, and warns if the CPU venv lacks it.
 #
 # Never touches pyproject.toml / uv.lock -- only
 # `uv pip ... --python <gpu venv>/bin/python`, which bypasses project mode.
@@ -71,13 +71,19 @@ echo "== pinning $(wc -l < "$reqs") packages from $CPU_VENV"
 echo "== installing $TORCH_SPEC from $TORCH_INDEX"
 "$UV" pip install --python "$GPU_VENV/bin/python" "$TORCH_SPEC" --index-url "$TORCH_INDEX"
 
+# The checked-in copy is the source of truth, not whatever the CPU venv holds.
 site_cpu="$("$CPU_VENV/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 site_gpu="$("$GPU_VENV/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-[ -f "$site_cpu/sitecustomize.py" ] || die "no sitecustomize.py in $site_cpu -- the pyEDM Pool fix is missing from the CPU venv too"
-cp -v "$site_cpu/sitecustomize.py" "$site_gpu/sitecustomize.py"
+SITECUSTOMIZE="$REPO_ROOT/clean_scripts/env/sitecustomize.py"
+[ -f "$SITECUSTOMIZE" ] || die "missing $SITECUSTOMIZE"
+cp -v "$SITECUSTOMIZE" "$site_gpu/sitecustomize.py"
+cmp -s "$SITECUSTOMIZE" "$site_cpu/sitecustomize.py" \
+    || echo "WARNING: the CPU venv's sitecustomize.py is missing or differs from $SITECUSTOMIZE -- install it there too (clean_scripts/env/README.md)" >&2
 
 # Static checks only (no imports of torch/CUDA here -- login nodes have no
-# CUDA libraries; the real import/CUDA checks are in saion-preflight.sbatch).
+# CUDA libraries). To check CUDA itself, from a GPU node:
+#   srun -p gpu-p100 --gres=gpu:1 -t 0:10:00 <gpu venv>/bin/python -c \
+#     'import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))'
 echo "== verifying"
 "$GPU_VENV/bin/python" - <<'EOF'
 import importlib.metadata as md, importlib.util, sys

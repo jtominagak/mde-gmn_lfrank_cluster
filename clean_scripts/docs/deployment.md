@@ -55,9 +55,11 @@ If that node cannot reach the internet, run the same command on the login node
 instead — installing pre-built wheels is data movement, not compilation.
 
 The script pins every package to the exact version in the CPU venv, except
-torch/triton/nvidia-*/cuda-*, and copies `sitecustomize.py` across. That last
+torch/triton/nvidia-*/cuda-*, and installs `env/sitecustomize.py`. That last
 one matters: it patches pyEDM's per-call `Pool` spawning, and without it jobs
-slow down by an order of magnitude.
+slow down by an order of magnitude. The CPU venv needs it too, installed by
+hand — see [`env/README.md`](../env/README.md); the script warns if it is
+missing there.
 
 ---
 

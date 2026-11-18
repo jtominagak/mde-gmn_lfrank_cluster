@@ -260,7 +260,14 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
                 # -- this is the depth-0 seed for the Stage-1 BFS (shared
                 # across every target in the group), so it needs the
                 # identical guard or the exact crash just relocates one
-                # level up.
+                # level up. A GPU memory failure stops the run instead, exactly
+                # as in the GMN_MODE='separate' branch below: it says nothing
+                # about the data, and recording zero drivers would cache a
+                # fabricated negative.
+                if mde.is_gpu_memory_failure(exc):
+                    print(f"{cfg['TARGETS']}: joint (multi-target) MDE call hit a GPU MEMORY failure: "
+                          f'{exc!r} -- STOPPING the run. {mde._GPU_MEMORY_STOP_ADVICE}', flush=True)
+                    raise
                 print(f"{cfg['TARGETS']}: joint (multi-target) MDE call FAILED: {exc!r} -- "
                       f'treating as a dead-end (zero drivers selected for every target)', flush=True)
                 shared_result = mde._failed_multi_mde_result(cfg['TARGETS'])
