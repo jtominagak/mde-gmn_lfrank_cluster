@@ -32,7 +32,9 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from grid import GRID  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
+from grid import GRID, spike_params  # noqa: E402
+from nulls import label_nulls  # noqa: E402
 
 FAMILY = {g['label']: g['family'] for g in GRID}
 STALL_FRAC = 0.1   # 'stalled' = generated (x, y) speed below 10% of the real median speed
@@ -76,6 +78,8 @@ def main():
     ap.add_argument('--manifest', required=True)
     ap.add_argument('--outputs', required=True)
     ap.add_argument('--out', required=True)
+    ap.add_argument('--data', default='/bucket/FukaiU/tominaga/pao_rotation/data/'
+                                       'J1620210605_epoch_8_freq_40_Hz.csv')
     args = ap.parse_args()
     out = Path(args.out)
     fig_dir = out / 'figures'
@@ -282,6 +286,48 @@ def main():
             fig.tight_layout()
             fig.savefig(fig_dir / 'onestep_vs_rollout.png', dpi=200)
             plt.close(fig)
+    # Null baselines (nulls.py): the representation's own no-new-spikes
+    # evolution for the unit traces, and mismatched starts for x/y.
+    raw = pd.read_csv(args.data)
+    byname = {g['label']: g for g in GRID}
+    nrows, mrows = [], []
+    for lab, files in examples.items():
+        if lab not in byname or not files:
+            continue
+        g = byname[lab]
+        d = job_dir(args.outputs, man.loc[man['label'] == lab, 'job_id'].iloc[0])
+        r_, m_ = label_nulls(lab, g['env']['SPIKE_TRANSFORM'], spike_params(g), d, raw, files,
+                             [80, 200, 400])
+        nrows += r_
+        mrows += m_
+        print(f'nulls: {lab} done', flush=True)
+    if nrows:
+        nd = pd.DataFrame(nrows)
+        nd['family'] = nd['label'].map(FAMILY)
+        nd.to_csv(out / 'neural_null_per_rollout.csv', index=False)
+        ng = nd.groupby(['label', 'family', 'horizon_s'])
+        ns = ng[['unit_corr_mean', 'unit_corr_mean_null', 'unit_nrmse_median', 'unit_nrmse_median_null',
+                 'frac_units_beating_null']].mean().reset_index()
+        ns.to_csv(out / 'neural_null_summary.csv', index=False)
+        md = pd.DataFrame(mrows)
+        md = md.merge(summ[['label', 'horizon_s', 'corr_xy_mean']], on=['label', 'horizon_s'], how='left')
+        md['corr_xy_excess'] = md['corr_xy_mean'] - md['corr_xy_mismatched']
+        md.to_csv(out / 'xy_mismatched_null.csv', index=False)
+        print(ns.round(3).to_string())
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharey=True)
+        for ax, h in zip(axes, (2.0, 5.0, 10.0)):
+            sub = ns[ns['horizon_s'] == h].sort_values('label')
+            x = np.arange(len(sub))
+            ax.bar(x - 0.2, sub['unit_nrmse_median'], 0.4,
+                   color=[COLORS.get(f, 'k') for f in sub['family']], label='network')
+            ax.bar(x + 0.2, sub['unit_nrmse_median_null'], 0.4, color='lightgray', label='no-new-spikes null')
+            ax.set_xticks(x, sub['label'], rotation=90, fontsize=7)
+            ax.set_title(f'unit traces, median NRMSE at {h:g} s (lower is better)')
+        axes[0].legend(fontsize=7)
+        fig.tight_layout()
+        fig.savefig(fig_dir / 'neural_vs_null.png', dpi=200)
+        plt.close(fig)
+        print(md.round(3).to_string())
     print(summ.to_string())
 
 
