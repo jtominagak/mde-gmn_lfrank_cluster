@@ -37,7 +37,7 @@ for z in (0.7, 0.9):
          EMBED_TAU=4)
 
 # Filled in after Stage I (see REPORT.md for how each was chosen).
-STAGE2_BASES = []
+STAGE2_BASES = ['tsls']   # the sawtooth is always a base; the model families' bests follow Stage I
 for base in STAGE2_BASES:
     src = next(g for g in GRID if g['label'] == base)
     for tau in (2, 6, 8):
