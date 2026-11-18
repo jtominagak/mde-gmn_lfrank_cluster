@@ -124,7 +124,7 @@ def main():
     g = roll.groupby(['label', 'family', 'horizon_s'])[have]
     summ = g.mean().add_suffix('_mean').join(g.std().add_suffix('_sd')).join(
         g.size().rename('n_starts')).reset_index()
-    summ['corr_xy_mean'] = summ[['corr_head_position_x_mean', 'corr_head_position_y_mean']].mean(1)
+    summ['corr_xy_mean'] = summ[['corr_head_position_x_mean', 'corr_head_position_y_mean']].mean(axis=1)
     summ.to_csv(out / 'rollout_summary.csv', index=False)
 
     if one:
@@ -209,6 +209,60 @@ def main():
         fig.tight_layout()
         fig.savefig(fig_dir / 'rollout_manifold.png', dpi=200)
         plt.close(fig)
+    # Example free runs: per family, the label best at 5 s, and its start
+    # closest to that label's median 5-s x/y correlation (a typical run, not
+    # the best one), real vs generated (x, y) over the 10-s rollout.
+    s5 = summ[summ['horizon_s'] == 5.0]
+    picks = []
+    for fam, grp in s5.groupby('family'):
+        lab = grp.sort_values('corr_xy_mean', ascending=False)['label'].iloc[0]
+        r5 = roll[(roll['label'] == lab) & (roll['horizon_s'] == 5.0)].copy()
+        r5['cxy'] = r5[['corr_head_position_x', 'corr_head_position_y']].mean(axis=1)
+        start = int(r5.iloc[(r5['cxy'] - r5['cxy'].median()).abs().argsort().iloc[0]]['start'])
+        picks.append((fam, lab, start, float(r5['cxy'].median())))
+    if picks:
+        fig, axes = plt.subplots(len(picks), 3, figsize=(13, 2.6 * len(picks)), squeeze=False)
+        for row, (fam, lab, start, med) in zip(axes, picks):
+            d = job_dir(args.outputs, man.loc[man['label'] == lab, 'job_id'].iloc[0])
+            gen = pd.read_csv(next(f for f in examples[lab] if f.endswith(f'_start{start}.csv')))
+            real = pd.read_csv(d / 'tsls_data_trimmed.csv', usecols=['head_position_x', 'head_position_y'])
+            rows = gen['row'].to_numpy()
+            tt = (rows - rows[0]) * 0.025
+            for ax, t in zip(row[:2], ('x', 'y')):
+                ax.plot(tt, real[f'head_position_{t}'].to_numpy()[rows], color='k', lw=1, label='real')
+                ax.plot(tt, gen[f'head_position_{t}'], color=COLORS.get(fam, 'C0'), lw=1, label='free run')
+                ax.set_title(f'{lab}: head position {t} (start row {start})', fontsize=8)
+            row[2].plot(real['head_position_x'].to_numpy()[rows], real['head_position_y'].to_numpy()[rows],
+                        color='k', lw=1)
+            row[2].plot(gen['head_position_x'], gen['head_position_y'], color=COLORS.get(fam, 'C0'), lw=1)
+            row[2].set_title(f'path; {lab} median 5-s x/y r = {med:.2f}', fontsize=8)
+            row[2].set_aspect('equal', 'datalim')
+        axes[0][0].legend(fontsize=7)
+        axes[-1][0].set_xlabel('time since rollout start (s)')
+        axes[-1][1].set_xlabel('time since rollout start (s)')
+        fig.tight_layout()
+        fig.savefig(fig_dir / 'rollout_example_xy.png', dpi=200)
+        plt.close(fig)
+
+    # Does one-step skill predict free-run quality? One point per label.
+    if isinstance(one, pd.DataFrame):
+        t1 = os_[os_['role'] == 'target'].set_index('label')
+        u1 = os_[os_['role'] == 'unit'].set_index('label')
+        r5 = s5.set_index('label')
+        common = [l for l in r5.index if l in t1.index]
+        if common:
+            fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+            for ax, src, name in ((axes[0], t1, 'targets (x, y)'), (axes[1], u1, 'unit nodes')):
+                ok = [l for l in common if l in src.index]
+                ax.scatter(src.loc[ok, 'skill_vs_persistence_median'], r5.loc[ok, 'corr_xy_mean'],
+                           c=[COLORS.get(FAMILY.get(l, '?'), 'k') for l in ok], s=25)
+                ax.set_xlabel(f'one-step skill vs persistence, median over {name}')
+                ax.axvline(0, color='gray', lw=0.6)
+            axes[0].set_ylabel('5-s free-run x/y correlation (mean over starts)')
+            axes[1].legend(handles=handles, fontsize=7)
+            fig.tight_layout()
+            fig.savefig(fig_dir / 'onestep_vs_rollout.png', dpi=200)
+            plt.close(fig)
     print(summ.to_string())
 
 
