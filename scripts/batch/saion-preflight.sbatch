@@ -51,7 +51,7 @@ set -uo pipefail
 
 # Defines the scoped roots PROJ_DIR, SLURM_LOG_DIR, WORK_BASE, BUCKET_PROJECT.
 # shellcheck source=../saion/saion_env.sh
-source "/home/j/j-tominaga/pao_rotation/scripts/saion/saion_env.sh"
+source "/home/j/j-tominaga/pao_rotation-exp-neuro/scripts/saion/saion_env.sh"
 VENV_PY="$PROJ_DIR/.venv-gpu/bin/python3"
 REPORT_DIR="$SLURM_LOG_DIR/preflight_${SLURM_JOB_ID}"
 mkdir -p "$REPORT_DIR"

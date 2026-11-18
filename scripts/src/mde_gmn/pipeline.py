@@ -54,7 +54,18 @@ from mde_gmn.gmn_build import build_network
 from mde_gmn.plots import draw_colored_network, plot_3d_network
 from mde_gmn.progress import _log_progress
 from mde_gmn.theta import run_theta_search
-from mde_gmn.tsls_data import burn_in_trim, convert_to_tsls, raw_neuron_columns
+from mde_gmn.rollout_eval import run_rollout_evaluation
+from mde_gmn.tsls_data import convert_units, raw_neuron_columns, select_units
+
+
+def preprocessing_digest(cfg):
+    '''Short hash of every setting that changes the converted signals or the
+    MDE embedding without changing the raw data file (exp/spike-conversion-neuro).'''
+    import hashlib
+    import json
+    desc = {k: cfg[k] for k in ('SPIKE_TRANSFORM', 'SPIKE_PARAMS', 'MIN_FIRING_RATE_HZ',
+                                'EMBED_TAU', 'NEURON_EVAL', 'NEURON_WINDOW_ROWS')}
+    return hashlib.sha256(json.dumps(desc, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def target_groups_for_mode(targets, gmn_mode):
@@ -119,9 +130,12 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
     print('Raw data shape:', df_raw.shape, flush=True)
 
     neuron_columns = raw_neuron_columns(df_raw, cfg['REGION_CHANNEL_CAP'])
-    print(f'{len(neuron_columns)} raw spike-count channels to TSLS-convert', flush=True)
-    tsls_df_full, obs_cols = convert_to_tsls(df_raw, neuron_columns, cfg['TARGETS'], cfg['RESULTS_DIR'])
-    df = burn_in_trim(tsls_df_full, obs_cols, cfg['RESULTS_DIR'])
+    print(f'{len(neuron_columns)} raw spike-count channels before pruning', flush=True)
+    # exp/spike-conversion-neuro: prune ultra-sparse units, then convert with
+    # SPIKE_TRANSFORM and apply the trim every method shares (convert_units).
+    neuron_columns = select_units(df_raw, neuron_columns, cfg['MIN_FIRING_RATE_HZ'],
+                                  cfg['LIB_RATIO'], cfg['RESULTS_DIR'])
+    df, obs_cols = convert_units(df_raw, neuron_columns, cfg['TARGETS'], cfg, cfg['RESULTS_DIR'])
 
     # Three-way A/B/end split -- see config.py's LIB_RATIO entry. Computed
     # against the TSLS-converted, burn-in-trimmed row count (len(df)), not the
@@ -191,6 +205,11 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
     print('Config:', {k: v for k, v in cfg.items() if k != 'TARGET_COLORS'}, flush=True)
 
     data_file_sha256 = _hash_file(cfg['DATA_DIR'] / cfg['DATA_FILE']) if cfg['REUSE_BEST_PARAMS'] else None
+    if data_file_sha256 is not None:
+        # Every stage fingerprint carries the data hash, but the converted
+        # signals depend on settings the raw file's hash cannot see. Folding
+        # them in here keys every stage on them at once.
+        data_file_sha256 = f'{data_file_sha256}+{preprocessing_digest(cfg)}'
     code_fingerprint = build_code_fingerprint(entry_path) if cfg['REUSE_BEST_PARAMS'] else None
 
     # ---- MDE (or its full-channel-pool stand-in for MODE='GMN') -------
@@ -496,6 +515,15 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
 
         generated = run['G'].DataOut
         generated.to_csv(cfg['RESULTS_DIR'] / f'gmn_generate_output_{network_id}.csv', index=False)
+
+    # exp/spike-conversion-neuro: rollout ensemble, one-step accuracy over the
+    # whole held-out segment, and the graph summary.
+    if cfg['ROLLOUT_N_STARTS'] > 0:
+        _log_progress(progress_log_path, 'rollout evaluation START')
+        rollout_start = time.perf_counter()
+        run_rollout_evaluation(gmn_runs, cfg, df, progress_log_path=progress_log_path)
+        _log_progress(progress_log_path,
+                      f'rollout evaluation END -- {time.perf_counter() - rollout_start:.1f}s')
 
     # ---- MDE-only diagnostics -------------------------------------------
     if cfg['MODE'] == 'MDE-GMN' and cfg['RUN_MDE_DIAGNOSTICS']:

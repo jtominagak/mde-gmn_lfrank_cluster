@@ -53,6 +53,81 @@ def convert_to_tsls(df_raw, neuron_columns, targets, results_dir):
     print(f'-> tsls_data_full.csv  shape={tsls_df_full.shape}', flush=True)
     return tsls_df_full, observable_columns
 
+def select_units(df_raw, neuron_columns, min_rate_hz, lib_ratio, results_dir):
+    '''Ultra-sparse unit pruning (exp/spike-conversion-neuro). Keeps a unit
+    when its mean firing rate over the first `lib_ratio` of the recording (the
+    library side, so no held-out row decides membership) is >= min_rate_hz,
+    and it fires at least once there. Writes retained_units.csv listing every
+    physical unit ID with its rate and whether it was kept.'''
+    t = df_raw['time_bin_center'].to_numpy()
+    n_lib = max(2, int(round(len(t) * lib_ratio)))
+    duration = float(t[n_lib - 1] - t[0]) or 1.0
+    counts = df_raw[neuron_columns].to_numpy()[:n_lib]
+    rates = counts.sum(axis=0) / duration
+    keep = (rates >= min_rate_hz) & (counts.sum(axis=0) > 0)
+    table = pd.DataFrame({'unit': neuron_columns, 'rate_hz_library': rates, 'kept': keep})
+    table.to_csv(results_dir / 'retained_units.csv', index=False)
+    kept = [c for c, k in zip(neuron_columns, keep) if k]
+    dropped = [c for c, k in zip(neuron_columns, keep) if not k]
+    print(f'Unit pruning (rate >= {min_rate_hz} Hz over the library rows): kept '
+          f'{len(kept)}/{len(neuron_columns)} units; dropped {len(dropped)}: {dropped}', flush=True)
+    return kept
+
+
+def convert_units(df_raw, neuron_columns, targets, cfg, results_dir):
+    '''exp/spike-conversion-neuro replacement for convert_to_tsls() +
+    burn_in_trim(): every method goes through here, the sawtooth included.
+
+    THE TRIM IS THE SAME FOR EVERY METHOD. The sawtooth is undefined before a
+    unit's first spike, so the parent branch drops rows until every unit has
+    fired once. The filters are defined from row 0 (zero initial state), but
+    if they kept those rows every method would get a different A/B/end split
+    and the rollouts would be scored on different held-out rows. So the trim
+    row is always computed from the spike times (the sawtooth's rule) and
+    applied to every method. The filters still integrate from row 0 of the
+    recording, so their state at the trim row is a real warm-started state,
+    not zero.
+
+    Returns (df, observable_columns) exactly as burn_in_trim() did:
+    `<unit>_tsls`-named columns (the suffix is kept so that every downstream
+    name-based rule still applies; on this branch it means "the converted
+    signal of this unit", whatever SPIKE_TRANSFORM produced).'''
+    from mde_gmn.spike_filters import transform_spikes
+
+    time_grid = df_raw['time_bin_center'].to_numpy()
+    spikes = df_raw[neuron_columns].to_numpy().astype(float)
+    fired = spikes > 0
+    first_spike_row = np.where(fired.any(axis=0), fired.argmax(axis=0), len(time_grid))
+    trim = int(first_spike_row.max()) if len(neuron_columns) else 0
+    if trim >= len(time_grid):
+        raise ValueError('some kept unit never fires -- prune it (MIN_FIRING_RATE_HZ)')
+    n_rows = len(time_grid) - trim
+    lib_rows = slice(trim, trim + int(round(n_rows * cfg['LIB_RATIO'])))
+
+    values, fitted = transform_spikes(cfg['SPIKE_TRANSFORM'], spikes, time_grid,
+                                      cfg['SPIKE_PARAMS'], lib_rows)
+    data = {'time_bin_center': time_grid}
+    for t in targets:
+        data[t] = df_raw[t].to_numpy()
+    observable_columns = [f'{n}_tsls' for n in neuron_columns]
+    for j, col in enumerate(observable_columns):
+        data[col] = values[:, j]
+    df = pd.DataFrame(data).iloc[trim:].reset_index(drop=True)
+    if df[observable_columns].isna().any().any():
+        raise ValueError('converted signals contain NaN after the trim -- this is a bug')
+
+    if 'sigma' in fitted:
+        pd.DataFrame({'unit': neuron_columns, 'naka_rushton_sigma': fitted['sigma']}).to_csv(
+            results_dir / 'naka_rushton_sigma.csv', index=False)
+    df.to_csv(results_dir / 'tsls_data_trimmed.csv', index=False)
+    print(f"Spike transform {cfg['SPIKE_TRANSFORM']!r} params={cfg['SPIKE_PARAMS']}", flush=True)
+    print(f'Common trim: dropped first {trim}/{len(time_grid)} rows ({trim / len(time_grid):.1%}) '
+          f'-- the last kept unit to fire is {neuron_columns[int(first_spike_row.argmax())]}',
+          flush=True)
+    print(f'-> tsls_data_trimmed.csv  shape={df.shape}', flush=True)
+    return df, observable_columns
+
+
 def burn_in_trim(tsls_df_full, observable_columns, results_dir):
     '''Drop leading rows until every observable_columns entry is non-NaN
     (see module docstring for why this is a correctness requirement for the
@@ -155,6 +230,13 @@ def _resolve_target_ranking_window(target, full_df, usable_df, lib_ratio,
     cap = min(max_window_rows, n_usable)
     if cap < 1:
         return None, 0
+
+    # exp/spike-conversion-neuro, NEURON_EVAL='full_trajectory': no event
+    # counting at all -- the neuron is scored over every row of a fixed
+    # window, the same way a behavioural target is. config.py passes
+    # min_pred_events=0 and max_window_rows=NEURON_WINDOW_ROWS for this.
+    if min_pred_events <= 0:
+        return cap, None
 
     usable_vals = usable_df[target].to_numpy()[:cap]
     near_zero_threshold = tsls.infer_near_zero_threshold_from_true_tsls(

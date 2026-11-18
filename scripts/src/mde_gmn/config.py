@@ -487,6 +487,8 @@ def load_config():
     # 'correlation' (or 'mae') for anything scored against a TARGETS column;
     # METRIC above is only for scoring predictions of the TSLS-converted
     # neuron columns themselves.
+    # (exp/spike-conversion-neuro: overridden to 'correlation' under the
+    # default NEURON_EVAL='full_trajectory' -- see _load_spike_conversion_experiment.)
     cfg['TARGET_METRIC'] = os.environ.get('TSLS_MDE_GMN_TARGET_METRIC', 'correlation')
     cfg['GAMMA_DELTA'] = int(os.environ.get('TSLS_MDE_GMN_GAMMA_DELTA', 2))
     # MODE='GMN' only (build_interaction_matrix() below) -- sweeps library
@@ -652,6 +654,98 @@ def load_config():
             f"TSLS_MDE_GMN_PARALLEL_MDE_SCOPE must be 'union' or 'staged', got "
             f"{cfg['PARALLEL_MDE_SCOPE']!r}")
 
+    _load_spike_conversion_experiment(cfg)
+
     cfg['TARGET_COLORS'] = {t: plt.get_cmap('tab10')(i % 10) for i, t in enumerate(cfg['TARGETS'])}
 
     return cfg
+
+
+def _load_spike_conversion_experiment(cfg):
+    '''Settings added on branch exp/spike-conversion-neuro. This branch is a
+    fork, so these are a METHOD SELECTOR and its parameters, not on/off
+    feature toggles: the sawtooth baseline is one of the methods, and every
+    method runs under the same evaluation below. See
+    docs/experiments/spike-conversion-neuro/REPORT.md.'''
+    # ---- Spike -> continuous representation ------------------------------
+    # 'tsls' (the parent branch's sawtooth), 'calcium' (Model A), 'adapt_nr'
+    # (Model B), 'theta_osc' (Model C) -- see mde_gmn/spike_filters.py.
+    cfg['SPIKE_TRANSFORM'] = os.environ.get('TSLS_MDE_GMN_SPIKE_TRANSFORM', 'tsls').strip().lower()
+    from mde_gmn.spike_filters import METHODS
+    if cfg['SPIKE_TRANSFORM'] not in METHODS:
+        raise ValueError(f"TSLS_MDE_GMN_SPIKE_TRANSFORM must be one of {METHODS}, "
+                         f"got {cfg['SPIKE_TRANSFORM']!r}")
+    # Time constants are given in MILLISECONDS (as in the experiment spec) and
+    # stored in seconds, the unit of time_bin_center.
+    p = {
+        'TAU_SYN': float(os.environ.get('TSLS_MDE_GMN_TAU_SYN_MS', 50)) / 1000.0,
+        'TAU_CA': float(os.environ.get('TSLS_MDE_GMN_TAU_CA_MS', 500)) / 1000.0,
+        'TAU_W': float(os.environ.get('TSLS_MDE_GMN_TAU_W_MS', 2500)) / 1000.0,
+        'ADAPT_A': float(os.environ.get('TSLS_MDE_GMN_ADAPT_A', 1.0)),
+        'NR_LAMBDA': float(os.environ.get('TSLS_MDE_GMN_NR_LAMBDA', 1.0)),
+        'NR_N': float(os.environ.get('TSLS_MDE_GMN_NR_N', 2.0)),
+        'NR_SIGMA': os.environ.get('TSLS_MDE_GMN_NR_SIGMA', 'median').strip().lower(),
+        'OSC_F0': float(os.environ.get('TSLS_MDE_GMN_OSC_F0_HZ', 8.0)),
+        'OSC_ZETA': float(os.environ.get('TSLS_MDE_GMN_OSC_ZETA', 0.7)),
+    }
+    # b, the spike-triggered adaptation kick. 'balanced' (default) sets
+    # b = tau_syn * tau_ca, which makes the direct kick and the a*c pathway
+    # contribute equal area to w per spike (the area of c per spike is
+    # tau_syn * tau_ca; the direct kick b/tau_w decaying with tau_w has area b).
+    _b = os.environ.get('TSLS_MDE_GMN_ADAPT_B', 'balanced').strip().lower()
+    p['ADAPT_B'] = p['TAU_SYN'] * p['TAU_CA'] if _b == 'balanced' else float(_b)
+    if p['NR_SIGMA'] not in ('median', 'p75'):
+        raise ValueError(f"TSLS_MDE_GMN_NR_SIGMA must be 'median' or 'p75', got {p['NR_SIGMA']!r}")
+    for k in ('TAU_SYN', 'TAU_CA', 'TAU_W', 'OSC_F0', 'OSC_ZETA', 'NR_N'):
+        if p[k] <= 0:
+            raise ValueError(f'spike-transform parameter {k} must be > 0, got {p[k]}')
+    cfg['SPIKE_PARAMS'] = p
+
+    # ---- Ultra-sparse unit pruning ----------------------------------------
+    # Units whose mean firing rate over the library rows is below this (Hz)
+    # are dropped before conversion; the kept/dropped unit IDs are written to
+    # retained_units.csv. 0 keeps every unit.
+    cfg['MIN_FIRING_RATE_HZ'] = float(os.environ.get('TSLS_MDE_GMN_MIN_FIRING_RATE_HZ', 0.1))
+
+    # ---- Evaluation ---------------------------------------------------------
+    # The parent branch scored neuron nodes with 'f1' over reset events and
+    # sized each neuron's window by counting those events (MIN_PRED_EVENTS) --
+    # both only defined for the sawtooth. 'full_trajectory' (default) scores
+    # every node over every row of a fixed window: METRIC becomes
+    # 'correlation' unless set explicitly, and each neuron node is scored
+    # over a fixed NEURON_WINDOW_ROWS window (implemented as MIN_PRED_EVENTS=0,
+    # MAX_WINDOW_ROWS=NEURON_WINDOW_ROWS; see _resolve_target_ranking_window).
+    # 'events' restores the parent branch's event-based evaluation.
+    cfg['NEURON_EVAL'] = os.environ.get('TSLS_MDE_GMN_NEURON_EVAL', 'full_trajectory').strip().lower()
+    if cfg['NEURON_EVAL'] not in ('full_trajectory', 'events'):
+        raise ValueError(f"TSLS_MDE_GMN_NEURON_EVAL must be 'full_trajectory' or 'events', "
+                         f"got {cfg['NEURON_EVAL']!r}")
+    cfg['NEURON_WINDOW_ROWS'] = int(os.environ.get('TSLS_MDE_GMN_NEURON_WINDOW_ROWS', 4000))
+    if cfg['NEURON_EVAL'] == 'full_trajectory':
+        if 'TSLS_MDE_GMN_METRIC' not in os.environ:
+            cfg['METRIC'] = 'correlation'
+        if cfg['METRIC'] in ('f1', 'gamma'):
+            raise ValueError("NEURON_EVAL='full_trajectory' needs a whole-series METRIC "
+                             "('correlation' or 'mae'), not an event metric")
+        cfg['MIN_PRED_EVENTS'] = 0
+        cfg['MAX_WINDOW_ROWS'] = cfg['NEURON_WINDOW_ROWS']
+    elif cfg['SPIKE_TRANSFORM'] != 'tsls':
+        raise ValueError("NEURON_EVAL='events' decodes sawtooth resets and is only "
+                         "defined for SPIKE_TRANSFORM='tsls'")
+
+    # Takens lag, in rows, used inside every proper_mde / CCM call (the
+    # univariate E auto-select and the CCM gate embeddings). The parent branch
+    # hard-codes 1. Read again by mde.embed_tau() from the environment, because
+    # the GPU builder's spawn workers never see a runtime-set global.
+    cfg['EMBED_TAU'] = int(os.environ.get('TSLS_MDE_GMN_EMBED_TAU', 1))
+    if cfg['EMBED_TAU'] < 1:
+        raise ValueError(f"TSLS_MDE_GMN_EMBED_TAU must be >= 1 (rows), got {cfg['EMBED_TAU']}")
+
+    # ---- Rollout ensemble (autonomous free runs) ---------------------------
+    # After the usual final Generate(), run ROLLOUT_N_STARTS more free runs of
+    # ROLLOUT_LENGTH rows each, from start rows spread evenly over the held-out
+    # segment [B, end), every one at the network's best theta, and score them
+    # at the ROLLOUT_HORIZONS_S horizons. 0 starts skips the step.
+    cfg['ROLLOUT_N_STARTS'] = int(os.environ.get('TSLS_MDE_GMN_ROLLOUT_N_STARTS', 8))
+    cfg['ROLLOUT_LENGTH'] = int(os.environ.get('TSLS_MDE_GMN_ROLLOUT_LENGTH', 400))
+    cfg['ROLLOUT_HORIZONS_S'] = _env_float_list('TSLS_MDE_GMN_ROLLOUT_HORIZONS_S', (2.0, 5.0, 10.0))
