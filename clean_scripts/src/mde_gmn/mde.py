@@ -183,6 +183,23 @@ def _leakage_safe_window(df, columns, prediction_start, prediction_length, delay
 # Forward selection, one target
 # =====================================================================
 
+# MDE_MIN_GAIN='surrogate': surrogate count and family-wise error rate for
+# the per-round threshold (edm._surrogate_gain_threshold).
+GAIN_SURROGATES = 19
+GAIN_SURROGATE_ALPHA = 0.05
+
+
+def stopping_rule_kwargs(min_gain):
+    '''proper_mde keyword arguments for one MDE_MIN_GAIN setting: None (keep
+    adding to D), a number (stop when the gain is not above it), or
+    'surrogate' (stop when no candidate beats the surrogate-calibrated
+    threshold, and never accept a non-improving one either).'''
+    if min_gain == 'surrogate':
+        return {'minGain': 0.0, 'gainSurrogates': GAIN_SURROGATES,
+                'gainSurrogateAlpha': GAIN_SURROGATE_ALPHA}
+    return {'minGain': min_gain}
+
+
 def run_mde_for_target(target, df, observable_columns, prediction_start, prediction_length,
                        mde_d, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
                        results_dir, delay_set, tp=1,
@@ -194,18 +211,18 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
                        reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                        data_file=None, data_file_sha256=None, code_fingerprint=None,
                        cache_stage='stage1', max_e=None, inner_workers=1, raw_columns=None,
-                       use_gpu=False):
+                       use_gpu=False, min_gain=None):
     '''Forward selection for one target: which candidates best predict it?
 
     Runs edm.proper_mde and returns its result in the shape this module's
     docstring describes.
 
     `mde_d` is already the *effective* dimension count (see
-    effective_mde_dimension()), which Stage 2 inflates by the number of lags
-    for an unrelated reason -- candidate-pool breadth, not embedding depth.
-    `max_e` is the RAW, un-inflated MDE_D, and bounds something different:
-    the per-candidate embedding-dimension auto-select sweep. Passing `mde_d`
-    for both would silently deepen every Stage 2 embedding.
+    effective_mde_dimension(): MDE_D capped at the pool size) and caps how
+    many columns are selected. `max_e`, the raw MDE_D, bounds something
+    different: each candidate's own embedding-dimension auto-select sweep.
+
+    `min_gain` is proper_mde's minGain stopping rule (config MDE_MIN_GAIN).
 
     E AND TAU ARE NOT FIXED HERE. E=0 asks proper_mde to auto-select the
     embedding dimension per candidate, capped at `max_e`. tau is simply not
@@ -289,6 +306,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
             is_behavioral_target, target_ranking_window_rows, min_pred_events, max_window_rows,
             window_rows, pred_event_count, ccm_lib_sizes_rows, ccm_sample, ccm_slope,
             data_file, data_file_sha256, code_fingerprint, cache_stage, max_e,
+            min_gain=min_gain,
         )
         cached = _load_cached_selection(prev_runs_dir, cache_filename, fingerprint,
                                         csv_path, target)
@@ -327,6 +345,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
             metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
             verbose=True, pool=inner_pool, column_delay=column_delay,
             column_observable=column_observable, use_gpu=use_gpu,
+            **stopping_rule_kwargs(min_gain),
         )
 
     mde_out = pd.DataFrame({'rho': result['MDErho']})
@@ -357,7 +376,7 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                               data_file=None, data_file_sha256=None, code_fingerprint=None,
                               cache_stage='stage1', E=3, max_e=10, target_aggregate='mean',
-                              use_gpu=False):
+                              use_gpu=False, min_gain=None):
     '''Forward selection once for a whole target group -- GMN_MODE='combined'.
 
     Picks drivers that JOINTLY predict every target at once, instead of
@@ -402,6 +421,7 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
             target_ranking_window_rows, window_rows, ccm_lib_sizes_rows,
             ccm_sample, ccm_slope,
             data_file, data_file_sha256, code_fingerprint, cache_stage, E, target_aggregate,
+            min_gain=min_gain,
         )
         cached = _load_cached_selection(prev_runs_dir, cache_filename, fingerprint,
                                         csv_path, targets_tag)
@@ -421,7 +441,7 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
         crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
         metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
         target_aggregate=target_aggregate,
-        verbose=True, use_gpu=use_gpu,
+        verbose=True, use_gpu=use_gpu, **stopping_rule_kwargs(min_gain),
     )
 
     mde_out = pd.DataFrame({'rho': result['MDErho']})
@@ -506,13 +526,24 @@ def ccm_prefilter_observables(df, candidate_columns, targets, prediction_start,
                               rho_min, e, tp, metric, target_metric, gamma_delta,
                               exclusion_radius, ccm_window_rows, ccm_sample,
                               libsize_ratios, cores):
-    '''Drop candidates that cannot be causal, before selection starts.
+    '''Drop candidates with no predictive skill for the targets, before
+    selection starts.
 
-    A cheap CCM(observable -> target) screen, run once per target group
-    rather than once per node. It covers both nested-MDE stages in one pass,
-    because Stage 2's lagged candidates are drawn from this same filtered
-    list of observables. Anything that fails the screen cannot be driving
-    the target, so paying for it in every later forward selection is waste.
+    WHAT IT MEASURES. The score is c2t: the target Tp rows ahead, predicted
+    from the CANDIDATE's own delay embedding, at the largest library size.
+    That is forward predictive skill -- the quantity MDE's ranking stage
+    ranks on -- not the CCM test for "candidate drives target". By the CCM
+    convention edm.proper_ccm documents, c2t convergence is evidence that the
+    TARGET influences the candidate; the candidate -> target test is t2c,
+    which proper_mde's own gate applies. So this is a relevance screen, and
+    the causal test still happens later, in the gate. (A t2c screen would be
+    a different screen, scored with the candidate's own metric and needing
+    its own threshold.)
+
+    Run once per target group rather than once per node, it covers both
+    nested-MDE stages, because Stage 2's lagged candidates are drawn from this
+    same filtered list. One consequence for deep nodes: a neuron enters any
+    node's pool only if it predicts the BEHAVIOURAL targets.
 
     Parameters are reused from elsewhere in the pipeline wherever one fits
     (Tp, the metrics, exclusionRadius, CCM_SAMPLE) or match proper_mde's own

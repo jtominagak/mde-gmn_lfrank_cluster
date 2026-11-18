@@ -83,7 +83,7 @@ def mde_node_universe(targets, raw_columns):
     return universe
 
 
-def _mde_stage_spec(cache_stage, df, candidate_universe, stage_delay_set, num_delays):
+def _mde_stage_spec(cache_stage, df, candidate_universe, stage_delay_set):
     '''The per-stage half of a precompute task: everything that differs
     between the parent pipeline's Stage 1 and Stage 2 executor.submit()
     sites but not between nodes within a stage.'''
@@ -92,7 +92,6 @@ def _mde_stage_spec(cache_stage, df, candidate_universe, stage_delay_set, num_de
         'df': df,
         'candidate_universe': candidate_universe,
         'delay_set': stage_delay_set,
-        'num_delays': num_delays,
     }
 
 
@@ -113,7 +112,7 @@ def _mde_call_arguments(spec, node, targets, raw_columns, nested_n, metric, targ
                        and observable_and_delay(c, raw_columns)[0] not in blocked]
     return {
         'candidate_pool': candidate_pool,
-        'effective_d': effective_mde_dimension(nested_n, candidate_pool, spec['num_delays']),
+        'effective_d': effective_mde_dimension(nested_n, candidate_pool),
         'is_behavioral_target': node in targets,
         # Metric-routing fix, same as both parent submit sites: a neuron
         # node must be scored by _metric_for()'s rule ('f1'), not by the
@@ -147,6 +146,7 @@ def _run_one_mde(node, spec, call, common, inner_workers=1):
         cache_stage=spec['cache_stage'],
         max_e=common['nested_n'], inner_workers=inner_workers,
         raw_columns=common['raw_columns'], use_gpu=common['use_gpu'],
+        min_gain=common.get('min_gain'),
     )
 
 
@@ -191,7 +191,11 @@ def _mde_result_for_node(node, spec, common, blocked, precomputed, recompute_cac
                                blocked=blocked)
     started = time.perf_counter()
     try:
-        result = _run_one_mde(node, spec, call, common)
+        # The replay is serial and nothing else is running, so the recompute
+        # gets every core as inner threads. With one thread, job 4799407
+        # spent 43,261s on 71 recomputes.
+        result = _run_one_mde(node, spec, call, common,
+                              inner_workers=max(1, common.get('cores', 1)))
     except Exception as exc:   # same policy as the precompute pool's own handler
         if mde.is_gpu_memory_failure(exc):
             print(f'parallelized MDE: {node} recompute hit a GPU MEMORY failure: {exc!r} '
@@ -339,6 +343,7 @@ def precompute_all_mde(tasks, stage_specs, common, cores, mp_start_method,
                 cache_stage=cache_stage,
                 max_e=common['nested_n'], inner_workers=inner_workers,
                 raw_columns=common['raw_columns'], use_gpu=common['use_gpu'],
+                min_gain=common.get('min_gain'),
             )
             pending[fut] = (cache_stage, node)
 
@@ -435,7 +440,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                               data_file=None, data_file_sha256=None, code_fingerprint=None,
                               progress_log_path=None, mp_start_method='fork', use_gpu=False,
-                              parallel_mde_scope='union'):
+                              min_gain=None, parallel_mde_scope='union'):
     '''Two-stage nested-MDE network construction, MODE='MDE-GMN' only --
     PARALLELIZED-MDE fork of tsls-mde-gmn.py's function of the same name.
     Same signature plus `parallel_mde_scope`, same return value, and (this
@@ -510,29 +515,22 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     graph = nx.MultiDiGraph()
     graph.add_nodes_from(targets)
 
-    stage1_num_delays = len(expanded_columns) // len(raw_columns)
-
     # expand_delay_columns() returns the raw columns first, then one column
     # per nonzero delay, so the tail is the lagged-only pool Stage 2 uses and
     # the whole thing is the combined pool scope='union' uses.
     stage2_df, stage2_expanded_columns = expand_delay_columns(expanded_df, raw_columns, lag_set)
     stage2_candidate_universe = stage2_expanded_columns[len(raw_columns):]
-    stage2_num_delays = len(lag_set)
     union_candidate_universe = stage2_expanded_columns
-    union_num_delays = len(lag_set) + 1
 
     # ZERO LAGS. DELAY_SOURCE='explicit' with DELAY_SET=0 resolves to an EMPTY
     # lag set (derive_lag_set() strips every 0 entry on that path), which
     # leaves Stage 2 with an empty candidate pool: nothing to select and
     # nothing to attach. Stage 2 is therefore skipped outright rather than run
-    # over an empty pool -- it has no work to do by construction, and
-    # effective_mde_dimension() would divide by stage2_num_delays == 0, which
-    # is how job 4774133 died (2026-10-27, ZeroDivisionError at the Stage 2
-    # handoff, after Stage 1 had completed). Guarding the division instead
-    # would invent an answer for a stage that should not run at all.
-    # scope='union' needs no such guard: union_num_delays counts the real
-    # observables too, so it is >= 1 for any lag set -- which is why
-    # job_4774136 completed where its staged twin crashed.
+    # over an empty pool -- it has no work to do by construction. (It is also
+    # how job 4774133 died, 2026-10-27: the D-per-delay arithmetic
+    # effective_mde_dimension() no longer does divided by len(lag_set) == 0.)
+    # scope='union' needs no skip: its pool always holds the real
+    # observables.
     run_stage2 = parallel_mde_scope == 'staged' and bool(lag_set)
 
     edges = []
@@ -544,14 +542,11 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # no barrier. See precompute_all_mde() and this module's docstring.
     # =====================================================================
     stage_specs = {
-        'stage1': _mde_stage_spec('stage1', expanded_df, expanded_columns,
-                                   delay_set, stage1_num_delays),
-        'stage2': _mde_stage_spec('stage2', stage2_df, stage2_candidate_universe,
-                                   lag_set, stage2_num_delays),
+        'stage1': _mde_stage_spec('stage1', expanded_df, expanded_columns, delay_set),
+        'stage2': _mde_stage_spec('stage2', stage2_df, stage2_candidate_universe, lag_set),
         # scope='union' only: real and lagged candidates in ONE pool, so each
         # node gets a single MDE call in which they compete directly.
-        'union': _mde_stage_spec('union', stage2_df, union_candidate_universe,
-                                  lag_set, union_num_delays),
+        'union': _mde_stage_spec('union', stage2_df, union_candidate_universe, lag_set),
     }
     common = {
         'targets': targets, 'raw_columns': raw_columns, 'nested_n': nested_n,
@@ -567,6 +562,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         'run_cache_dir': run_cache_dir, 'data_file': data_file,
         'data_file_sha256': data_file_sha256, 'code_fingerprint': code_fingerprint,
         'use_gpu': use_gpu,
+        'min_gain': min_gain, 'cores': cores,
     }
 
     universe = mde_node_universe(targets, raw_columns)

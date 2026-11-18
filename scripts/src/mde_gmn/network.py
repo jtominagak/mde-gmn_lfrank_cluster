@@ -182,7 +182,8 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                               lag_set,
                               reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                               data_file=None, data_file_sha256=None, code_fingerprint=None,
-                              progress_log_path=None, mp_start_method='fork', use_gpu=False):
+                              progress_log_path=None, mp_start_method='fork', use_gpu=False,
+                              min_gain=None):
     '''Two-stage nested-MDE network construction, MODE='MDE-GMN' only.
 
     STAGE 1 builds the backbone out of REAL (delay=0) observables. It starts
@@ -231,8 +232,6 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     graph = nx.MultiDiGraph()
     graph.add_nodes_from(targets)
 
-    stage1_num_delays = len(expanded_columns) // len(raw_columns)
-
     def _recomputed_stage1_result(node, result):
         """`result`, or a fresh serial Stage 1 MDE when `result` selected a
         real observable that is cycle-closing for `node`.
@@ -258,7 +257,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         try:
             return mde.run_mde_for_target(
                 node, expanded_df, pool, prediction_start, prediction_length,
-                effective_mde_dimension(nested_n, pool, stage1_num_delays),
+                effective_mde_dimension(nested_n, pool),
                 embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
                 results_dir, delay_set,
                 tp=tp, metric=metric,
@@ -271,8 +270,10 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                 reuse_cache=reuse_cache, prev_runs_dir=prev_runs_dir,
                 run_cache_dir=run_cache_dir, data_file=data_file,
                 data_file_sha256=data_file_sha256, code_fingerprint=code_fingerprint,
-                max_e=nested_n, inner_workers=1, raw_columns=raw_columns,
-                use_gpu=use_gpu,
+                # Serial (it has to see the graph as accepted so far), so it
+                # gets every core as inner threads rather than one.
+                max_e=nested_n, inner_workers=max(1, cores), raw_columns=raw_columns,
+                use_gpu=use_gpu, min_gain=min_gain,
             )
         except Exception as exc:
             if mde.is_gpu_memory_failure(exc):
@@ -290,7 +291,6 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # columns first, then one column per nonzero delay.
     stage2_df, stage2_expanded_columns = expand_delay_columns(expanded_df, raw_columns, lag_set)
     stage2_candidate_universe = stage2_expanded_columns[len(raw_columns):]
-    stage2_num_delays = len(lag_set)
 
     edges = []
     nested_mde_results = {}
@@ -353,7 +353,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                     # see _real_candidate_pool()'s docstring for why this
                     # is not equivalent to rejecting their edges afterwards.
                     candidate_pool = _real_candidate_pool(graph, node, expanded_columns, raw_columns)
-                    effective_d = effective_mde_dimension(nested_n, candidate_pool, stage1_num_delays)
+                    effective_d = effective_mde_dimension(nested_n, candidate_pool)
                     is_behav = (node in targets)
                     # Monitoring-log ETA input only -- see _preview_window_rows()'s
                     # own docstring for why this speculative resolve is safe and
@@ -396,7 +396,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                         run_cache_dir=run_cache_dir, data_file=data_file,
                         data_file_sha256=data_file_sha256, code_fingerprint=code_fingerprint,
                         max_e=nested_n, inner_workers=inner_workers, raw_columns=raw_columns,
-                        use_gpu=use_gpu,
+                        use_gpu=use_gpu, min_gain=min_gain,
                     )
                     futures[fut] = node
 
@@ -492,10 +492,9 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # lag set (derive_lag_set() strips every 0 entry on that path), which
     # leaves stage2_candidate_universe empty: nothing to select and nothing to
     # attach. Stage 2 is skipped outright rather than run over an empty pool
-    # -- it has no work to do by construction, and effective_mde_dimension()
-    # below would divide by stage2_num_delays == 0. The parallel builder died
-    # exactly there (job 4774133, 2026-10-27); this builder has the same
-    # arithmetic and would have failed the same way.
+    # -- it has no work to do by construction. (It also used to crash: the
+    # D-per-delay arithmetic effective_mde_dimension() no longer does divided
+    # by len(lag_set) == 0 -- job 4774133, 2026-10-27.)
     stage2_skipped = not lag_set
     if stage2_skipped:
         print('nested MDE (Stage 2): SKIPPED ENTIRELY -- the lag set is empty (zero lags), so '
@@ -543,7 +542,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
             for node, depth in wave_nodes:
                 candidate_pool = [c for c in stage2_candidate_universe
                                    if observable_and_delay(c, raw_columns)[0] != node]
-                effective_d = effective_mde_dimension(nested_n, candidate_pool, stage2_num_delays)
+                effective_d = effective_mde_dimension(nested_n, candidate_pool)
                 is_behav = (node in targets)
                 # Monitoring-log ETA input only -- see Stage 1's own
                 # identical comment above / _preview_window_rows()'s
@@ -575,7 +574,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                     data_file_sha256=data_file_sha256, code_fingerprint=code_fingerprint,
                     cache_stage='stage2',
                     max_e=nested_n, inner_workers=inner_workers2, raw_columns=raw_columns,
-                    use_gpu=use_gpu,
+                    use_gpu=use_gpu, min_gain=min_gain,
                 )
                 futures[fut] = node
 

@@ -283,7 +283,127 @@ sites.
 
 ---
 
-## 7. Diagnostics
+## 7. Forward selection and the free run
+
+### `MDE_D` — **a cap on embedding coordinates, lags included**
+
+`MDE_D` is the number of forward-selection rounds, so it caps how many columns
+a node selects, and every selected column becomes a coordinate of that node's
+S-map embedding. A lagged column counts like any other.
+
+It used to be multiplied by the number of delays per observable (×4 with three
+lags under `union`), on the reasoning that it should count distinct real
+observables. Nothing enforced that; the multiplier just let a node take four
+times as many columns of any kind. In job 4799407 the median node took 40
+columns — the inflated cap exactly — covering 22 distinct observables, mostly
+short lags of columns already chosen. A TSLS series at lag 1, 2 and 4 rows
+correlates 0.995 / 0.991 / 0.981 with itself and differs from `X(t) − k·dt`
+only when a spike fell inside the lag (1–4 % of rows), so those coordinates add
+little but a 40-dimensional S-map. That network's theta search took 290,824 s,
+against 54,551 s without lags.
+
+### `MDE_MIN_GAIN = 0` — **a stopping rule the reference algorithm lacks**
+
+The reference forward selection (dimx `Run.py`) keeps a candidate whenever its
+*cumulative* score clears `crossMapRhoMin`. Once a node's embedding scores
+well, a candidate that makes it worse still clears that bar, and selection runs
+to `MDE_D` whenever anything passes the CCM gate. In job 4799404 that accepted
+41.7 % of all edges at a **negative** marginal gain: one node peaked at
+f1 = 0.359 with 5 drivers and was handed 5 more, ending at 0.263, and the
+10-driver embedding is what GMN used.
+
+With `MDE_MIN_GAIN` set, from the second round on a candidate is only
+considered if it beats the last accepted score by more than this; selection
+stops when none does. `0` is the minimal version: never add a driver that
+leaves prediction no better. It does not account for noise: an f1 computed
+from ~20 reset events moves in steps of roughly 0.05, so gains far below that
+are not evidence of anything. A threshold calibrated against that granularity
+(or against surrogate drivers) is the obvious next step; `0` is not it.
+`none` restores the reference behaviour.
+
+Checked out of sample on job 4799404's data: selection on rows 0–16k at
+`Tp = 20`, then every prefix of the reference selection scored on rows
+16k–27.4k, which selection never saw. For the four neuron nodes that selected
+anything, out-of-sample f1 peaked at 1–2 drivers and fell to a half to a third
+of that peak at the 9–10 drivers the reference rule keeps (e.g. 0.279 → 0.141,
+0.230 → 0.074); `MDE_MIN_GAIN = 0` stopped at the peak in three of the four and
+one driver short of it in the fourth. For `head_position_x` out-of-sample
+correlation kept rising to 0.94 at 9 drivers, and `0` kept all 10. It also
+made the MDE call 7–10× faster for those neurons (≈15 s against 109–165 s).
+
+`MDE_MIN_GAIN = surrogate` replaces the fixed 0 with a per-node, per-round
+threshold: 19 surrogates (remaining candidates circularly shifted by a random
+¼–¾ of the window) give the null distribution of the round's score, and a
+candidate must beat its mean by `z·sd`, with `z` the normal `1 − 0.05/N`
+quantile for the `N` candidates the round compares (forward selection keeps
+the best of N, so the null has to be a maximum). It is cheap — a few percent
+of a ranking pass — but on the same check it **matched `0` on every neuron node
+and stopped `head_position_x` at 1 driver (out-of-sample 0.754) where the real
+optimum was 9 (0.941)**. Circular shifts keep any periodic structure, and
+behaviour on a track repeats lap after lap, so shifted behaviour-locked
+neurons stay partly informative and the null comes out too high. It is
+therefore an option, not the default.
+
+### `DELAY_SET = -16,-63,-173` — **derived from the recording's spike timing**
+
+A lagged TSLS copy `X(t−k)` says anything `X(t)` does not only when a spike
+fell in `(t−k, t]`; otherwise it is exactly `X(t) − k·dt`. That happens when
+`TSLS(t) < k` rows, so the fraction of rows in which lag `k` is informative is
+the CDF of the TSLS values, and the lag informative in a fraction `q` of rows
+is the `q`-quantile of TSLS (in rows). On the library rows (before
+`PREDICTION_START`) of `J1620210605_epoch_8_freq_40_Hz.csv`, over the 213
+neurons of job 4799404's network, median over neurons:
+
+| q | lag | IQR over neurons |
+|---|---|---|
+| 0.10 | 16 rows (400 ms) | 3–52 |
+| 0.25 | 63 rows (1.6 s) | 15–159 |
+| 0.50 | 173 rows (4.3 s) | 54–372 |
+
+Firing is bursty — median rate 0.35 Hz, median inter-spike interval 5 rows
+(125 ms) — so short lags are almost always redundant: the previous `-1,-2,-4`
+were informative in 1.2 %, 2.1 % and 3.5 % of rows. One shared set is a
+compromise across neurons whose rates differ by an order of magnitude;
+re-derive it for another recording the same way.
+
+### `GENERATE_NOISE = local_residual` — **why the free run goes quiet, and the fix**
+
+A deterministic free run iterates the model's *conditional mean*. For a TSLS
+node the next value is bimodal — `x + dt` (no spike) or ≈ 0 (spike) — and the
+mean, `(x + dt)(1 − p)`, is neither: it ramps too slowly and never resets. In
+job 4799404's free run, all 116 simulated nodes produced **zero** resets in 400
+steps, ramped at a fraction of the true 0.025/row, some ramped *downward*
+(which TSLS cannot do), and had a standard deviation of ~0.3 against ~2.9 in
+the recording.
+
+Small isotropic noise on every node — the trick spiking networks with
+inhibition use to keep activity alive — does not fix this. A spiking model has
+a threshold that turns noise into spikes; S-map has none, so the noise only
+jitters the mean path, and every downward wobble breaks TSLS's
+"step down only to reset" rule and scores as a spurious event.
+
+`local_residual` instead samples the conditional distribution: at each step it
+picks one of the node's E+1 nearest library analogues (Simplex weights) and
+adds that analogue's deviation from the neighbourhood mean to the S-map
+prediction (`gmn_embedding.local_residual_draw`). Resets then occur with the
+frequency the library shows at that state. It runs as one extra free run after
+the final one, writes `gmn_generate_output_<id>_stochastic.csv` and
+`generate_noise_comparison_<id>.csv`, and changes nothing else. One
+realization's pointwise score is expected to be *lower* than the deterministic
+run's, since the mean minimises squared error; judge it on reset counts and
+variability against the recording, averaged over seeds.
+
+### Start-offset sweep scores — **the winner is biased upwards**
+
+The start sweep picks the offset whose free run best matches the held-out data,
+and every score reported afterwards is at that offset, on that same data. In
+job 4799404 the 20 offsets, one row apart, scored 0.177–0.697, and the
+reported 0.697 was the maximum. `start_sweep_summary_<id>.csv` now records the
+mean and spread over offsets; quote the mean.
+
+---
+
+## 8. Diagnostics
 
 ### `RUN_MDE_EVALUATE = false` — **off because it can hang**
 
@@ -306,7 +426,7 @@ logged once per run so a skipped diagnostic is never silent.
 
 ---
 
-## 8. `GPU_ENABLED` and the multiprocessing start method
+## 9. `GPU_ENABLED` and the multiprocessing start method
 
 `GPU_ENABLED` gates the whole torch/CUDA path, and also decides the
 multiprocessing start method, because **CUDA does not support `fork()`** —

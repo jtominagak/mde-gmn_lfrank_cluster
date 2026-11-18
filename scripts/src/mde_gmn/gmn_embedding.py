@@ -300,6 +300,83 @@ def _generalized_embed(data, embedding_spec):
             f'does not own, so a name being present does not mean it has values.')
     return embedded, offset
 
+def _local_residual_draw(node, df, lib, val, seed):
+    '''One stochastic Generate() step: the S-map prediction `val` plus a
+    residual drawn from this node's own library analogues.
+
+    WHY. A deterministic Generate() iterates the CONDITIONAL MEAN of the next
+    value. For a TSLS series the next value is bimodal -- x + dt (no spike) or
+    ~0 (spike) -- and its mean, (x + dt)(1 - p), is neither: it ramps too
+    slowly and never resets. Iterated, it drifts smoothly instead of firing.
+    That is what job 4799404's free run shows: across all 116 simulated
+    nodes, 0 resets in 400 steps, ramps at 25-60% of the true 0.025/row
+    slope, some ramping DOWNWARD (OFC_201_tsls 17.04 -> 16.47), which TSLS
+    cannot do, and a standard deviation of ~0.3 against ~2.9 in the
+    recording. Adding the same small isotropic noise to every node (the
+    inhibitory-network trick) does not fix this. That trick works in a
+    spiking model because a threshold turns noise into spikes; S-map has no
+    threshold, so isotropic noise only jitters the mean path. It also breaks
+    TSLS's own constraints, since TSLS never steps down except to reset, and
+    every downward wobble scores as a spurious reset in the f1 decoder.
+
+    WHAT. Sample from the conditional distribution instead of its mean, in
+    the classic analogue / k-nearest-neighbour bootstrap way (Lall & Sharma
+    1996). Take the E+1 library states nearest the current state (Simplex's
+    own neighbourhood, Euclidean on the same raw coordinates pyEDM uses).
+    Pick ONE with Simplex's weights exp(-d/d_min), and add its deviation from
+    the weighted neighbourhood mean:
+
+        x(t+Tp) = S-map(t) + [ y_j - sum_i w_i y_i / sum_i w_i ]
+
+    If 1 neighbour in 20 is followed by a reset, a reset is drawn with
+    probability ~1/20 at that state, and lands near 0, because y_j is ~0 and
+    S-map ~ the neighbourhood mean. Off-reset draws continue the ramp at the
+    library's own slope. The noise is therefore state-dependent and has the
+    data's own shape, with no amplitude to tune. With an empty neighbourhood
+    (shouldn't happen) the deterministic value is returned.
+
+    `lib` is the same 1-based "start end" library pyEDM was given; a
+    neighbour's future must lie inside it. The KD-tree is built once per
+    node per Generate() and cached on the node, because the library never
+    changes during a run (only rows past it are appended). The RNG is seeded
+    from (`seed`, node name), so a given seed reproduces the run exactly.'''
+    state = getattr(node, '_analog_state', None)
+    if state is None:
+        from scipy.spatial import cKDTree
+        import zlib
+        cols = list(df.columns[1:])
+        target = node.Parameters.target + '(t-0)'
+        tp = int(node.Parameters.Tp)
+        lib_start, lib_end = (int(x) for x in str(lib).split())
+        X = df[cols].to_numpy(dtype=float)[lib_start - 1:lib_end - tp]
+        Y = df[target].to_numpy(dtype=float)[lib_start - 1 + tp:lib_end]
+        ok = np.all(np.isfinite(X), axis=1) & np.isfinite(Y)
+        X, Y = X[ok], Y[ok]
+        state = {
+            'cols': cols,
+            'tree': cKDTree(X) if len(X) else None,
+            'Y': Y,
+            'k': min(len(cols) + 1, len(X)),
+            'rng': np.random.default_rng([int(seed), zlib.crc32(node.name.encode())]),
+        }
+        node._analog_state = state
+
+    if state['tree'] is None or state['k'] < 1:
+        return val
+    # The state the prediction was made from: row N+1-Tp (see the pred range).
+    query = df[state['cols']].to_numpy(dtype=float)[-int(node.Parameters.Tp)]
+    if not np.all(np.isfinite(query)):
+        return val
+    dist, idx = state['tree'].query(query, k=state['k'])
+    dist, idx = np.atleast_1d(dist), np.atleast_1d(idx)
+    d_min = max(float(dist[0]), 1e-6)
+    w = np.exp(-dist / d_min)
+    w = w / w.sum()
+    y = state['Y'][idx]
+    j = state['rng'].choice(len(idx), p=w)
+    return float(val + (y[j] - float(np.dot(w, y))))
+
+
 _real_node_init = gmn.Node.__init__
 
 def _generalized_node_init(self, args, Network, nodeName):
@@ -549,7 +626,20 @@ def _generalized_node_generate(self, lastDataOut):
         print( 'lastDataOut:' ); print( lastDataOut, flush = True )
 
     if not ( lastDataOut is None ):
-        self.data = pd.concat( [ self.data, lastDataOut ] )
+        # Append only THIS node's own columns. gmn's Generate.py appends the
+        # whole step row, which carries every node in the network, so after
+        # the first step every node's frame was as wide as the network:
+        # memory and per-step copying both grew as nodes^2 * rows. That is
+        # what killed job 4799407 (800 nodes x 800 columns x ~33k rows x 8 B
+        # is ~170 GB per Generate(), against 240 GB requested) and most of
+        # the 65 min each Generate() took in job 4799404. A node's embedding
+        # only ever reads its own columns (time, its predecessors, itself),
+        # and those are exactly self.data's columns from __init__, so the
+        # values every SMap call sees are unchanged. The extra columns were
+        # also the hazard _generalized_embed()'s WHICH BRANCH WINS note
+        # describes: NaN placeholders that a raw-name lookup could hit.
+        self.data = pd.concat(
+            [self.data, lastDataOut.reindex(columns=self.data.columns)])
 
     graph = self.Network.Graph
     is_external = self.name in graph.graph.get('external_inputs', set())
@@ -613,7 +703,16 @@ def _generalized_node_generate(self, lastDataOut):
         if len( Parameters.pred ) and not Parameters.pred.isspace():
             pred = Parameters.pred
         else:
-            pred = "%d %d" % ( df.shape[0] - 1, df.shape[0] )
+            # The new row is N+1. A Tp-step map predicts it from the state at
+            # row N+1-Tp, so that is the last pred row and iloc[-1] below is
+            # its prediction for row N+1. With Tp=1 this is gmn's own "N-1 N".
+            # gmn predicted from row N whatever Tp was and appended the
+            # result as row N+1, which for Tp>1 compresses time by a factor
+            # of Tp: every step jumped Tp rows ahead but advanced one. With
+            # this, a Tp-step model generates as Tp interleaved chains, each
+            # advancing Tp rows per prediction and all sharing their inputs.
+            tp = int(Parameters.Tp)
+            pred = "%d %d" % ( df.shape[0] - tp, df.shape[0] + 1 - tp )
 
         S = self.Function( dataFrame       = df,
                            lib             = lib,
@@ -636,6 +735,10 @@ def _generalized_node_generate(self, lastDataOut):
         if abs( val ) > 1E15 :
             raise RuntimeError( "Generate:SMap() Node: " + self.name +\
                                 "   Divergence detected (>1E15)" )
+
+        noise = graph.graph.get('generate_noise') or {}
+        if noise.get('mode', 'none') == 'local_residual':
+            val = _local_residual_draw(self, df, lib, val, noise.get('seed', 0))
 
     elif self.FunctionType.value == FunctionType.kedmSimplex.value :
         data_ = data[ Parameters.columns ] # DataFrame; includes target

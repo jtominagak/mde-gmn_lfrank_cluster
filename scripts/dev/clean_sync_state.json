@@ -7,8 +7,8 @@
    "synced_on": "2026-11-18"
   },
   "scripts/batch/saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch": {
-   "blob": "9c0d92aa32698666c5ef0f323661accb0a0cc571",
-   "head": "74e996d",
+   "blob": "472c65c4ad8e0b4978cca503c17e910d5db54d19",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
@@ -49,8 +49,8 @@
    "synced_on": "2026-11-18"
   },
   "scripts/src/cleaned_helper_functions.py": {
-   "blob": "a16e22d4f33a759be47e3955260e8f1448618bff",
-   "head": "74e996d",
+   "blob": "575a478c702275428ca7ecf52753007f3ed76924",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
@@ -73,20 +73,20 @@
    "synced_on": "2026-11-18"
   },
   "scripts/src/mde_gmn/caching.py": {
-   "blob": "850933e9d08c932150eb7cb25eb7c5f3628b3f64",
-   "head": "74e996d",
+   "blob": "67325e79b5ec878cbbf2ce50cd628ab55102aaa5",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
   "scripts/src/mde_gmn/columns.py": {
-   "blob": "04a6fb08e34df97aa103d5418c65e1b003364cfe",
-   "head": "74e996d",
+   "blob": "ac60e5ff9b7d36f2a8e84c9e4ca8b737577b4557",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
   "scripts/src/mde_gmn/config.py": {
-   "blob": "8fa8e7d6bf7458736cf3529896edc75bbe5eb7dd",
-   "head": "74e996d",
+   "blob": "e890945004756de4525707cf6f65663666a5af61",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
@@ -97,44 +97,44 @@
    "synced_on": "2026-11-18"
   },
   "scripts/src/mde_gmn/generate.py": {
-   "blob": "50c429352b29546a69d7ba0b8b7aa1108d4ce25c",
-   "head": "74e996d",
+   "blob": "c66e6967215a9677e2fbe1dd2d1c966fb18696ff",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
   "scripts/src/mde_gmn/gmn_build.py": {
-   "blob": "de6a37d4100dfd568ee7ad1466e77b6a6992d391",
-   "head": "74e996d",
+   "blob": "4f8758bbe3d7daba27b1e852faf477f2aca4e549",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
   "scripts/src/mde_gmn/gmn_embedding.py": {
-   "blob": "bcd5d14c496d88e7c82e2d026eac5681a7847507",
-   "head": "74e996d",
+   "blob": "704f6707789147796dfe89746b00ff61d94bceb5",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
   "scripts/src/mde_gmn/mde.py": {
-   "blob": "3359fc0f9848fdfb272d5d528b708cd2dbfb080f",
-   "head": "74e996d",
+   "blob": "5e15cbc04280b0f4376b51e6572064adc21105f5",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
   "scripts/src/mde_gmn/network.py": {
-   "blob": "832c704ed42222f470a6df8ba12b57f6828772d8",
-   "head": "74e996d",
+   "blob": "82e2c4b1643d2c9db0ff46ed7be571c0313c56eb",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
   "scripts/src/mde_gmn/network_parallel.py": {
-   "blob": "726bde81cf5260931792517d6a9fd028c37f0c46",
-   "head": "74e996d",
+   "blob": "3cea6e0982b88e1e61be0357e2cd38f64c5c8626",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
   "scripts/src/mde_gmn/pipeline.py": {
-   "blob": "ff3d0eca231a19f4ebf9571a099b779916105cb9",
-   "head": "74e996d",
+   "blob": "c36639eaa107bceda967f6d3b5cc5217cde60044",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
@@ -151,8 +151,8 @@
    "synced_on": "2026-11-18"
   },
   "scripts/src/mde_gmn/theta.py": {
-   "blob": "a1d5834fcb05f7e35fef14e415a4000c38691adc",
-   "head": "74e996d",
+   "blob": "444fa3decae773541c5903660c9ec92d05dd89d7",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
@@ -175,8 +175,14 @@
    "synced_on": "2026-11-18"
   },
   "tests/_pipeline_test_utils.py": {
-   "blob": "35590d97f36b0220f3a0163f68620faad668c172",
-   "head": "74e996d",
+   "blob": "017bd058a0e51df6bd7735613bafff4b4d310e11",
+   "head": "61ec193",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
+  "tests/test_gmn_stage_fixes.py": {
+   "blob": "e40d201222ce03d1312c25e2ad2e6d732c9902b4",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },
@@ -216,9 +222,15 @@
    "note": "",
    "synced_on": "2026-11-18"
   },
+  "tests/test_mde_stopping_and_memo.py": {
+   "blob": "ba7014fa5f81519c5ea83acf00e84626c58db0fa",
+   "head": "61ec193",
+   "note": "",
+   "synced_on": "2026-11-18"
+  },
   "tests/test_metric_routing_depth_ge1.py": {
-   "blob": "48c89554bf27431a564778e9d4f04cd40d1802c0",
-   "head": "74e996d",
+   "blob": "beb435b63ee3f50e88cf9ce83d5f77b3139bc910",
+   "head": "61ec193",
    "note": "",
    "synced_on": "2026-11-18"
   },

@@ -150,12 +150,13 @@ def derive_lag_set(delay_source, explicit_delay_set, lag_mode, lag_density, lag_
 
     return list(range(-1, -depth - 1, -step))
 
-def effective_mde_dimension(mde_d, candidate_columns, num_delays):
-    '''MDE_D names the desired count of distinct *real* observables MDE
-    should be able to select -- not delay-expanded columns. Each real
-    observable occupies `num_delays` separate candidate columns (one per
-    delay), so the D actually handed to proper_mde is scaled up by
-    num_delays. Capped at the number of real observables actually present in
-    this call's own candidate pool, since MDE cannot pick more than exist.'''
-    num_real_observables_available = len(candidate_columns) // num_delays
-    return min(mde_d, num_real_observables_available) * num_delays
+def effective_mde_dimension(mde_d, candidate_columns):
+    '''The D handed to proper_mde: MDE_D, capped at the size of the pool.
+
+    D is the number of forward-selection rounds, so it caps how many columns
+    a node selects, and each selected column becomes one coordinate of that
+    node's S-map embedding. It is a cap on embedding dimension, and it means
+    the same thing with or without lags: a lagged column counts against it
+    like any other. (It used to be multiplied by the number of delays per
+    observable; see docs/parameters.md, MDE_D, for why that was dropped.)'''
+    return min(mde_d, len(candidate_columns))

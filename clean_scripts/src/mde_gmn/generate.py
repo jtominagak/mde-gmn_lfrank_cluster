@@ -51,7 +51,7 @@ from mde_gmn.gmn_build import build_gmn_config
 from mde_gmn.gmn_embedding import network_max_embedding_offset
 from mde_gmn.network import simulated_nodes
 from mde_gmn.progress import _log_progress
-from mde_gmn.theta import evaluate_smap_candidate
+from mde_gmn.theta import evaluate_smap_candidate, generate_memo_key
 from mde_gmn.tsls_data import _metric_for, network_data_frame
 
 
@@ -115,22 +115,35 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
                 print(f'{network_id}: resumed start-sweep checkpoint, '
                       f'{len(scores)}/{len(start_offsets)} offsets already done', flush=True)
 
+        # Shared with rebuild_at_best_params(), so the winning offset's free
+        # run is not computed twice. Only the best-so-far offset's G is kept
+        # (each holds every node's frame), so memory stays at one free run.
+        memo = run.setdefault('generate_memo', {})
+        best_key, best_score = None, -np.inf
         for offset in start_offsets:
             if offset in scores and not np.isnan(scores[offset]):
                 continue
 
             generate_start = generate_validation_start + offset
+            key = generate_memo_key(generate_start, generate_length, exclusion_radius, node_theta)
             try:
                 score, _, _ = evaluate_smap_candidate(
                     net_result, prediction_start, prediction_length,
                     node_theta, f'startsweep_offset{offset}', results_dir, cores,
                     target_metric, gamma_delta,
                     generate_length=generate_length, generate_start=generate_start,
-                    exclusion_radius=exclusion_radius,
+                    exclusion_radius=exclusion_radius, memo=memo,
                 )
             except Exception as exc:
                 print(f'{network_id}: start offset {offset} FAILED: {exc!r} -- scoring as NaN', flush=True)
                 score = np.nan
+
+            if not np.isnan(score) and score > best_score:
+                if best_key is not None:
+                    memo.pop(best_key, None)
+                best_key, best_score = key, score
+            else:
+                memo.pop(key, None)
 
             scores[offset] = score
             with open(checkpoint_file, 'wb') as f:
@@ -146,6 +159,7 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
         best_starts[network_id] = generate_validation_start + best_offset
         print(f'{network_id}: best generate start = row {best_starts[network_id]} '
               f'(offset {best_offset}, score={scores.get(best_offset, float("nan")):.4f})', flush=True)
+        _report_start_sweep_distribution(network_id, scores, best_offset, results_dir)
 
         if sweep_fingerprint is not None:
             save_json_to_cache(
@@ -169,6 +183,34 @@ def sweep_generate_start(gmn_runs, theta_search_results, prediction_start, predi
         plt.close(fig)
 
     return best_starts
+
+def _report_start_sweep_distribution(network_id, scores, best_offset, results_dir):
+    '''The honest summary of a start-offset sweep, printed and written to
+    start_sweep_summary_<network_id>.csv.
+
+    The sweep picks the offset whose free run best matches the held-out data,
+    and everything reported afterwards is computed at that offset on that
+    SAME data. The winning score is the maximum of N noisy draws, an
+    optimistically biased estimate of generative skill; the mean and spread
+    over offsets are the unbiased figures.'''
+    vals = np.array([v for v in scores.values() if not np.isnan(v)], dtype=float)
+    if len(vals) < 2:
+        return
+    summary = {
+        'network_id': network_id, 'n_offsets': len(vals),
+        'mean': float(vals.mean()), 'sd': float(vals.std(ddof=1)),
+        'min': float(vals.min()), 'median': float(np.median(vals)), 'max': float(vals.max()),
+        'selected_offset': best_offset, 'selected_score': float(scores[best_offset]),
+    }
+    print(f"{network_id}: start sweep over {summary['n_offsets']} offsets -- "
+          f"mean {summary['mean']:.4f} +/- {summary['sd']:.4f} (sd), range "
+          f"{summary['min']:.4f}-{summary['max']:.4f}. The selected offset's "
+          f"{summary['selected_score']:.4f} is the MAXIMUM over offsets, scored on the "
+          f"same held-out data it was selected on: quote the mean as the model's "
+          f"generative skill.", flush=True)
+    pd.DataFrame([summary]).to_csv(results_dir / f'start_sweep_summary_{network_id}.csv',
+                                   index=False)
+
 
 def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, prediction_length,
                             results_dir, cores, metric, target_metric, gamma_delta,
@@ -195,6 +237,9 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
 
         generate_rebuild_start = time.perf_counter()
         _log_progress(progress_log_path, f'{network_id}: FINAL Generate() rebuild START')
+        # The start sweep has usually run this exact free run already.
+        memo_hit = run.get('generate_memo', {}).get(
+            generate_memo_key(generate_start, generate_length, exclusion_radius, node_theta))
         try:
             config_file = build_gmn_config(
                 net_result, prediction_start, prediction_length, results_dir,
@@ -202,8 +247,13 @@ def rebuild_at_best_params(gmn_runs, theta_search_results, prediction_start, pre
                 variant='best', generate_length=generate_length, generate_start=generate_start,
                 exclusion_radius=exclusion_radius,
             )
-            G = gmn.GMN( configFile = str(config_file), cores = cores )
-            G.Generate()
+            if memo_hit is not None:
+                G = memo_hit[2]
+                print(f'{network_id}: FINAL Generate() at row {generate_start} was already run by '
+                      f'the start sweep -- reusing it', flush=True)
+            else:
+                G = gmn.GMN( configFile = str(config_file), cores = cores )
+                G.Generate()
         except Exception as exc:
             print(f'{network_id}: FINAL Generate() rebuild FAILED: {exc!r} -- '
                   f'skipping this network (no plots/fidelity/output for it)', flush=True)
@@ -455,3 +505,93 @@ def plot_fidelity(rho, network_id, save_path):
     fig.tight_layout()
     fig.savefig(save_path, dpi=300)
     plt.close(fig)
+
+
+def run_stochastic_generate(gmn_runs, prediction_start, prediction_length, results_dir, cores,
+                            metric, target_metric, gamma_delta, generate_length,
+                            exclusion_radius, noise_mode, noise_seed, progress_log_path=None):
+    '''One extra, STOCHASTIC free run per network, beside the deterministic one.
+
+    Same network, theta, start row and length as the final Generate(), with
+    gmn_embedding.local_residual_draw() switched on, so each step samples the
+    model's conditional distribution instead of following its mean (see that
+    function for why plain additive noise was not used). Nothing selected or
+    reported elsewhere changes. Writes:
+      gmn_generate_output_<id>_stochastic.csv   the stochastic trajectories
+      generate_noise_comparison_<id>.csv        per simulated node: each run's
+          score (own metric), the reset-event counts of the recording and of
+          each run, and each series' standard deviation.
+    One realization's pointwise score is EXPECTED to be lower than the
+    deterministic run's -- the conditional mean minimises squared error by
+    construction. Judge it on event counts and variability against the
+    recording, and on scores averaged over several seeds.
+
+    A failure is logged and that network skipped, never fatal.'''
+    for network_id, run in gmn_runs.items():
+        if 'G' not in run:
+            continue
+        net_result = run['net_result']
+        started = time.perf_counter()
+        _log_progress(progress_log_path, f'{network_id}: stochastic Generate() START '
+                                         f'(mode={noise_mode}, seed={noise_seed})')
+        try:
+            config_file = build_gmn_config(
+                net_result, prediction_start, prediction_length, results_dir,
+                mode='Generate', node_theta_overrides=run['best_node_theta'],
+                variant='stochastic', generate_length=generate_length,
+                generate_start=run['generate_start'], exclusion_radius=exclusion_radius,
+            )
+            G = gmn.GMN( configFile = str(config_file), cores = cores )
+            G.Network.Graph.graph['generate_noise'] = {'mode': noise_mode, 'seed': noise_seed}
+            G.Generate()
+        except Exception as exc:
+            print(f'{network_id}: stochastic Generate() FAILED: {exc!r} -- skipped', flush=True)
+            _log_progress(progress_log_path, f'{network_id}: stochastic Generate() END -- FAILED')
+            continue
+
+        stochastic = G.DataOut.reset_index(drop=True)
+        deterministic = run['G'].DataOut.reset_index(drop=True)
+        stochastic.to_csv(results_dir / f'gmn_generate_output_{network_id}_stochastic.csv',
+                          index=False)
+        actual_df = network_data_frame(net_result)
+        start, n = run['generate_start'], len(stochastic)
+        graph = (net_result.get('network') or {}).get('Graph')
+        if graph is None:
+            with open(net_result['NETWORK_FILE'], 'rb') as f:
+                graph = pickle.load(f)['Graph']
+
+        rows = []
+        for node in simulated_nodes(graph):
+            if node not in stochastic.columns:
+                continue
+            real = actual_df[node].to_numpy(dtype=float)[start:start + n]
+            det = deterministic[node].to_numpy(dtype=float)
+            sto = stochastic[node].to_numpy(dtype=float)
+            node_metric = _metric_for(node, net_result['targets'], metric, target_metric)
+            row = {'node': node, 'metric': node_metric,
+                   'score_deterministic': edm._score(real, det, node_metric, gammaDelta=gamma_delta),
+                   'score_stochastic': edm._score(real, sto, node_metric, gammaDelta=gamma_delta),
+                   'sd_real': float(np.nanstd(real)), 'sd_deterministic': float(np.nanstd(det)),
+                   'sd_stochastic': float(np.nanstd(sto))}
+            if node_metric == 'f1':
+                thr = edm.infer_near_zero_threshold_from_true_tsls(real)
+                row['events_real'] = len(edm.detect_reset_events_from_tsls(real, thr))
+                row['events_deterministic'] = len(
+                    edm.detect_reset_events_from_prediction(det, real, thr))
+                row['events_stochastic'] = len(
+                    edm.detect_reset_events_from_prediction(sto, real, thr))
+            rows.append(row)
+        table = pd.DataFrame(rows)
+        table.to_csv(results_dir / f'generate_noise_comparison_{network_id}.csv', index=False)
+
+        neurons = table[table['metric'] == 'f1'] if len(table) else table
+        if len(neurons):
+            print(f"{network_id}: stochastic vs deterministic free run, {len(neurons)} neuron "
+                  f"node(s): reset events real={int(neurons['events_real'].sum())} "
+                  f"deterministic={int(neurons['events_deterministic'].sum())} "
+                  f"stochastic={int(neurons['events_stochastic'].sum())}; median sd ratio "
+                  f"(run/real) deterministic={np.nanmedian(neurons['sd_deterministic'] / neurons['sd_real']):.2f} "
+                  f"stochastic={np.nanmedian(neurons['sd_stochastic'] / neurons['sd_real']):.2f}",
+                  flush=True)
+        _log_progress(progress_log_path, f'{network_id}: stochastic Generate() END -- '
+                                         f'{time.perf_counter() - started:.1f}s')

@@ -48,6 +48,7 @@ from mde_gmn.diagnostics import (
     run_mde_evaluate, run_tp_vs_rho_sweep, run_univariate_e_tau_grid)
 from mde_gmn.generate import (
     gmn_fidelity_rho, plot_fidelity, rebuild_at_best_params, run_forecast_diagnostic,
+    run_stochastic_generate,
     sweep_generate_start)
 from mde_gmn.gmn_build import build_network
 from mde_gmn.plots import draw_colored_network, plot_3d_network
@@ -234,7 +235,7 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
             # behaviour), and the diagnostics plots/sweeps below -- keeps
             # working completely unchanged.
             candidate_pool = [c for c in filtered_pools[tuple(cfg['TARGETS'])] if c not in cfg['TARGETS']]
-            effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
+            effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool)
             depth0_start = time.perf_counter()
             _log_progress(progress_log_path, f"depth0 joint MDE START -- targets={cfg['TARGETS']}")
             try:
@@ -253,7 +254,7 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
                     data_file=cfg['DATA_FILE'], data_file_sha256=data_file_sha256,
                     code_fingerprint=code_fingerprint,
                     E=0, max_e=cfg['MULTI_MDE_E'], target_aggregate=cfg['MULTI_MDE_TARGET_AGGREGATE'],
-                    use_gpu=cfg['GPU_ENABLED'],
+                    use_gpu=cfg['GPU_ENABLED'], min_gain=cfg['MDE_MIN_GAIN'],
                 )
             except Exception as exc:
                 # Same failure mode mde._failed_mde_result() guards against below
@@ -279,7 +280,7 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
         else:
             for target in cfg['TARGETS']:
                 candidate_pool = [c for c in filtered_pools[(target,)] if c != target]
-                effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool, 1)
+                effective_d = effective_mde_dimension(cfg['MDE_D'], candidate_pool)
                 depth0_start = time.perf_counter()
                 _log_progress(progress_log_path, f'depth0 MDE START -- {target}')
                 try:
@@ -308,7 +309,7 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
                         # split, this depth-0 seed call gets the FULL core
                         # budget for its own inner pool.
                         inner_workers=max(1, cfg['CORES']),
-                        use_gpu=cfg['GPU_ENABLED'],
+                        use_gpu=cfg['GPU_ENABLED'], min_gain=cfg['MDE_MIN_GAIN'],
                     )
                 except Exception as exc:
                     # Same failure mode mde._failed_mde_result() guards against
@@ -371,6 +372,7 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
             mp_start_method=cfg['MP_START_METHOD'],
             use_gpu=cfg['GPU_ENABLED'],
             network_builder=network_builder,
+            min_gain=cfg['MDE_MIN_GAIN'],
             network_builder_kwargs={kw: cfg[key]
                                     for kw, key in (builder_config_keys or {}).items()},
         )
@@ -383,6 +385,7 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
                 net_result, cfg['TARGET_COLORS'],
                 cfg['RESULTS_DIR'] / f"network_3d_{net_result['network_id']}.html",
             )
+        net_result['gmn_tp'] = cfg['GMN_TP']   # read by build_gmn_config() and the theta search
         gmn_runs[net_result['network_id']] = {'group': group, 'net_result': net_result}
 
     fingerprints = None
@@ -422,6 +425,15 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
         generate_validation_start=cfg['GENERATE_VALIDATION_START'],
         progress_log_path=progress_log_path,
     )
+
+    if cfg['GENERATE_NOISE'] != 'none':
+        run_stochastic_generate(
+            gmn_runs, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'], cfg['RESULTS_DIR'],
+            cfg['CORES'], cfg['METRIC'], cfg['TARGET_METRIC'], cfg['GAMMA_DELTA'],
+            cfg['GENERATE_LENGTH'], cfg['GMN_EXCLUSION_RADIUS'],
+            cfg['GENERATE_NOISE'], cfg['GENERATE_NOISE_SEED'],
+            progress_log_path=progress_log_path,
+        )
 
     for network_id, run in gmn_runs.items():
         if 'G' not in run:

@@ -105,7 +105,7 @@ def make_fake_run_mde_for_target_tsls(plan, call_log):
              reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
              data_file=None, data_file_sha256=None, code_fingerprint=None,
              cache_stage='stage1', max_e=None, inner_workers=1, raw_columns=None,
-             use_gpu=False):
+             use_gpu=False, min_gain=None):
         return _fake_result(plan, call_log, cache_stage, target)
     return fake
 

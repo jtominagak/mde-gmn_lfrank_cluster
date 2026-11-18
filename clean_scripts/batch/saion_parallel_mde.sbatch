@@ -86,6 +86,8 @@ TARGETS="head_position_x,head_position_y"   # target columns (never TSLS-convert
 # ---- MDE: variable selection (unused when MODE=GMN) ------------------------
 MDE_D=10                      # drivers per node; also the ceiling on per-candidate auto-selected E. Half of the documented 20
 TP=20                         # prediction interval every candidate is ranked against
+MDE_MIN_GAIN="${MDE_MIN_GAIN:-0}"   # stop selecting once a driver no longer improves the score by more than this; 'none' = keep adding to MDE_D; 'surrogate' = surrogate-calibrated threshold (docs/parameters.md)
+GMN_TP="${GMN_TP:-match}"     # horizon of the GMN model; 'match' = TP, an integer sets it independently (docs/parameters.md)
 EMBED_DIM_RHO_MIN=0.2         # embedding-dimension skill gate -- CORRELATION-scored nodes (the behavioural targets)
 CROSS_MAP_RHO_MIN=0.2         # cross-map skill gate -- CORRELATION-scored nodes
 # The same two gates for F1-SCORED nodes, i.e. every TSLS neuron. Separate
@@ -127,12 +129,12 @@ REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP:-78}"   # overridable; first N raw chan
 # Reach for tau_count when you need to hold that budget directly; under
 # lag_mode it is a side effect of GENERATE_LENGTH, which means something else
 # entirely. With the values below, lag_mode resolves to 50 lags per observable.
-DELAY_SOURCE="${DELAY_SOURCE:-lag_mode}"   # lag_mode | tau_count | explicit
+DELAY_SOURCE="${DELAY_SOURCE:-explicit}"   # explicit | lag_mode | tau_count. explicit, so the ISI-derived DELAY_SET below runs
 LAG_MODE="generation_length_adjusted"      # depth = GENERATE_LENGTH. Other: every_lag_possible (as deep as the library allows)
 LAG_DENSITY="strided"                      # sample that depth every LAG_STEP rows. Other: dense (every integer lag)
 LAG_STEP="${LAG_STEP:-8}"                  # the stride (lag_mode) / tau (tau_count)
 LAG_COUNT="${LAG_COUNT:-10}"               # how many lags -- tau_count only
-DELAY_SET="${DELAY_SET:-0,-1,-3,-5,-10}"   # explicit only. DELAY_SET=0 resolves to an EMPTY lag set: no Stage 2 picks at all
+DELAY_SET="${DELAY_SET:--16,-63,-173}"   # explicit only. Derived from the recording's spike timing (docs/parameters.md). DELAY_SET=0 = no lags
 # NOTE: STAGE2_ALLOW_REAL_OBSERVABLES is retired. Stage 2 considers lagged
 # columns only and never recurses, so there was nothing for it to select.
 # load_config() REJECTS the variable rather than ignoring it.
@@ -160,6 +162,8 @@ PARALLEL_MDE_SCOPE="${PARALLEL_MDE_SCOPE:-staged}"
 LIB_RATIO=0.7
 MDE_VALIDATION_RATIO=0.5
 GENERATE_LENGTH=400          # steps each Generate() free-runs for. 0 = the whole held-out window
+GENERATE_NOISE="${GENERATE_NOISE:-local_residual}"   # extra stochastic free run (own outputs only); none = skip (docs/parameters.md)
+GENERATE_NOISE_SEED="${GENERATE_NOISE_SEED:-0}"      # makes that run reproducible
 GMN_EXCLUSION_RADIUS=0       # Theiler window for GMN's OWN Generate()/Forecast() search -- a separate EDM context from EXCLUSION_RADIUS
 FORECAST_PLOT_RANGE="windowed"   # x-axis of the final diagnostic figure: full | windowed
 
@@ -496,13 +500,14 @@ export TSLS_MDE_GMN_RUN_CACHE_DIR="$RUN_CACHE_DIR"
 # replaces ~60 near-identical export lines; `export VAR` on a shell variable
 # that is already set is exactly what each of those lines did, and the two
 # names that do not follow the prefix convention are handled beside it.
-for _p in MODE GMN_MODE TARGETS TP EMBED_DIM_RHO_MIN CROSS_MAP_RHO_MIN \
+for _p in MODE GMN_MODE TARGETS TP GMN_TP MDE_MIN_GAIN EMBED_DIM_RHO_MIN CROSS_MAP_RHO_MIN \
           EMBED_DIM_RHO_MIN_F1 CROSS_MAP_RHO_MIN_F1 \
           CCM_PREFILTER_RHO_MIN CCM_PREFILTER_E LIBSIZE_RATIOS MULTI_MDE_E \
           MULTI_MDE_TARGET_AGGREGATE EXCLUSION_RADIUS NESTED_M \
           PARALLEL_MDE_SCOPE REGION_CHANNEL_CAP DELAY_SOURCE LAG_MODE \
           LAG_DENSITY LAG_STEP LAG_COUNT DELAY_SET LIB_RATIO \
-          MDE_VALIDATION_RATIO GENERATE_LENGTH FORECAST_PLOT_RANGE \
+          MDE_VALIDATION_RATIO GENERATE_LENGTH GENERATE_NOISE GENERATE_NOISE_SEED \
+          FORECAST_PLOT_RANGE \
           GENERATE_START_MIN_OFFSET GENERATE_START_MAX_OFFSET \
           GENERATE_START_STEP E_MIN E_MAX E_STEP TAU_MIN TAU_MAX TAU_STEP \
           THETA_RANGE MAX_TP GRID_RHO_THRESHOLD RUN_MDE_DIAGNOSTICS \

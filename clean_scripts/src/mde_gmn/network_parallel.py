@@ -94,8 +94,7 @@ def mde_node_universe(targets, raw_columns):
     return universe
 
 
-def _stage_spec(cache_stage, df, candidate_universe, stage_delay_set, num_delays,
-                raw_columns):
+def _stage_spec(cache_stage, df, candidate_universe, stage_delay_set, raw_columns):
     '''Everything that differs between stages but not between nodes.
 
     `observable_of` resolves each candidate column to its underlying real
@@ -107,7 +106,6 @@ def _stage_spec(cache_stage, df, candidate_universe, stage_delay_set, num_delays
         'df': df,
         'candidate_universe': candidate_universe,
         'delay_set': stage_delay_set,
-        'num_delays': num_delays,
         'observable_of': {c: observable_and_delay(c, raw_columns)[0]
                           for c in candidate_universe},
     }
@@ -128,7 +126,7 @@ def _mde_call(spec, node, common, blocked=(), inner_workers=1):
                       if observable_of[c] != node and observable_of[c] not in blocked]
     args = (node, spec['df'], candidate_pool,
             common['prediction_start'], common['prediction_length'],
-            effective_mde_dimension(common['nested_n'], candidate_pool, spec['num_delays']),
+            effective_mde_dimension(common['nested_n'], candidate_pool),
             common['embed_dim_rho_min'], common['cross_map_rho_min'],
             common['exclusion_radius'], common['results_dir'], spec['delay_set'])
     kwargs = dict(
@@ -150,7 +148,7 @@ def _mde_call(spec, node, common, blocked=(), inner_workers=1):
         code_fingerprint=common['code_fingerprint'],
         cache_stage=spec['cache_stage'], max_e=common['nested_n'],
         inner_workers=inner_workers, raw_columns=common['raw_columns'],
-        use_gpu=common['use_gpu'],
+        use_gpu=common['use_gpu'], min_gain=common['min_gain'],
     )
     return args, kwargs
 
@@ -189,7 +187,9 @@ def _mde_result_for_node(node, spec, common, blocked, precomputed, recompute_cac
     _log_progress(progress_log_path,
                   f'{spec["cache_stage"]} {node} RECOMPUTE (cycle-closing picks {conflicts})')
     started = time.perf_counter()
-    args, kwargs = _mde_call(spec, node, common, blocked=blocked)
+    # Serial, with nothing else running, so it gets every core as inner threads.
+    args, kwargs = _mde_call(spec, node, common, blocked=blocked,
+                             inner_workers=max(1, common['cores']))
     try:
         result = mde.run_mde_for_target(*args, **kwargs)
     except Exception as exc:          # same policy as the precompute pool's handler
@@ -289,7 +289,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                              reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                              data_file=None, data_file_sha256=None, code_fingerprint=None,
                              progress_log_path=None, mp_start_method='fork', use_gpu=False,
-                             parallel_mde_scope='union'):
+                             min_gain=None, parallel_mde_scope='union'):
     '''Two-stage nested-MDE network construction, every MDE call made up front.
 
     Same signature as the serial builder plus `parallel_mde_scope`, same
@@ -346,19 +346,15 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # expand_delay_columns() returns the raw columns first, then one column
     # per nonzero delay, so the tail is Stage 2's lagged-only pool and the
     # whole thing is the combined pool scope='union' uses.
-    stage1_num_delays = len(expanded_columns) // len(raw_columns)
     stage2_df, stage2_expanded = expand_delay_columns(expanded_df, raw_columns, lag_set)
     stage2_universe = stage2_expanded[len(raw_columns):]
 
     stage_specs = {
-        'stage1': _stage_spec('stage1', expanded_df, expanded_columns,
-                              delay_set, stage1_num_delays, raw_columns),
-        'stage2': _stage_spec('stage2', stage2_df, stage2_universe,
-                              lag_set, len(lag_set), raw_columns),
+        'stage1': _stage_spec('stage1', expanded_df, expanded_columns, delay_set, raw_columns),
+        'stage2': _stage_spec('stage2', stage2_df, stage2_universe, lag_set, raw_columns),
         # scope='union' only: real and lagged candidates in ONE pool, so each
         # node gets a single MDE call in which they compete directly.
-        'union': _stage_spec('union', stage2_df, stage2_expanded,
-                             lag_set, len(lag_set) + 1, raw_columns),
+        'union': _stage_spec('union', stage2_df, stage2_expanded, lag_set, raw_columns),
     }
     common = {
         'targets': targets, 'raw_columns': raw_columns, 'nested_n': nested_n,
@@ -373,7 +369,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         'reuse_cache': reuse_cache, 'prev_runs_dir': prev_runs_dir,
         'run_cache_dir': run_cache_dir, 'data_file': data_file,
         'data_file_sha256': data_file_sha256, 'code_fingerprint': code_fingerprint,
-        'use_gpu': use_gpu,
+        'use_gpu': use_gpu, 'min_gain': min_gain, 'cores': cores,
     }
 
     edges = []
@@ -480,12 +476,9 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     visited2 = set()
     # ZERO LAGS. DELAY_SOURCE='explicit' with DELAY_SET=0 resolves to an EMPTY
     # lag set (derive_lag_set() strips every 0 entry on that path), leaving
-    # Stage 2 with an empty candidate pool: nothing to select, nothing to
-    # attach, and effective_mde_dimension() would divide by its num_delays of
-    # 0. Job 4774133 died exactly there (2026-10-27), after Stage 1 had
-    # completed. Skipped outright rather than guarded at the division: a stage
-    # with an empty pool has no work to do. scope='union' needs no guard --
-    # its num_delays is len(lag_set) + 1, so never 0.
+    # Stage 2 with an empty candidate pool: nothing to select and nothing to
+    # attach, so it is skipped outright. scope='union' needs no skip -- its
+    # pool always holds the real observables.
     if parallel_mde_scope == 'staged' and lag_set:
         # Stage 2 attaches lagged leaves and never recurses, so its node set
         # is EXACTLY Stage 1's visited set -- no overshoot at all, which is

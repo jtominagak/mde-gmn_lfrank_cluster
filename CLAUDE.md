@@ -23,6 +23,65 @@ It covers the two clusters, the storage tiers (`/flash` is deigo-only,
 `/work` is saion-only, `/bucket` is read-only from saion compute nodes), how
 data actually moves during a job, and why the pipeline cannot run on a laptop.
 
+## Every change must be a feature you can switch off (standing rule, since 2026-11-18)
+This applies to every agent and subagent, every round.
+
+The basic pipeline is built. Work from now on means changing, adding or
+removing parts of it, then comparing runs with and without each change. So
+every change the user asks for is built as a feature with an on/off switch.
+**With the switch off, the pipeline must behave exactly as it did before that
+change.** This must still hold after many more rounds: a feature added several
+rounds ago must still switch off cleanly, whatever has been added since.
+
+**What needs a switch.** Any change to what the pipeline computes, selects or
+outputs: a new stage, method, filter, metric or gate, or a change to one that
+exists. "Remove X" needs one too: add a switch that turns X off, and leave X's
+code in place. No switch is needed for fixes to crashes or to results that
+break the algorithm contract above, for refactors that change no behaviour, or
+for logging and docs. If you decide a change doesn't need a switch, say so and
+why. If unsure, add the switch.
+
+**How to build the switch**
+1. **One switch per feature, in `scripts/src/mde_gmn/config.py`.** Read it from
+   `TSLS_MDE_GMN_<FEATURE>` with the existing `_env_*` helpers. Start its
+   comment with `# FEATURE TOGGLE (YYYY-MM-DD):` and say what OFF restores.
+   Then `grep -n "FEATURE TOGGLE" scripts/src/mde_gmn/config.py` lists every
+   switch. Add it to the MODIFIABLE PARAMETERS block of every sbatch that runs
+   the affected pipeline. The default is what the user asked for. If they
+   didn't say, default to OFF and tell them.
+2. **Keep the new code in one place.** Put the feature in its own function or
+   module, and check the switch at as few call sites as possible (ideally one).
+   Don't scatter `if cfg[...]` checks through shared code. When changing
+   existing behaviour, keep the old code as the OFF branch; don't edit it in
+   place. With the switch OFF, the original path must run unchanged: no new
+   imports, required parameters, random draws, reordering or changed defaults
+   on shared functions.
+3. **Features are independent.** Each switch must work whatever the others are
+   set to. If feature B only makes sense with feature A on, `config.py` raises
+   a clear error when B is on and A is off (the same "raise, don't ignore"
+   convention retired settings use). Never build B by changing A's internals
+   in a way that stops A from switching off, and never remove or bypass an
+   earlier feature's switch.
+4. **Add the switch to the cache key.** Stage fingerprints are built from
+   explicit per-stage parameters (`build_*_fingerprint` in `caching.py`). If
+   the switch changes a stage's output, add it to that stage's fingerprint, or
+   ON and OFF runs will reuse each other's cached results.
+
+**The extra check every implementation needs.** Do this before you report the
+work as done:
+- Add a test under `tests/` that shows **OFF matches pre-change behaviour**
+  and **ON does the new thing**. Before editing, record a baseline from the
+  unchanged code to compare OFF against. Use fakes where possible. Tests that
+  need real `gmn`/`dimx`/`pyEDM` go to the cluster.
+- Run the **whole** `tests/` suite, not just the new test, on a compute node
+  via `srun`. Then every earlier feature's OFF test is checked again. Toggle
+  tests stay in the suite for good: never delete or loosen an earlier
+  feature's toggle test to get a new one to pass.
+- Port to `clean_scripts/` as usual, with the switch included.
+- In your final message, give the switch's name, its default, what OFF
+  restores, which tests ran and where (locally or on the cluster), and any
+  check you could not run.
+
 ## Layout
 - `scripts/src/mde_gmn/` — the pipeline, one module per stage. `__init__.py`
   has the module map and the dependency direction.

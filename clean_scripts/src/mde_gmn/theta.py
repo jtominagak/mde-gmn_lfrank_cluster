@@ -34,7 +34,10 @@ edm, gmn, pyEDM.SMap, numpy, pandas.
 Imported by: generate, pipeline, the entry scripts.
 """
 
+import multiprocessing as mp
+import os
 import time
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 
 import edm
 import gmn
@@ -101,72 +104,120 @@ def proper_predict_nonlinear(dataFrame, columns, target, theta, lib, pred,
         rows.append({'theta': th, 'score': edm._score(obs, prd, metric, gammaDelta=gamma_delta)})
     return pd.DataFrame(rows)
 
-def retune_theta_for_all_nodes(data_lib, graph, nodes, targets, theta_range, cores,
-                                metric, target_metric, gamma_delta, min_pred_rows=20,
-                                progress_log_path=None):
-    '''Finds each node's best theta via proper_predict_nonlinear(), on a 70/30
-    train/test split of that node's own embedding.
+def _theta_sweep_one_node(node, embedded, theta_range, node_metric, gamma_delta,
+                          min_pred_rows, tp=1):
+    """One node's theta sweep, as a top-level function a worker process can
+    run. Returns (node, best_theta, seconds); theta 3 when the 70/30 split
+    leaves too few prediction rows or the sweep fails."""
+    started = time.perf_counter()
+    n_emb = len(embedded)
+    split = int(n_emb * 0.7)
+    if n_emb - split < min_pred_rows:
+        return node, 3, time.perf_counter() - started
+    try:
+        pn = proper_predict_nonlinear(
+            embedded, columns=list(embedded.columns[1:-1]), target=node,
+            theta=list(theta_range), lib=f'1 {split}', pred=f'{split + 1} {n_emb}',
+            Tp=tp, embedded=True, metric=node_metric, gamma_delta=gamma_delta,
+        )
+        best = float(pn.loc[pn['score'].idxmax(), 'theta'])
+    except Exception:
+        best = 3
+    return node, best, time.perf_counter() - started
 
-    Scores each node with _metric_for(node, targets, metric, target_metric) --
-    'f1' for neuron
-    nodes, 'correlation' (target_metric) for TARGETS, matching every
-    other scoring call site in this file. `cores` is no longer used here
-    (proper_predict_nonlinear() is deliberately sequential -- see its own
-    docstring) but is kept as a parameter for call-site compatibility with
-    run_theta_search(), which still needs it for evaluate_smap_candidate()'s
-    own Generate() call right after this one. Falls back to theta=3
-    whenever there's too little data for the split or the sweep itself
-    fails (unchanged from before).'''
+
+def _memory_limit_bytes():
+    """SLURM's per-node allocation when there is one, else physical memory."""
+    mb = os.environ.get('SLURM_MEM_PER_NODE')
+    if mb and mb.isdigit():
+        return int(mb) * 2**20
+    return os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
+
+
+def theta_sweep_workers(cores, n_nodes, n_rows, memory_bytes=None):
+    """How many nodes' theta sweeps can run at once: bounded by cores, nodes
+    and memory. pyEDM's SMap with knn=0 regresses every prediction row on
+    every library row, so one call holds five n_pred x n_lib float arrays
+    (neighbour distances and indices, weights, targets, weighted targets):
+    ~9 GB at ~33,000 rows. 60% of the memory limit is handed out."""
+    per_worker = 5 * 8 * (0.3 * n_rows) * (0.7 * n_rows) * 1.2
+    limit = memory_bytes if memory_bytes is not None else _memory_limit_bytes()
+    by_memory = int(0.6 * limit // max(per_worker, 1))
+    return max(1, min(cores, n_nodes, by_memory))
+
+
+def retune_theta_for_all_nodes(data_lib, graph, nodes, targets, theta_range, cores,
+                               metric, target_metric, gamma_delta, min_pred_rows=20,
+                               progress_log_path=None, tp=1):
+    '''Each node's best theta via proper_predict_nonlinear(), on a 70/30
+    train/test split of that node's own embedding, scored with the node's own
+    metric (_metric_for(): 'f1' for neurons, target_metric for TARGETS).
+
+    Nodes are independent, so up to theta_sweep_workers() of them run at once
+    in one process pool for the whole stage. Each sweep is still sequential
+    inside (see proper_predict_nonlinear() for why). Results are identical
+    to a serial loop; only the order nodes finish in changes. Embeddings are
+    built here, where the graph and full frame are, and handed over ready-
+    made. 'spawn', because the parent may hold CUDA state that fork must not
+    copy.'''
     best_theta_by_node = {}
     theta_durations = []
     _log_progress(progress_log_path, f'theta retuning START -- {len(nodes)} node(s)')
     theta_stage_start = time.perf_counter()
 
-    for node in nodes:
-        node_start = time.perf_counter()
+    def task(node):
         spec = embedding_spec_for(graph, node)
         embedded, offset = generalized_embed(data_lib, spec)
         embedded.insert(0, 'Time', np.arange(len(embedded)))
         embedded[node] = data_lib[node].to_numpy()[offset:]
+        return (node, embedded, list(theta_range),
+                _metric_for(node, targets, metric, target_metric), gamma_delta, min_pred_rows,
+                tp)
 
-        n_emb = len(embedded)
-        split = int(n_emb * 0.7)
-        n_pred = n_emb - split
-        if n_pred < min_pred_rows:
-            best_theta_by_node[node] = 3
-            theta_durations.append(time.perf_counter() - node_start)
-            continue
-
-        lib_range = f'1 {split}'
-        pred_range = f'{split + 1} {n_emb}'
-        node_metric = _metric_for(node, targets, metric, target_metric)
-
-        try:
-            pn = proper_predict_nonlinear(
-                embedded, columns=list(embedded.columns[1:-1]), target=node,
-                theta=list(theta_range), lib=lib_range, pred=pred_range,
-                Tp=1, embedded=True, metric=node_metric, gamma_delta=gamma_delta,
-            )
-            best_theta_by_node[node] = float(pn.loc[pn['score'].idxmax(), 'theta'])
-        except Exception:
-            best_theta_by_node[node] = 3
-        node_duration = time.perf_counter() - node_start
-        theta_durations.append(node_duration)
+    def record(node, best, seconds):
+        best_theta_by_node[node] = best
+        theta_durations.append(seconds)
         eta = _format_eta(theta_durations, len(nodes) - len(theta_durations))
         _log_progress(progress_log_path,
-                      f'theta node END -- {node} duration={node_duration:.1f}s '
-                      f'theta={best_theta_by_node[node]}{eta}')
+                      f'theta node END -- {node} duration={seconds:.1f}s theta={best}{eta}')
+
+    workers = theta_sweep_workers(cores, len(nodes), len(data_lib)) if nodes else 1
+    print(f'theta retuning: {len(nodes)} node(s), {workers} at a time '
+          f'(cores={cores}, rows={len(data_lib)})', flush=True)
+    if workers <= 1:
+        for node in nodes:
+            record(*_theta_sweep_one_node(*task(node)))
+    else:
+        queue = list(nodes)
+        with ProcessPoolExecutor(max_workers=workers,
+                                 mp_context=mp.get_context('spawn')) as executor:
+            pending = set()
+            while queue or pending:
+                while queue and len(pending) < 2 * workers:
+                    pending.add(executor.submit(_theta_sweep_one_node, *task(queue.pop(0))))
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for fut in done:
+                    record(*fut.result())
+        best_theta_by_node = {n: best_theta_by_node[n] for n in nodes}
 
     _log_progress(progress_log_path,
                   f'theta retuning END -- {len(nodes)} node(s), '
                   f'{time.perf_counter() - theta_stage_start:.1f}s total')
     return best_theta_by_node
 
+
+def generate_memo_key(generate_start, generate_length, exclusion_radius, node_theta):
+    '''What makes two Generate() calls on one network the same computation.
+    Generate() is deterministic in these, so equal keys mean equal output.'''
+    return (int(generate_start), generate_length, exclusion_radius,
+            tuple(sorted((str(n), float(t)) for n, t in (node_theta or {}).items())))
+
+
 def evaluate_smap_candidate(net_result, prediction_start, prediction_length,
                              node_theta, variant, results_dir, cores,
                              target_metric, gamma_delta,
                              generate_length=None, generate_start=None, exclusion_radius=0,
-                             generate_validation_start=None):
+                             generate_validation_start=None, memo=None):
     '''Runs one Generate() call and scores it as mean rho, across
     `net_result['targets']` only, between the simulated and real held-out
     series. Scored with edm._score(metric=target_metric) rather than pyEDM's
@@ -179,8 +230,15 @@ def evaluate_smap_candidate(net_result, prediction_start, prediction_length,
     generate_start defaults to generate_validation_start (== cfg's B, the
     start of the Generate/Forecast validation segment), NOT prediction_start
     (== A) -- a Generate() call scored here must never launch from inside
-    the segment MDE's own driver selection already validated against.'''
+    the segment MDE's own driver selection already validated against.
+
+    `memo` (a dict kept per network): an identical call -- see
+    generate_memo_key() -- is answered from it instead of rerun, which is how
+    rebuild_at_best_params() reuses the start sweep's winning free run.'''
     generate_start = generate_start if generate_start is not None else generate_validation_start
+    key = generate_memo_key(generate_start, generate_length, exclusion_radius, node_theta)
+    if memo is not None and key in memo:
+        return memo[key]
     config_file = build_gmn_config(
         net_result, prediction_start, prediction_length, results_dir,
         mode='Generate', node_theta_overrides=node_theta,
@@ -201,6 +259,8 @@ def evaluate_smap_candidate(net_result, prediction_start, prediction_length,
         target_rhos[target] = edm._score(actual_vals, gen_vals, target_metric, gammaDelta=gamma_delta)
 
     score = float(np.nanmean(list(target_rhos.values())))
+    if memo is not None:
+        memo[key] = (score, target_rhos, G)
     return score, target_rhos, G
 
 def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range, results_dir,
@@ -244,6 +304,7 @@ def run_theta_search(gmn_runs, prediction_start, prediction_length, theta_range,
             data_after_mde_lib, graph, all_nodes, net_result['targets'], theta_range, cores,
             metric, target_metric, gamma_delta,
             progress_log_path=progress_log_path,
+            tp=net_result.get('gmn_tp', 1),   # tuned at the horizon the model runs at
         )
 
         # NO Generate() CALL HERE, deliberately. This used to run one, print

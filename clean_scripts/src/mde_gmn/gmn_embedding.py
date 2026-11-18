@@ -484,6 +484,14 @@ def _generate_smap(self):
     df.insert(0, 'time', np.arange(df.shape[0]), allow_duplicates=True)
 
     lib, pred = _lib_pred_ranges(Parameters, df.shape[0], self.libEnd_i)
+    if not (len(Parameters.pred) and not Parameters.pred.isspace()):
+        # The new row is N+1; a Tp-step map predicts it from the state at row
+        # N+1-Tp, so that is the last pred row. With Tp=1 this is gmn's own
+        # "N-1 N". gmn predicted from row N whatever Tp was and appended the
+        # result as row N+1, compressing time Tp-fold. This way a Tp-step
+        # model generates as Tp interleaved chains sharing their inputs.
+        tp, n = int(Parameters.Tp), df.shape[0]
+        pred = '%d %d' % (n - tp, n + 1 - tp)
     S = self.Function(
         dataFrame=df, lib=lib, pred=pred,
         E=len(spec), Tp=Parameters.Tp, knn=Parameters.knn, tau=1,
@@ -496,7 +504,75 @@ def _generate_smap(self):
     if abs(val) > 1E15:
         raise RuntimeError(f'Generate:SMap() Node: {self.name}   '
                            f'Divergence detected (>1E15)')
+    noise = self.Network.Graph.graph.get('generate_noise') or {}
+    if noise.get('mode', 'none') == 'local_residual':
+        val = local_residual_draw(self, df, lib, val, noise.get('seed', 0))
     return val
+
+
+def local_residual_draw(node, df, lib, val, seed):
+    '''One stochastic Generate() step: the S-map prediction `val` plus a
+    residual drawn from the node's own library analogues.
+
+    A deterministic free run iterates the CONDITIONAL MEAN of the next value.
+    For a TSLS series the next value is bimodal -- x + dt (no spike) or ~0
+    (spike) -- and its mean, (x + dt)(1 - p), is neither: it ramps too slowly
+    and never resets, so the run drifts smoothly instead of firing. Adding the
+    same small isotropic noise to every node, the way spiking-network models
+    keep activity alive, does not help here: a spiking model turns noise into
+    events through its threshold, and S-map has none, so isotropic noise
+    only jitters the mean path -- and every downward wobble breaks TSLS's
+    "only ever step down to reset" constraint.
+
+    So this samples the conditional distribution instead, the analogue
+    (k-nearest-neighbour) bootstrap way: take the E+1 library states nearest
+    the current one (Simplex's neighbourhood, Euclidean on pyEDM's raw
+    coordinates), pick ONE with Simplex's weights exp(-d/d_min), and add its
+    deviation from the weighted neighbourhood mean:
+
+        x(t+Tp) = S-map(t) + [ y_j - sum_i w_i y_i / sum_i w_i ]
+
+    If one neighbour in 20 is followed by a reset, a reset is drawn with
+    probability ~1/20 from that state. The noise is state-dependent and has
+    the data's own shape; there is no amplitude to tune.
+
+    `lib` is pyEDM's 1-based "start end" library; a neighbour's future must
+    lie inside it. The KD-tree is built once per node per run and cached on
+    the node (the library never changes during a run). The RNG is seeded
+    from (`seed`, node name), so a seed reproduces the run exactly.'''
+    state = getattr(node, '_analog_state', None)
+    if state is None:
+        import zlib
+        from scipy.spatial import cKDTree
+        cols = list(df.columns[1:])
+        tp = int(node.Parameters.Tp)
+        lib_start, lib_end = (int(x) for x in str(lib).split())
+        X = df[cols].to_numpy(dtype=float)[lib_start - 1:lib_end - tp]
+        Y = df[node.Parameters.target + '(t-0)'].to_numpy(dtype=float)[lib_start - 1 + tp:lib_end]
+        ok = np.all(np.isfinite(X), axis=1) & np.isfinite(Y)
+        X, Y = X[ok], Y[ok]
+        state = {
+            'cols': cols,
+            'tree': cKDTree(X) if len(X) else None,
+            'Y': Y,
+            'k': min(len(cols) + 1, len(X)),
+            'rng': np.random.default_rng([int(seed), zlib.crc32(node.name.encode())]),
+        }
+        node._analog_state = state
+
+    if state['tree'] is None or state['k'] < 1:
+        return val
+    # The state the prediction was made from: row N+1-Tp (see _generate_smap).
+    query = df[state['cols']].to_numpy(dtype=float)[-int(node.Parameters.Tp)]
+    if not np.all(np.isfinite(query)):
+        return val
+    dist, idx = state['tree'].query(query, k=state['k'])
+    dist, idx = np.atleast_1d(dist), np.atleast_1d(idx)
+    w = np.exp(-dist / max(float(dist[0]), 1e-6))
+    w = w / w.sum()
+    y = state['Y'][idx]
+    j = state['rng'].choice(len(idx), p=w)
+    return float(val + (y[j] - float(np.dot(w, y))))
 
 
 def _generate_kedm_simplex(self):
@@ -599,7 +675,11 @@ def _generalized_node_generate(self, lastDataOut):
         print(lastDataOut, flush=True)
 
     if lastDataOut is not None:
-        self.data = pd.concat([self.data, lastDataOut])
+        # Only this node's own columns. gmn appends the whole network row, so
+        # every node's frame would grow network-wide -- memory and copying in
+        # nodes^2 * rows -- while its embedding reads only time, its
+        # predecessors and itself, which are exactly self.data's columns.
+        self.data = pd.concat([self.data, lastDataOut.reindex(columns=self.data.columns)])
 
     # After the append, so len(self.data) is the next real row index.
     if _is_real_data_external_input(self):

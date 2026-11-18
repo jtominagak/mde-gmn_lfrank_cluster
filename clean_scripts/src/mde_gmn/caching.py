@@ -112,6 +112,7 @@ def build_search_fingerprint(cfg, net_result, data_file_sha256, code_fingerprint
         'multi_mde_e': cfg['MULTI_MDE_E'],
         'multi_mde_target_aggregate': cfg['MULTI_MDE_TARGET_AGGREGATE'],
         'tp': cfg['TP'],
+        'gmn_tp': cfg['GMN_TP'],
         'embed_dim_rho_min': cfg['EMBED_DIM_RHO_MIN'],
         'cross_map_rho_min': cfg['CROSS_MAP_RHO_MIN'],
         'embed_dim_rho_min_f1': cfg['EMBED_DIM_RHO_MIN_F1'],
@@ -158,7 +159,7 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
                                target_ranking_window_rows=1000, min_pred_events=20,
                                max_window_rows=30000,
                                ccm_lib_sizes_rows=(16, 24, 40, 64, 160, 400, 800),
-                               builder_kwargs=None):
+                               builder_kwargs=None, min_gain=None):
     '''Everything that determines one group's network-construction outcome.
     Computable BEFORE that construction runs, since the whole point is deciding
     whether it can be skipped. `observable_columns` here is
@@ -233,6 +234,7 @@ def build_network_fingerprint(mode, targets, observable_columns, nested_n, neste
         'data_file_sha256': data_file_sha256,
         'code_fingerprint': code_fingerprint,
         'stage': 'network',
+        'min_gain': min_gain,
         **({'builder_kwargs': {k: builder_kwargs[k] for k in sorted(builder_kwargs)}}
            if builder_kwargs else {}),
     }
@@ -245,14 +247,14 @@ def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_r
                                      min_pred_events, max_window_rows, window_rows, pred_event_count,
                                      ccm_lib_sizes_rows, ccm_sample, ccm_slope,
                                      data_file, data_file_sha256, code_fingerprint,
-                                     cache_stage='stage1', max_e=None):
+                                     cache_stage='stage1', max_e=None, min_gain=None):
     '''Everything that determines one run_mde_for_target() call's outcome,
     computable before that call runs. `candidate_pool` is kept in
     order rather than sorted -- forward selection can tie-break on column
     order, so the same columns in a different order aren't guaranteed to
     select the same result. `max_e` (the raw MDE_D-derived auto-select
     ceiling proper_embed_dimension's own sweep is capped at, distinct from
-    `mde_d`'s possibly num_delays-scaled value -- see run_mde_for_target's
+    `mde_d`, the pool-capped selection count -- see run_mde_for_target's
     own docstring) is a real input to the outcome now that E is
     auto-selected rather than a hardcoded constant, so it must be part of
     the fingerprint too: a run with a different max_e can select a
@@ -295,6 +297,7 @@ def build_mde_selection_fingerprint(node, candidate_pool, mde_d, tp, embed_dim_r
         'data_file_sha256': data_file_sha256,
         'code_fingerprint': code_fingerprint,
         'stage': f'mde_selection_{cache_stage}',
+        'min_gain': min_gain,
     }
 
 def build_multi_mde_selection_fingerprint(targets, candidate_pool, mde_d, tp, embed_dim_rho_min,
@@ -304,7 +307,8 @@ def build_multi_mde_selection_fingerprint(targets, candidate_pool, mde_d, tp, em
                                            target_ranking_window_rows, window_rows,
                                            ccm_lib_sizes_rows, ccm_sample, ccm_slope,
                                            data_file, data_file_sha256, code_fingerprint,
-                                           cache_stage='stage1', E=3, target_aggregate='mean'):
+                                           cache_stage='stage1', E=3, target_aggregate='mean',
+                                           min_gain=None):
     '''Multi-target counterpart of build_mde_selection_fingerprint() -- same
     fields, `targets` (list, kept in the group's own order -- see that
     function's own candidate_pool-ordering rationale, identical here) in
@@ -339,6 +343,7 @@ def build_multi_mde_selection_fingerprint(targets, candidate_pool, mde_d, tp, em
         'data_file_sha256': data_file_sha256,
         'code_fingerprint': code_fingerprint,
         'stage': f'mde_selection_multi_{cache_stage}',
+        'min_gain': min_gain,
     }
 
 def _load_json_cache_entry(path):

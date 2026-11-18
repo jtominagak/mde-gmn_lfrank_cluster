@@ -993,11 +993,22 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
                target, columns, target_measurement, columns_measurement,
                embedded=False, exclusionRadius=0, seed=None,
                gammaDelta=2,
-               show_plot=False, pass_fail=False, pool=None, use_gpu=False):
+               show_plot=False, pass_fail=False, pool=None, use_gpu=False,
+               directions='both'):
     """CCM with random-library subsampling and pluggable metric.
 
     Parameters
     ----------
+    directions : {'both', 'c2t', 't2c'}
+        Which cross-map directions to COMPUTE. Every caller in this pipeline
+        reads exactly one of the two arrays (proper_mde's CCM gate reads
+        t2c, ccm_prefilter_observables reads c2t), and before this argument
+        existed the other half of every call -- half the KDTree builds and
+        queries -- was computed and thrown away. The direction not computed
+        comes back as an all-NaN array of the usual shape. Every random
+        library draw still happens, in the same order, whatever this is set
+        to, so a given `seed` gives bit-identical values for the direction
+        that is computed. 'both' (default) is the old behaviour.
     dataFrame : pandas.DataFrame
     libSizes : str | list[int]
         Same semantics as ``pyEDM.CCM``: a whitespace-separated string
@@ -1073,6 +1084,13 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
     a quick pass/fail convergence gate used internally by proper_mde's
     CCM step, rather than the full measurement arrays.
     """
+    if directions not in ('both', 'c2t', 't2c'):
+        raise ValueError(f"directions must be 'both', 'c2t' or 't2c', got {directions!r}")
+    if pass_fail or show_plot:
+        directions = 'both'   # both of these read both arrays
+    want_fwd = directions in ('both', 'c2t')
+    want_rev = directions in ('both', 't2c')
+
     col_name = columns if isinstance(columns, str) else columns[0]
     tgt_name = target  if isinstance(target,  str) else target[0]
 
@@ -1150,17 +1168,20 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
 
     def _run_one_cell(task):
         t, i, lib_idx_fwd, lib_idx_rev = task
-        preds_fwd = _crossmap_predict(
-            embed_fwd, obs_fwd, lib_idx_fwd, k,
-            exclusionRadius=exclusionRadius, time_indices=idx_fwd,
-        )
-        c2t = _score(obs_fwd, preds_fwd, target_measurement, gammaDelta=gammaDelta)
+        c2t = t2c = np.nan
+        if want_fwd:
+            preds_fwd = _crossmap_predict(
+                embed_fwd, obs_fwd, lib_idx_fwd, k,
+                exclusionRadius=exclusionRadius, time_indices=idx_fwd,
+            )
+            c2t = _score(obs_fwd, preds_fwd, target_measurement, gammaDelta=gammaDelta)
 
-        preds_rev = _crossmap_predict(
-            embed_rev, obs_rev, lib_idx_rev, k,
-            exclusionRadius=exclusionRadius, time_indices=idx_rev,
-        )
-        t2c = _score(obs_rev, preds_rev, columns_measurement, gammaDelta=gammaDelta)
+        if want_rev:
+            preds_rev = _crossmap_predict(
+                embed_rev, obs_rev, lib_idx_rev, k,
+                exclusionRadius=exclusionRadius, time_indices=idx_rev,
+            )
+            t2c = _score(obs_rev, preds_rev, columns_measurement, gammaDelta=gammaDelta)
         return t, i, c2t, t2c
 
     # GPU path (docs/no-kEDM-gpu-optimization-plan.md section 8.3): only
@@ -1198,6 +1219,8 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
             batch=sample,
             lib_len=min(max(libSizes), max(M_fwd, M_rev)),
             k_query=k + 1 + 2 * max(0, exclusionRadius),
+            # One cached (M, M) distance matrix per direction actually computed.
+            dist_matrices=int(want_fwd) + int(want_rev),
         )
         label = f'proper_ccm {columns}->{target} M={max(M_fwd, M_rev)} B={sample}'
 
@@ -1217,16 +1240,19 @@ def proper_ccm(dataFrame, libSizes, sample, tau, Tp, E,
             full_dist_fwd = None
             full_dist_rev = None
             for i in range(n_L):
-                t_fwd = [t for t, _ in by_i_fwd[i]]
-                lib_batch_fwd = np.stack([lib for _, lib in by_i_fwd[i]])
-                preds_fwd, full_dist_fwd = batched_crossmap_predict(
-                    embed_fwd, obs_fwd, lib_batch_fwd, k, exclusionRadius, idx_fwd,
-                    full_dist=full_dist_fwd,
-                )
-                for row, t in zip(preds_fwd, t_fwd):
-                    c2t_measurements[t, i] = _score(
-                        obs_fwd, row, target_measurement, gammaDelta=gammaDelta)
+                if want_fwd:
+                    t_fwd = [t for t, _ in by_i_fwd[i]]
+                    lib_batch_fwd = np.stack([lib for _, lib in by_i_fwd[i]])
+                    preds_fwd, full_dist_fwd = batched_crossmap_predict(
+                        embed_fwd, obs_fwd, lib_batch_fwd, k, exclusionRadius, idx_fwd,
+                        full_dist=full_dist_fwd,
+                    )
+                    for row, t in zip(preds_fwd, t_fwd):
+                        c2t_measurements[t, i] = _score(
+                            obs_fwd, row, target_measurement, gammaDelta=gammaDelta)
 
+                if not want_rev:
+                    continue
                 t_rev = [t for t, _ in by_i_rev[i]]
                 lib_batch_rev = np.stack([lib for _, lib in by_i_rev[i]])
                 preds_rev, full_dist_rev = batched_crossmap_predict(
@@ -1324,6 +1350,53 @@ def _simplex_metric(data, columns, target, lib, pred, tau, Tp, E,
     return _score(obs, prd, metric, gammaDelta=gammaDelta)
 
 
+def _surrogate_gain_threshold(dataFrame, keep_columns, selected, candidates, score_fn,
+                              n_surrogates, alpha, direction, seed_key, mapper=map):
+    """The score a candidate must beat, this round, to count as more than noise.
+
+    Each surrogate is a randomly chosen remaining candidate, circularly shifted
+    by a random 1/4..3/4 of the frame: same values, same autocorrelation, but
+    no longer aligned in time with the target or with the columns already
+    selected. Scored exactly like a real candidate ([surrogate] + selected),
+    the surrogates give the null distribution of this round's score -- what
+    adding a column with no relationship to the target does to it.
+
+    Forward selection keeps the BEST of the remaining candidates, so the
+    comparison has to be against the null of a maximum, not of one draw. The
+    threshold is mean + z * sd of the surrogate scores, with z the normal
+    1 - alpha / n_candidates quantile (a Bonferroni bound over the candidates
+    the round compares). Normality is an approximation, and with few
+    surrogates mean and sd are themselves noisy; both are stated limits, not
+    hidden ones.
+
+    Returns None when fewer than 2 surrogates could be scored, in which case
+    the caller applies no surrogate test this round.
+
+    Cost: n_surrogates extra ranking calls per round, each on a frame of only
+    the target, the selected columns and the surrogate.
+    """
+    from scipy.stats import norm
+    if n_surrogates < 2 or not candidates:
+        return None
+    rng = np.random.default_rng(seed_key)
+    N = len(dataFrame)
+    picks = rng.choice(len(candidates), size=n_surrogates, replace=len(candidates) < n_surrogates)
+    shifts = rng.integers(N // 4, max(N // 4 + 1, (3 * N) // 4), size=n_surrogates)
+    base = dataFrame[list(keep_columns)]
+
+    def one(i):
+        frame = base.copy()
+        frame['__surrogate__'] = np.roll(dataFrame[candidates[picks[i]]].to_numpy(), int(shifts[i]))
+        return score_fn(frame, ['__surrogate__'] + list(selected))
+
+    scores = np.array([v for v in mapper(one, range(n_surrogates))], dtype=float)
+    scores = scores[np.isfinite(scores)]
+    if len(scores) < 2:
+        return None
+    z = norm.ppf(1 - alpha / max(len(candidates), 1))
+    return float(scores.mean() + direction * z * scores.std(ddof=1))
+
+
 def proper_mde(
     dataFrame, target, D=3,
     *,
@@ -1352,6 +1425,10 @@ def proper_mde(
     column_delay=None,
     column_observable=None,
     use_gpu=False,
+    minGain=None,
+    gainSurrogates=0,
+    gainSurrogateAlpha=0.05,
+    surrogateSeed=0,
 ):
     """Forward-stepwise Manifold Dimensional Expansion.
 
@@ -1526,6 +1603,47 @@ def proper_mde(
         (default): no such line is printed; behavior is otherwise
         identical either way -- this parameter changes no selection
         criterion, only what gets logged.
+    minGain : float or None
+        Stopping rule on the marginal gain of each added dimension -- the
+        one deliberate departure from Run.py besides ``metric``. Run.py
+        keeps a candidate whenever its CUMULATIVE score clears
+        ``crossMapRhoMin``, so once the embedding scores well, a candidate
+        that makes it WORSE still passes, and selection runs on to ``D``
+        whenever anything passes the CCM gate. In jobs 4799404/4799407
+        that accepted 41% of all edges at a negative marginal gain, e.g. a
+        node peaking at f1=0.359 with 5 drivers and being handed 5 more
+        that took it to 0.263. With ``minGain`` set, from dimension 2 on a
+        candidate is only considered if it improves on the last accepted
+        score by MORE than ``minGain`` (sign-aware, like every threshold
+        here), and selection stops when none does. ``None`` (default):
+        Run.py's behaviour, unchanged.
+    gainSurrogates, gainSurrogateAlpha, surrogateSeed :
+        A noise-calibrated version of the same rule. With
+        ``gainSurrogates`` > 1, from dimension 2 on a candidate must also beat
+        the threshold _surrogate_gain_threshold() sets from that many
+        time-shifted surrogate columns, corrected for the number of
+        candidates the round compares (family-wise ``gainSurrogateAlpha``).
+        Dimension 1 is exempt, as with ``minGain``: whether a node has any
+        driver at all stays the CCM gate's and ``crossMapRhoMin``'s call.
+        The surrogates are drawn from ``surrogateSeed``, the dimension and
+        the target's name, so a call is reproducible. 0 (default): off.
+
+    Two things this function does that Run.py does not, neither of which
+    changes a result:
+      * Nothing passing ``crossMapRhoMin`` ends the search. Run.py
+        ``continue``s to d+1, but nothing the ranking depends on (candidate
+        set, selected columns) changes when nothing is added, so every
+        remaining d re-ranked the same candidates to the same verdict --
+        17% of all ranking passes in job 4799404.
+      * A candidate's E-sweep and CCM verdict are computed once per call,
+        not once per dimension. Both are univariate in the candidate (they
+        never look at the columns already selected), so the only per-
+        dimension input is the exclusion radius, which is part of the memo
+        key. Job 4799404 re-ran 23% of its CCM tests this way, job 4799407
+        28%. The E-sweep is deterministic, so this is exact; the CCM
+        resample is random unless ``ccmSeed`` is set, and with a seed it is
+        exact too. Without a seed, a candidate now gets one verdict per
+        call instead of a fresh coin-flip each time the walk reaches it.
 
     Returns
     -------
@@ -1610,6 +1728,11 @@ def proper_mde(
     MDErho     = []
     EDim       = {}
     rhoD_log   = {}
+    # Per-candidate gate results, reused across dimensions -- see the
+    # docstring's "neither of which changes a result" note.
+    edim_memo  = {}   # (column, exclusionRadius) -> (E, score)
+    gain_thresholds = {}   # d -> surrogate threshold applied that round
+    ccm_memo   = {}   # (column, exclusionRadius, E) -> slope, or None for a CCM dead end
 
     def _log_observable_progress():
         # Diagnostic only -- see this function's own column_observable
@@ -1677,7 +1800,38 @@ def proper_mde(
         if len(L_rhoD) == 0:
             if verbose:
                 print(f'  {d}-D failed to pass crossMapRhoMin.')
-            continue  # matches Run.py: try next d
+            # Run.py `continue`s here. Nothing was added, so d+1 would rank
+            # the same candidates against the same selection and fail the
+            # same way -- stopping returns the identical result.
+            break
+
+        if minGain is not None and MDErho:
+            prev = MDErho[-1]
+            L_rhoD = [(s, cl) for (s, cl) in L_rhoD if direction * (s - prev) > minGain]
+            if not L_rhoD:
+                if verbose:
+                    print(f'  {d}-D no candidate improves on {metric}={prev:.4f} by more '
+                          f'than minGain={minGain} -- stopping.')
+                break
+
+        if gainSurrogates and MDErho:
+            import zlib
+            thr = _surrogate_gain_threshold(
+                dataFrame, [target] + MDEcolumns, MDEcolumns, candidates,
+                lambda frame, cl: _simplex_metric(
+                    frame, cl, target, lib, pred, tau=tau, Tp=Tp, E=0, embedded=True,
+                    metric=metric, gammaDelta=gammaDelta, noTime=noTime),
+                gainSurrogates, gainSurrogateAlpha, direction,
+                [int(surrogateSeed), d, zlib.crc32(str(target).encode())],
+                mapper=pool.map if pool is not None else map)
+            if thr is not None:
+                gain_thresholds[d] = thr
+                L_rhoD = [(s, cl) for (s, cl) in L_rhoD if direction * (s - thr) > 0]
+                if not L_rhoD:
+                    if verbose:
+                        print(f'  {d}-D no candidate beats the surrogate threshold '
+                              f'{metric}={thr:.4f} -- stopping.')
+                    break
 
         rhoD_log[d] = L_rhoD
 
@@ -1732,9 +1886,12 @@ def proper_mde(
             # score 'f1'/'gamma'/'mae'), scored with the SAME `metric` the
             # ranking stage above uses (this call also predicts `target`, from
             # newColumn's own embedding -- same quantity, same metric).
+            edim_key = (newColumn, exclusionRadius_d)
             if E > 0:
                 maxEDim    = E
                 maxRhoEDim = s_rank
+            elif edim_key in edim_memo:
+                maxEDim, maxRhoEDim = edim_memo[edim_key]
             else:
                 EDimDF = proper_embed_dimension(
                     dataFrame, columns=newColumn, target=target,
@@ -1759,6 +1916,7 @@ def proper_mde(
                     iMax = int(np.nanargmax(direction * edim_scores))
                 maxRhoEDim = float(edim_scores[iMax])
                 maxEDim    = int(EDimDF['E'].iloc[iMax])
+                edim_memo[edim_key] = (maxEDim, maxRhoEDim)
 
             if verbose:
                 print(f'    EDim {newColumn} E={maxEDim} '
@@ -1769,8 +1927,22 @@ def proper_mde(
 
             EDim[f'{newColumn}:{target}'] = maxEDim
 
-            # (b) CCM convergence
+            # (b) CCM convergence -- once per (candidate, radius, E) per call;
+            # see the docstring for why a repeat would test the same thing.
+            ccm_key = (newColumn, exclusionRadius_d, maxEDim)
+            if ccm_key in ccm_memo:
+                slope = ccm_memo[ccm_key]
+                if slope is None:
+                    continue   # the same CCM dead end as last time
+                if verbose:
+                    print(f'    {target}:{newColumn} slope {slope} (already tested)')
+                if (direction_ccm * slope) > ccmSlope:
+                    maxCol_i = col_i
+                    break
+                continue
+
             try:
+                # Only t2c is read below, so only t2c is computed.
                 _, t2c, _ = proper_ccm(
                     dataFrame,
                     libSizes=libSizes,
@@ -1785,6 +1957,7 @@ def proper_mde(
                     gammaDelta=gammaDelta,
                     pool=pool,
                     use_gpu=use_gpu,
+                    directions='t2c',
                 )
             except Exception as exc:
                 if use_gpu:
@@ -1804,6 +1977,7 @@ def proper_mde(
                         raise
                 if verbose:
                     print(f'    CCM dead end: {newColumn}: proper_ccm raised {exc}')
+                ccm_memo[ccm_key] = None
                 continue
 
             # Average the t2c direction (target's manifold cross-mapping to
@@ -1818,6 +1992,7 @@ def proper_mde(
                 LinearRegression().fit(libSizesVec, ccmVals).coef_[0]
             )
             slope = round(slope, 5)
+            ccm_memo[ccm_key] = slope
 
             if verbose:
                 diag = ''
@@ -1862,6 +2037,7 @@ def proper_mde(
         'EDim':       EDim,
         'rhoD':       rhoD_log,
         'libSizes':   libSizes,
+        'gainThresholds': gain_thresholds,
     }
 
 # ====================================================================
@@ -2429,6 +2605,10 @@ def multi_proper_mde(
     verbose=False,
     pool=None,
     use_gpu=False,
+    minGain=None,
+    gainSurrogates=0,
+    gainSurrogateAlpha=0.05,
+    surrogateSeed=0,
 ):
     """Multi-target MDE: forward-stepwise selection of neurons that
     jointly predict (and causally drive) all variables in ``targets``.
@@ -2483,7 +2663,15 @@ def multi_proper_mde(
         docstring. Does not affect the ranking stage
         (``_simplex_multi_metric``), which stays on CPU/pyEDM.Simplex
         unconditionally, same as ``proper_mde``'s own ``use_gpu``.
-    Other parameters: same meaning as in ``proper_mde``.
+    minGain : float or None
+        The marginal-gain stopping rule, exactly as in ``proper_mde``,
+        applied to the aggregated (``target_aggregate``) score.
+    gainSurrogates, gainSurrogateAlpha, surrogateSeed :
+        The surrogate-calibrated version of it, exactly as in
+        ``proper_mde``, scored with the same aggregated multi-target metric.
+    Other parameters: same meaning as in ``proper_mde``. Like
+    ``proper_mde``, a dimension where nothing passes ``crossMapRhoMin``
+    ends the search instead of re-ranking the unchanged candidates.
 
     INTUITION (plain-language)
     ---------------------------
@@ -2584,7 +2772,34 @@ def multi_proper_mde(
         if len(L_rhoD) == 0:
             if verbose:
                 print(f'  {d}-D failed to pass crossMapRhoMin.')
-            continue
+            break   # d+1 would re-rank the same candidates -- see proper_mde
+
+        if minGain is not None and MDErho:
+            prev = MDErho[-1]
+            L_rhoD = [(s, cl) for (s, cl) in L_rhoD if direction * (s - prev) > minGain]
+            if not L_rhoD:
+                if verbose:
+                    print(f'  {d}-D no candidate improves on {metric}={prev:.4f} by more '
+                          f'than minGain={minGain} -- stopping.')
+                break
+
+        if gainSurrogates and MDErho:
+            import zlib
+            thr = _surrogate_gain_threshold(
+                dataFrame, list(targets) + MDEcolumns, MDEcolumns, candidates,
+                lambda frame, cl: _simplex_multi_metric(
+                    frame, cl, targets, lib, pred, tau=tau, Tp=Tp, E=0, embedded=True,
+                    metric=metric, gammaDelta=gammaDelta, noTime=noTime,
+                    aggregate=target_aggregate),
+                gainSurrogates, gainSurrogateAlpha, direction,
+                [int(surrogateSeed), d, zlib.crc32(','.join(targets).encode())])
+            if thr is not None:
+                L_rhoD = [(s, cl) for (s, cl) in L_rhoD if direction * (s - thr) > 0]
+                if not L_rhoD:
+                    if verbose:
+                        print(f'  {d}-D no candidate beats the surrogate threshold '
+                              f'{metric}={thr:.4f} -- stopping.')
+                    break
 
         rhoD_log[d] = L_rhoD
         if verbose:

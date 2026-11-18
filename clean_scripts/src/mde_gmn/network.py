@@ -224,7 +224,8 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                              lag_set,
                              reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
                              data_file=None, data_file_sha256=None, code_fingerprint=None,
-                             progress_log_path=None, mp_start_method='fork', use_gpu=False):
+                             progress_log_path=None, mp_start_method='fork', use_gpu=False,
+                             min_gain=None):
     '''Two-stage nested-MDE network construction, MODE='MDE-GMN' only.
 
     See this module's docstring for the algorithm. What this function adds on
@@ -252,10 +253,8 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
 
     # expand_delay_columns() returns the raw columns first, then one column
     # per nonzero delay, so the tail is Stage 2's lagged-only pool.
-    stage1_num_delays = len(expanded_columns) // len(raw_columns)
     stage2_df, stage2_expanded = expand_delay_columns(expanded_df, raw_columns, lag_set)
     stage2_universe = stage2_expanded[len(raw_columns):]
-    stage2_num_delays = len(lag_set)
 
     # One (observable, delay) resolve per Stage 2 candidate column, done once
     # here instead of once per column per node. Stage 2 asks the same
@@ -289,13 +288,13 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
             run_cache_dir=run_cache_dir, data_file=data_file,
             data_file_sha256=data_file_sha256, code_fingerprint=code_fingerprint,
             cache_stage=cache_stage, max_e=nested_n, inner_workers=inner_workers,
-            raw_columns=raw_columns, use_gpu=use_gpu,
+            raw_columns=raw_columns, use_gpu=use_gpu, min_gain=min_gain,
         )
 
-    def mde_call_args(node, frame, candidate_pool, stage_delay_set, num_delays):
+    def mde_call_args(node, frame, candidate_pool, stage_delay_set):
         """The positional arguments, including the effective D for this pool."""
         return (node, frame, candidate_pool, prediction_start, prediction_length,
-                effective_mde_dimension(nested_n, candidate_pool, num_delays),
+                effective_mde_dimension(nested_n, candidate_pool),
                 embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
                 results_dir, stage_delay_set)
 
@@ -319,8 +318,10 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
         pool = _real_candidate_pool(graph, node, expanded_columns, raw_columns)
         try:
             return mde.run_mde_for_target(
-                *mde_call_args(node, expanded_df, pool, delay_set, stage1_num_delays),
-                **mde_call_kwargs(node, 1, 'stage1'))
+                *mde_call_args(node, expanded_df, pool, delay_set),
+                # Serial -- it has to see the graph as accepted so far -- so it
+                # gets every core as inner threads.
+                **mde_call_kwargs(node, max(1, cores), 'stage1'))
         except Exception as exc:
             if mde.is_gpu_memory_failure(exc):
                 print(f'nested MDE (Stage 1): {node} recompute hit a GPU MEMORY failure: '
@@ -331,8 +332,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                   f'as a dead end', flush=True)
             return mde.failed_mde_result(node)
 
-    def stage_submitter(frame, pool_for, stage_delay_set, num_delays, cache_stage,
-                        window_estimate):
+    def stage_submitter(frame, pool_for, stage_delay_set, cache_stage, window_estimate):
         """A submit_one() callback for waves.run_mde_batch()."""
         def submit_one(executor, node, inner_workers):
             # Speculative window resolve, for the heartbeat's remaining-time
@@ -344,7 +344,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                 max_window_rows)
             return executor.submit(
                 mde.run_mde_for_target,
-                *mde_call_args(node, frame, pool_for(node), stage_delay_set, num_delays),
+                *mde_call_args(node, frame, pool_for(node), stage_delay_set),
                 **mde_call_kwargs(node, inner_workers, cache_stage))
         return submit_one
 
@@ -383,7 +383,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
                 stage_submitter(
                     expanded_df,
                     lambda n: _real_candidate_pool(graph, n, expanded_columns, raw_columns),
-                    delay_set, stage1_num_delays, 'stage1', window_estimate),
+                    delay_set, 'stage1', window_estimate),
                 cores, mp_start_method, progress_log_path,
                 f'nested MDE (Stage 1) wave at depth(s) {wave_depths}',
                 window_estimate=window_estimate,
@@ -414,11 +414,8 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
     # =================================================================
     # ZERO LAGS. DELAY_SOURCE='explicit' with DELAY_SET=0 resolves to an EMPTY
     # lag set (derive_lag_set() strips every 0 entry on that path), leaving
-    # stage2_universe empty: nothing to select, nothing to attach, and
-    # effective_mde_dimension() would divide by stage2_num_delays == 0. The
-    # parallel builder died exactly there (job 4774133, 2026-10-27); this one
-    # has the same arithmetic. Skipped outright rather than guarded at the
-    # division: a stage with an empty pool has no work to do.
+    # stage2_universe empty: nothing to select and nothing to attach, so the
+    # stage is skipped outright.
     if not lag_set:
         print('nested MDE (Stage 2): SKIPPED ENTIRELY -- the lag set is empty (zero lags), '
               'so there are no lagged candidates to select or attach; this network is '
@@ -437,7 +434,7 @@ def build_nested_mde_network(targets, expanded_df, raw_columns, expanded_columns
             stage_submitter(
                 stage2_df,
                 lambda n: [c for c in stage2_universe if stage2_observable[c] != n],
-                lag_set, stage2_num_delays, 'stage2', window_estimate),
+                lag_set, 'stage2', window_estimate),
             cores, mp_start_method, progress_log_path,
             'nested MDE (Stage 2)', window_estimate=window_estimate,
         )

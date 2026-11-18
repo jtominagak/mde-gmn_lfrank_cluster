@@ -117,6 +117,15 @@ def load_config():
     # -- 0 (default) means "use the full held-out
     # window"; a larger value is clamped down to it in main().
     cfg['GENERATE_LENGTH'] = int(os.environ.get('TSLS_MDE_GMN_GENERATE_LENGTH', 0))
+    # An extra STOCHASTIC free run after the final one ('local_residual'; see
+    # gmn_embedding.local_residual_draw), so the run samples the model's
+    # conditional distribution instead of iterating its mean. 'none' skips it.
+    # It writes its own outputs only. The seed makes it reproducible.
+    cfg['GENERATE_NOISE'] = os.environ.get('TSLS_MDE_GMN_GENERATE_NOISE', 'none').strip().lower()
+    if cfg['GENERATE_NOISE'] not in ('none', 'local_residual'):
+        raise ValueError(f"TSLS_MDE_GMN_GENERATE_NOISE must be 'none' or 'local_residual', "
+                         f"got {cfg['GENERATE_NOISE']!r}")
+    cfg['GENERATE_NOISE_SEED'] = int(os.environ.get('TSLS_MDE_GMN_GENERATE_NOISE_SEED', 0))
 
     # Theiler-window / neighbor-exclusion radius for gmn's own recursive
     # Generate()/Forecast() nearest-neighbor search (SMap), passed through
@@ -147,17 +156,29 @@ def load_config():
     cfg['GENERATE_START_STEP'] = int(os.environ.get('TSLS_MDE_GMN_GENERATE_START_STEP', 50))
 
     # ---- MDE (variable selection; unused when MODE='GMN') -------------
-    # MDE_D counts distinct *real* observables, not delay-expanded candidate
-    # columns -- reused as the per-round cap for both nested-MDE stages
-    # (Stage 1: real-observable-only, so the multiplier is always 1;
-    # Stage 2: lagged-only, multiplied by however many lag values
-    # DELAY_SOURCE's chosen path below resolves to) -- see
-    # effective_mde_dimension()'s docstring. Ported unchanged from
+    # MDE_D caps how many columns one MDE call may select, lagged ones
+    # included; each becomes a coordinate of that node's S-map embedding.
     cfg['MDE_D'] = int(os.environ.get('TSLS_MDE_GMN_D', 20))
+    # Forward selection stops when the best remaining candidate does not
+    # improve the node's score by MORE than this (proper_mde's minGain). 'none'
+    # keeps the reference algorithm, which adds columns until MDE_D whenever
+    # one passes the absolute gates, improving or not.
+    # 'surrogate': a per-node, per-round threshold calibrated on time-shifted
+    # surrogate columns instead of a fixed number (mde.stopping_rule_kwargs).
+    _min_gain = os.environ.get('TSLS_MDE_GMN_MDE_MIN_GAIN', '0').strip().lower()
+    cfg['MDE_MIN_GAIN'] = (None if _min_gain in ('none', '') else
+                           'surrogate' if _min_gain == 'surrogate' else float(_min_gain))
     # Prediction interval every proper_mde forward-selection call (both the
     # top-level per-target search and every nested-MDE per-node search)
     # ranks and validates every candidate driver against.
     cfg['TP'] = int(os.environ.get('TSLS_MDE_GMN_TP', 1))
+    # Horizon of the GMN model itself (theta search, Generate(), Forecast()).
+    # 'match' (default) = TP: GMN runs the horizon its drivers were selected
+    # to predict. An integer sets it independently. See docs/parameters.md.
+    _gmn_tp = os.environ.get('TSLS_MDE_GMN_GMN_TP', 'match').strip().lower()
+    cfg['GMN_TP'] = cfg['TP'] if _gmn_tp in ('match', '') else int(_gmn_tp)
+    if cfg['GMN_TP'] < 1:
+        raise ValueError(f"TSLS_MDE_GMN_GMN_TP must be >= 1 or 'match', got {cfg['GMN_TP']}")
     cfg['EMBED_DIM_RHO_MIN'] = float(os.environ.get('TSLS_MDE_GMN_EMBED_DIM_RHO_MIN', 0.2))
     cfg['CROSS_MAP_RHO_MIN'] = float(os.environ.get('TSLS_MDE_GMN_CROSS_MAP_RHO_MIN', 0.2))
     # The two gates above are applied to whichever metric scores the node, and

@@ -73,7 +73,7 @@ def _make_fake_run_mde_for_target(plan, calls):
              reuse_cache=False, prev_runs_dir=None, run_cache_dir=None,
              data_file=None, data_file_sha256=None, code_fingerprint=None,
              cache_stage='stage1', max_e=None, inner_workers=1, raw_columns=None,
-             use_gpu=False):
+             use_gpu=False, min_gain=None):
         calls.append((cache_stage, target, metric, target_metric))
         selected = plan.get((cache_stage, target), [])
         gains = [0.5] * len(selected)

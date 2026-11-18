@@ -165,7 +165,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                    gmn_mode=None, multi_mde_e=None, multi_mde_target_aggregate=None,
                    external_input_mode='real_data', progress_log_path=None,
                    mp_start_method='fork', use_gpu=False,
-                   network_builder=None, network_builder_kwargs=None):
+                   network_builder=None, network_builder_kwargs=None, min_gain=None):
     '''Build one network spanning `targets` and their driver candidates, via
     one of two unrelated constructions depending on `mode`.
 
@@ -223,6 +223,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
             target_ranking_window_rows=target_ranking_window_rows,
             min_pred_events=min_pred_events, max_window_rows=max_window_rows,
             ccm_lib_sizes_rows=ccm_lib_sizes_rows,
+            min_gain=min_gain,
         )
         hit = find_cached(prev_runs_dir, cache_filename, fingerprint, load_one=_load_pickle_cache_entry)
         if hit is not None:
@@ -259,6 +260,7 @@ def build_network(targets, mde_results, df, prediction_start, prediction_length,
                 progress_log_path=progress_log_path,
                 mp_start_method=mp_start_method,
                 use_gpu=use_gpu,
+                min_gain=min_gain,
                 **(network_builder_kwargs or {}),
             )
         graph.graph['self_delay_set'] = sorted(set(lag_set) | {0}, reverse=True)
@@ -478,7 +480,9 @@ def build_gmn_config(net_result, prediction_start, prediction_length, results_di
     embedding.'''
     if mode not in ('Generate', 'Forecast'):
         raise ValueError(f"Unknown mode: {mode!r}")
-    Tp = 1
+    # The GMN model's horizon (config GMN_TP), carried on net_result by
+    # main(); 1 when absent.
+    Tp = int(net_result.get('gmn_tp', 1))
     generate_start = generate_start if generate_start is not None else prediction_start
 
     if mode == 'Generate':

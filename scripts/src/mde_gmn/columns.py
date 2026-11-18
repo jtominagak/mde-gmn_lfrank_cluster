@@ -150,12 +150,25 @@ def derive_lag_set(delay_source, explicit_delay_set, lag_mode, lag_density, lag_
 
     return list(range(-1, -depth - 1, -step))
 
-def effective_mde_dimension(mde_d, candidate_columns, num_delays):
-    '''MDE_D names the desired count of distinct *real* observables MDE
-    should be able to select -- not delay-expanded columns. Each real
-    observable occupies `num_delays` separate candidate columns (one per
-    delay), so the D actually handed to proper_mde is scaled up by
-    num_delays. Capped at the number of real observables actually present in
-    this call's own candidate pool, since MDE cannot pick more than exist.'''
-    num_real_observables_available = len(candidate_columns) // num_delays
-    return min(mde_d, num_real_observables_available) * num_delays
+def effective_mde_dimension(mde_d, candidate_columns):
+    '''The D handed to proper_mde: MDE_D, capped at the size of the pool.
+
+    D is the number of forward-selection rounds, so it is the most columns a
+    node can select -- and every selected column becomes one coordinate of
+    that node's S-map embedding in GMN. It is therefore a cap on embedding
+    dimension, and it means the same thing with or without lags.
+
+    It used to be multiplied by the number of delays per observable, on the
+    reasoning that MDE_D should count distinct real observables. Nothing
+    enforced that: the multiplier simply let a node select num_delays times
+    as many columns of any kind. In job 4799407 (3 lags, union) the median
+    node selected 40 columns -- the inflated cap exactly -- covering only 22
+    distinct observables, and most of the extra columns were short lags that
+    are near-copies of a column already chosen: a TSLS series at lag 1, 2
+    and 4 rows correlates 0.995, 0.991 and 0.981 with itself, and differs
+    from X(t) - k*dt only when a spike fell inside the lag (1-4% of rows).
+    Those coordinates cost a 4x larger D in every ranking pass, a 40-D
+    S-map in GMN, and the theta search's run time (290,824s against
+    54,551s without lags) -- for marginal gains that were zero at the
+    median.'''
+    return min(mde_d, len(candidate_columns))

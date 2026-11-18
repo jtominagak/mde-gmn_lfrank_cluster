@@ -220,10 +220,23 @@ TARGETS="head_position_x,head_position_y"   # comma-separated target column name
 # explicit direction to reuse this already-exposed budget rather than
 # introduce a second one.
 MDE_D=10                       # HALF PRODUCTION (see SIZING NOTE above) -- default: 20
+# MDE_D caps the columns a node may select -- lagged ones included. It is no
+# longer multiplied by the number of delays per observable (job 4799407's
+# nodes took 40 columns each that way, mostly near-duplicate short lags).
+# Forward selection stops when the best remaining candidate does not improve
+# the node's score by MORE than MDE_MIN_GAIN. 0 = never add a driver that
+# leaves prediction no better (41% of job 4799404's edges did). 'none' =
+# the reference dimx behaviour: keep adding until MDE_D.
+MDE_MIN_GAIN="${MDE_MIN_GAIN:-0}"   # overridable; code default: 0. Other values: none, surrogate (a per-round threshold calibrated on time-shifted surrogates)
 # Prediction interval every proper_mde forward-selection call ranks/
 # validates every candidate driver against -- ported from
 # simple-mde-gmn.py's own TP parameter (ranking, not just final scoring).
 TP=20                          # default: 1 (proper_mde's own default)
+# Horizon of the GMN model (theta search, Generate(), Forecast()). 'match' =
+# TP, so GMN runs the same horizon its drivers were selected for; an integer
+# sets it independently (1 = the old behaviour). Generate() at GMN_TP > 1 runs
+# as GMN_TP interleaved chains, so the time axis is not compressed.
+GMN_TP="${GMN_TP:-match}"      # overridable; code default: match
 EMBED_DIM_RHO_MIN=0.2         # default: 0.2, embedding-dimension skill gate -- CORRELATION-scored nodes (the behavioural targets)
 CROSS_MAP_RHO_MIN=0.2         # default: 0.2, cross-map skill gate -- CORRELATION-scored nodes
 # The same two gates for F1-SCORED nodes, i.e. every TSLS neuron. Separate
@@ -378,7 +391,7 @@ REGION_CHANNEL_CAP="${REGION_CHANNEL_CAP:-78}"   # overridable; default here: 78
 # it to, say, LAG_COUNT=25 is then a one-knob edit that does NOT also shorten
 # the Generate() run -- which is what makes this different from shrinking
 # GENERATE_LENGTH to get the same effect (see the pitfall note there).
-DELAY_SOURCE="${DELAY_SOURCE:-lag_mode}"       # overridable; default: lag_mode. Other values: tau_count, explicit
+DELAY_SOURCE="${DELAY_SOURCE:-explicit}"       # overridable; here: explicit, so the ISI-derived DELAY_SET below is what runs (code default: lag_mode). Other values: lag_mode, tau_count
 # LAG_MODE (only used when DELAY_SOURCE=lag_mode) sets the *bound* (deepest
 # lag magnitude, in rows) the auto-derived delay set reaches:
 #   'generation_length_adjusted' (default): bound = GENERATE_LENGTH below.
@@ -424,7 +437,22 @@ LAG_COUNT="${LAG_COUNT:-10}"  # overridable; default: 10, only used when DELAY_S
 # scope='union' had ever exercised zero lags before (job 4769464), and union
 # is immune because its num_delays counts the real observables too. Do not
 # re-weaken this note without re-reading that test.
-DELAY_SET="${DELAY_SET:-0,-1,-3,-5,-10}"
+# LAG VALUES FROM THE DATA (2026-11-18). A lagged TSLS copy X(t-k) says
+# anything X(t) does not only when a spike fell inside (t-k, t], i.e. when
+# TSLS(t) < k rows -- otherwise it is exactly X(t) - k*dt. So the fraction of
+# rows in which lag k is informative is the CDF of the TSLS values, and the
+# lag that is informative in a fraction q of rows is the q-quantile of TSLS.
+# Measured on the library rows (before PREDICTION_START) of
+# J1620210605_epoch_8_freq_40_Hz.csv, over the 213 neurons in job 4799404's
+# network (firing is bursty: median 0.35 Hz, median ISI 5 rows), median over
+# neurons:
+#     q = 0.10 -> 16 rows (400 ms)    q = 0.25 -> 63 rows (1.6 s)
+#     q = 0.50 -> 173 rows (4.3 s)
+# The previous -1,-2,-4 were informative in 1.2%, 2.1% and 3.5% of rows.
+# Per-neuron spread is wide (the q=0.5 lag has IQR 54-372 rows), so one
+# shared set is a compromise; re-derive it for another recording with
+# scripts/dev/derive_isi_lags.py.
+DELAY_SET="${DELAY_SET:--16,-63,-173}"
 # NOTE: STAGE2_ALLOW_REAL_OBSERVABLES is retired (2026-09-30). Stage 2's
 # candidates are lagged columns only, and every lagged pick becomes a leaf
 # node, so there is nothing for Stage 2 to select recursively. load_config()
@@ -485,6 +513,14 @@ MDE_VALIDATION_RATIO=0.5        # default: 0.5
 # simple-mde-gmn.sbatch's own GENERATE_LENGTH comment for the full
 # rationale (identical here). 0 means "use the entire held-out window".
 GENERATE_LENGTH=400             # deliberately NOT halved from 0 -- see SIZING NOTE above -- default: 0 (= full held-out window)
+# One extra STOCHASTIC free run after the final Generate(): each step adds a
+# residual drawn from the node's own library analogues, so the run samples
+# the model's conditional distribution instead of iterating its mean (a
+# deterministic run's TSLS nodes stop resetting -- job 4799404: 0 resets in
+# 400 steps across 116 nodes). Writes gmn_generate_output_*_stochastic.csv and
+# generate_noise_comparison_*.csv only; nothing else changes.
+GENERATE_NOISE="${GENERATE_NOISE:-local_residual}"   # overridable; code default: none. Values: none, local_residual
+GENERATE_NOISE_SEED="${GENERATE_NOISE_SEED:-0}"      # overridable; reproducible realization
 
 # Theiler-window / neighbor-exclusion radius for GMN's own recursive
 # Generate()/Forecast() SMap nearest-neighbor search -- a PLAIN STATIC
@@ -941,6 +977,8 @@ export TSLS_MDE_GMN_GMN_MODE="${GMN_MODE}"
 export TSLS_MDE_GMN_TARGETS="${TARGETS}"
 export TSLS_MDE_GMN_D="${MDE_D}"
 export TSLS_MDE_GMN_TP="${TP}"
+export TSLS_MDE_GMN_GMN_TP="${GMN_TP}"
+export TSLS_MDE_GMN_MDE_MIN_GAIN="${MDE_MIN_GAIN}"
 export TSLS_MDE_GMN_EMBED_DIM_RHO_MIN="${EMBED_DIM_RHO_MIN}"
 export TSLS_MDE_GMN_CROSS_MAP_RHO_MIN="${CROSS_MAP_RHO_MIN}"
 export TSLS_MDE_GMN_EMBED_DIM_RHO_MIN_F1="${EMBED_DIM_RHO_MIN_F1}"
@@ -963,6 +1001,8 @@ export TSLS_MDE_GMN_DELAY_SET="${DELAY_SET}"
 export TSLS_MDE_GMN_LIB_RATIO="${LIB_RATIO}"
 export TSLS_MDE_GMN_MDE_VALIDATION_RATIO="${MDE_VALIDATION_RATIO}"
 export TSLS_MDE_GMN_GENERATE_LENGTH="${GENERATE_LENGTH}"
+export TSLS_MDE_GMN_GENERATE_NOISE="${GENERATE_NOISE}"
+export TSLS_MDE_GMN_GENERATE_NOISE_SEED="${GENERATE_NOISE_SEED}"
 export GMN_EXCLUSION_RADIUS="${GMN_EXCLUSION_RADIUS}"
 export TSLS_MDE_GMN_FORECAST_PLOT_RANGE="${FORECAST_PLOT_RANGE}"
 export TSLS_MDE_GMN_GENERATE_START_MIN_OFFSET="${GENERATE_START_MIN_OFFSET}"
