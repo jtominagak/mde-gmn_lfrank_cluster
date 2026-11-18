@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from grid import GRID  # noqa: E402
 
 FAMILY = {g['label']: g['family'] for g in GRID}
+STALL_FRAC = 0.1   # 'stalled' = generated (x, y) speed below 10% of the real median speed
 COLORS = {'sawtooth': '#555555', 'A_calcium': '#1f77b4', 'B_adapt_nr': '#d62728',
           'C_theta_osc': '#2ca02c'}
 METRICS = ['corr_head_position_x', 'corr_head_position_y', 'vwcorr_head_position_x',
@@ -161,7 +162,7 @@ def main():
     # The real positions come from the job's own trimmed data, row-aligned
     # with the rollout's 'row' column.
     fig, ax = plt.subplots(figsize=(8, 4))
-    curves = {}
+    curves, stalls = {}, []
     for lab, files in examples.items():
         d = job_dir(args.outputs, man.loc[man['label'] == lab, 'job_id'].iloc[0])
         real_path = d / 'tsls_data_trimmed.csv' if d is not None else None
@@ -176,6 +177,17 @@ def main():
             rows = gen['row'].to_numpy()
             errs.append(np.hypot(gen['head_position_x'].to_numpy() - real['head_position_x'].to_numpy()[rows],
                                  gen['head_position_y'].to_numpy() - real['head_position_y'].to_numpy()[rows]))
+            # Time to stall: the first time after which the generated (x, y)
+            # speed stays below STALL_FRAC of the real median speed for the
+            # rest of the run. Equal to the run length if it never stalls.
+            gsp = np.hypot(np.diff(gen['head_position_x'].to_numpy()), np.diff(gen['head_position_y'].to_numpy()))
+            rsp = np.hypot(np.diff(real['head_position_x'].to_numpy()[rows[0]:]),
+                           np.diff(real['head_position_y'].to_numpy()[rows[0]:]))
+            moving = np.nonzero(gsp >= STALL_FRAC * np.median(rsp))[0]
+            stall = (moving[-1] + 1 if len(moving) else 0) * 0.025
+            stalls.append({'label': lab, 'family': FAMILY.get(lab, '?'), 'start': int(rows[0]),
+                           'stall_s': stall, 'run_s': len(gsp) * 0.025,
+                           'never_stalls': bool(len(moving) and moving[-1] == len(gsp) - 1)})
         if errs:
             n = min(len(e) for e in errs)
             curves[lab] = np.nanmean([e[:n] for e in errs], axis=0)
@@ -183,6 +195,13 @@ def main():
         fam = FAMILY.get(lab, '?')
         ax.plot(np.arange(len(c)) * 0.025, c, lw=1, color=COLORS.get(fam, 'k'),
                 alpha=0.9 if fam == 'sawtooth' else 0.5, ls='--' if lab == 'tsls_events' else '-')
+    if stalls:
+        st = pd.DataFrame(stalls)
+        st.to_csv(out / 'stall_per_rollout.csv', index=False)
+        st.groupby(['label', 'family']).agg(
+            stall_s_median=('stall_s', 'median'), stall_s_q25=('stall_s', lambda v: v.quantile(.25)),
+            stall_s_q75=('stall_s', lambda v: v.quantile(.75)), frac_never_stalls=('never_stalls', 'mean'),
+            n=('stall_s', 'size')).reset_index().to_csv(out / 'stall_summary.csv', index=False)
     if curves:
         pd.DataFrame({k: pd.Series(v) for k, v in curves.items()}).to_csv(
             out / 'path_error_per_step.csv', index_label='step')
