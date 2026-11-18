@@ -46,7 +46,9 @@ Imported by: pipeline.
 """
 
 import json
+import multiprocessing as mp
 import time
+from concurrent.futures import ProcessPoolExecutor
 
 import gmn
 import numpy as np
@@ -228,6 +230,49 @@ def graph_summary(graph, targets):
     }
 
 
+def _generate(cfg_file, cores):
+    '''One free run from a written config; module-level so a spawned worker
+    can unpickle it (importing this module applies the gmn patches).'''
+    G = gmn.GMN(configFile=cfg_file, cores=cores)
+    G.Generate()
+    return G.DataOut
+
+
+def _onestep_forecast(network_id, net_result, theta, graph, cfg, df, ref, tag, out_dir):
+    # One-step accuracy: Forecast() over the whole held-out segment.
+    try:
+        B = cfg['GENERATE_VALIDATION_START']
+        cfg_file = build_gmn_config(
+            net_result, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'], cfg['RESULTS_DIR'],
+            mode='Forecast', node_theta_overrides=theta, variant='onestep',
+            generate_length=len(df) - B, generate_start=B,
+            max_offset=network_max_embedding_offset(graph),
+            exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
+        Gf = gmn.GMN(configFile=str(cfg_file), cores=cfg['CORES'])
+        Gf.Forecast()
+        fc = Gf.DataOut.dropna().reset_index(drop=True)
+        fc.to_csv(out_dir / f'onestep_forecast_{network_id}.csv', index=False)
+        idx = fc['Time'].to_numpy().astype(int)
+        one = []
+        for node in [c for c in fc.columns if c != 'Time' and DELAY_MARKER not in c]:
+            a, p = df[node].to_numpy(float)[idx], fc[node].to_numpy(float)
+            # Persistence baseline: predict the last observed value. At
+            # 25 ms a smooth trace is nearly persistent, so one-step skill
+            # only means something relative to this.
+            persist = df[node].to_numpy(float)[idx - int(net_result.get('gmn_tp', 1))]
+            n_model = _nrmse(a, p, ref.scale[node])
+            n_pers = _nrmse(a, persist, ref.scale[node])
+            one.append({**tag, 'network_id': network_id, 'node': node,
+                        'role': 'target' if node in net_result['targets'] else 'unit',
+                        'corr': _corr(a, p), 'nrmse': n_model,
+                        'corr_persistence': _corr(a, persist), 'nrmse_persistence': n_pers,
+                        'skill_vs_persistence': (1 - n_model / n_pers) if n_pers else np.nan,
+                        'rows': len(idx)})
+        pd.DataFrame(one).to_csv(out_dir / f'onestep_metrics_{network_id}.csv', index=False)
+    except Exception as exc:
+        print(f'{network_id}: one-step Forecast() over [B, end) FAILED: {exc!r}', flush=True)
+
+
 def run_rollout_evaluation(gmn_runs, cfg, df, progress_log_path=None):
     '''The whole step, for every network that has a final Generate().'''
     out_dir = cfg['RESULTS_DIR'] / 'rollouts'
@@ -253,59 +298,62 @@ def run_rollout_evaluation(gmn_runs, cfg, df, progress_log_path=None):
             continue
         theta = run['best_node_theta']
 
-        rows = []
+        # Build every rollout's config in the parent (cheap, writes files),
+        # then run the Generate()s. gmn's Generate() is serial whatever
+        # `cores` says, so with ROLLOUT_WORKERS > 1 the starts run in a
+        # spawned process pool (spawn: the parent may hold CUDA state) while
+        # the parent runs the one-step Forecast(). Results are identical to
+        # the serial path -- GENERATE_NOISE is off, every run is
+        # deterministic and reads only its own config files.
+        jobs = []
         for k, s in enumerate(starts):
-            t0 = time.perf_counter()
             try:
                 cfg_file = build_gmn_config(
                     net_result, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'], cfg['RESULTS_DIR'],
                     mode='Generate', node_theta_overrides=theta, variant=f'rollout{k}',
                     generate_length=length, generate_start=s,
                     exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
-                G = gmn.GMN(configFile=str(cfg_file), cores=cfg['CORES'])
-                G.Generate()
+                jobs.append((k, s, str(cfg_file)))
             except Exception as exc:
-                print(f'{network_id}: rollout from row {s} FAILED: {exc!r}', flush=True)
-                continue
-            gen = G.DataOut.reset_index(drop=True).drop(columns=['Time'], errors='ignore')
+                print(f'{network_id}: rollout config for row {s} FAILED: {exc!r}', flush=True)
+        workers = min(int(cfg.get('ROLLOUT_WORKERS', 1)), len(jobs))
+        onestep_args = (network_id, net_result, theta, graph, cfg, df, ref, tag, out_dir)
+        t_pool = time.perf_counter()
+        if workers > 1:
+            _log_progress(progress_log_path, f'{network_id}: {len(jobs)} rollouts on {workers} '
+                                             f'spawned workers; one-step Forecast() in the parent')
+            with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context('spawn')) as pool:
+                futures = [(k, s, pool.submit(_generate, f, 1)) for k, s, f in jobs]
+                _onestep_forecast(*onestep_args)
+                outs = []
+                for k, s, fut in futures:
+                    try:
+                        outs.append((k, s, fut.result()))
+                    except Exception as exc:
+                        print(f'{network_id}: rollout from row {s} FAILED: {exc!r}', flush=True)
+                        continue
+                    _log_progress(progress_log_path, f'{network_id}: rollout {k + 1}/{len(starts)} '
+                                                     f'(row {s}) done at {time.perf_counter() - t_pool:.1f}s')
+        else:
+            outs = []
+            for k, s, f in jobs:
+                t0 = time.perf_counter()
+                try:
+                    outs.append((k, s, _generate(f, cfg['CORES'])))
+                except Exception as exc:
+                    print(f'{network_id}: rollout from row {s} FAILED: {exc!r}', flush=True)
+                    continue
+                _log_progress(progress_log_path, f'{network_id}: rollout {k + 1}/{len(starts)} '
+                                                 f'(row {s}) {time.perf_counter() - t0:.1f}s')
+
+        rows = []
+        for k, s, data_out in outs:
+            gen = data_out.reset_index(drop=True).drop(columns=['Time'], errors='ignore')
             gen.insert(0, 'row', np.arange(s, s + len(gen)))
             gen.to_csv(out_dir / f'rollout_{network_id}_start{s}.csv', index=False)
             for r in score_rollout(gen.drop(columns=['row']), s, ref, horizon_rows):
                 rows.append({**tag, 'network_id': network_id, **r})
-            _log_progress(progress_log_path, f'{network_id}: rollout {k + 1}/{len(starts)} '
-                                             f'(row {s}) {time.perf_counter() - t0:.1f}s')
         pd.DataFrame(rows).to_csv(out_dir / f'rollout_metrics_{network_id}.csv', index=False)
-
-        # One-step accuracy: Forecast() over the whole held-out segment.
-        try:
-            B = cfg['GENERATE_VALIDATION_START']
-            cfg_file = build_gmn_config(
-                net_result, cfg['PREDICTION_START'], cfg['PREDICTION_LENGTH'], cfg['RESULTS_DIR'],
-                mode='Forecast', node_theta_overrides=theta, variant='onestep',
-                generate_length=len(df) - B, generate_start=B,
-                max_offset=network_max_embedding_offset(graph),
-                exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
-            Gf = gmn.GMN(configFile=str(cfg_file), cores=cfg['CORES'])
-            Gf.Forecast()
-            fc = Gf.DataOut.dropna().reset_index(drop=True)
-            fc.to_csv(out_dir / f'onestep_forecast_{network_id}.csv', index=False)
-            idx = fc['Time'].to_numpy().astype(int)
-            one = []
-            for node in [c for c in fc.columns if c != 'Time' and DELAY_MARKER not in c]:
-                a, p = df[node].to_numpy(float)[idx], fc[node].to_numpy(float)
-                # Persistence baseline: predict the last observed value. At
-                # 25 ms a smooth trace is nearly persistent, so one-step skill
-                # only means something relative to this.
-                persist = df[node].to_numpy(float)[idx - int(net_result.get('gmn_tp', 1))]
-                n_model = _nrmse(a, p, ref.scale[node])
-                n_pers = _nrmse(a, persist, ref.scale[node])
-                one.append({**tag, 'network_id': network_id, 'node': node,
-                            'role': 'target' if node in net_result['targets'] else 'unit',
-                            'corr': _corr(a, p), 'nrmse': n_model,
-                            'corr_persistence': _corr(a, persist), 'nrmse_persistence': n_pers,
-                            'skill_vs_persistence': (1 - n_model / n_pers) if n_pers else np.nan,
-                            'rows': len(idx)})
-            pd.DataFrame(one).to_csv(out_dir / f'onestep_metrics_{network_id}.csv', index=False)
-        except Exception as exc:
-            print(f'{network_id}: one-step Forecast() over [B, end) FAILED: {exc!r}', flush=True)
+        if workers <= 1:
+            _onestep_forecast(*onestep_args)
         print(f'{network_id}: rollout evaluation written to {out_dir}', flush=True)

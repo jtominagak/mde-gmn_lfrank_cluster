@@ -749,3 +749,12 @@ def _load_spike_conversion_experiment(cfg):
     cfg['ROLLOUT_N_STARTS'] = int(os.environ.get('TSLS_MDE_GMN_ROLLOUT_N_STARTS', 8))
     cfg['ROLLOUT_LENGTH'] = int(os.environ.get('TSLS_MDE_GMN_ROLLOUT_LENGTH', 400))
     cfg['ROLLOUT_HORIZONS_S'] = _env_float_list('TSLS_MDE_GMN_ROLLOUT_HORIZONS_S', (2.0, 5.0, 10.0))
+    # gmn's Generate() is serial, so the starts run in a spawned pool of
+    # ROLLOUT_WORKERS processes (the parent runs the one-step Forecast() at
+    # the same time, hence CORES - 1). 1 = the original serial loop. Results
+    # do not depend on it.
+    cfg['ROLLOUT_WORKERS'] = int(os.environ.get(
+        'TSLS_MDE_GMN_ROLLOUT_WORKERS',
+        max(1, min(cfg['ROLLOUT_N_STARTS'], int(cfg.get('CORES', 1)) - 1))))
+    if cfg['ROLLOUT_WORKERS'] < 1:
+        raise ValueError(f"TSLS_MDE_GMN_ROLLOUT_WORKERS must be >= 1, got {cfg['ROLLOUT_WORKERS']}")

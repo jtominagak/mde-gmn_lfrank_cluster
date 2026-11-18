@@ -214,6 +214,22 @@ def test_config_evaluation_and_tau():
             os.environ['TSLS_MDE_GMN_TAU_SYN_MS'] = '75'
             p = load_config()['SPIKE_PARAMS']
             assert p['TAU_SYN'] == 0.075 and np.isclose(p['ADAPT_B'], 0.075 * 0.5)
+            # Rollout pool size: CORES - 1 (the parent runs Forecast()),
+            # never more than the starts, never below 1 (= serial loop).
+            os.environ['TSLS_MDE_GMN_CORES'] = '9'
+            os.environ['TSLS_MDE_GMN_ROLLOUT_N_STARTS'] = '32'
+            assert load_config()['ROLLOUT_WORKERS'] == 8
+            os.environ['TSLS_MDE_GMN_ROLLOUT_N_STARTS'] = '3'
+            assert load_config()['ROLLOUT_WORKERS'] == 3
+            os.environ['TSLS_MDE_GMN_CORES'] = '1'
+            assert load_config()['ROLLOUT_WORKERS'] == 1
+            os.environ['TSLS_MDE_GMN_ROLLOUT_WORKERS'] = '0'
+            try:
+                load_config()
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('ROLLOUT_WORKERS=0 must be refused')
     finally:
         os.environ.clear()
         os.environ.update(saved)
