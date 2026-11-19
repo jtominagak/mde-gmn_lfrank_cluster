@@ -344,6 +344,7 @@ Every setting's rollout, (x, y) and population persistence figures are in
 [`figures/stage2/`](figures/stage2/).
 
 ### Reading the tables
+
 * **Activity.** Motion ratio separates the methods most clearly: sawtooth 0.45
   at 2 s; raw LMU and raw log-signature 0.20–0.27 at 2 s (their jumps keep
   them moving briefly), then ≤ 0.001 by 10 s; every smooth operator ≤ 0.10 from
@@ -396,6 +397,7 @@ It holds for Gamma and the LMU within ≈ 0.1; it over-predicts for the
 log-signature, whose Lévy-area and time coordinates do not decay to zero.
 
 **Guidelines**
+
 1. **Set the memory from the event rate, not from a fixed number of ms.**
    Choose a target floor fraction c* (≈ 0.2 worked here) and set
    `T_mem = ISI · ln(1/c*)` ≈ 1.6 × ISI. Concretely:
@@ -481,6 +483,7 @@ choose when to inject events instead of averaging them away.
 * **Fixed Takens lag** τ = −1 row everywhere.
 
 ### Corrections to the experiment prompt's premises
+
 1. *"The sawtooth needs t_{k+1}"* — not in this code: TSLS(t) = t − (last
    event ≤ t) is causal. Its defect is the jump at each event, not look-ahead.
 2. *"Gamma order m is C^m"* — the response to an event is C^{m−1}.
