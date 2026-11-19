@@ -5,10 +5,12 @@ Reads the manifest (label -> job id) and each job's archived results under
 
   rollout_summary.csv     label x horizon: mean (and sd) over rollout starts
   onestep_summary.csv     label: one-step corr/NRMSE, targets and units
-  graph_summary.csv       label: network size, density, region-pair edges
+  graph_summary.csv       label: network size, density, region-pair edges,
+                          x/y driver units and their Jaccard overlap with tsls
   job_status.csv          label: job id, STATUS, commit staged, units kept
   rollout_xy_corr_vs_horizon.png, rollout_path_error_vs_time.png,
-  rollout_manifold.png, rollout_example_xy.png, onestep_vs_rollout.png
+  rollout_manifold.png, rollout_example_xy.png, onestep_vs_rollout.png,
+  rollout_corr_xy_with_se.png, neural_vs_null.png
 
 Run on a compute node (reads ~30 small CSVs per job):
   srun -p intel -t 0:30:00 -c 2 --mem=8G .venv/bin/python3 \
@@ -38,6 +40,7 @@ from nulls import label_nulls  # noqa: E402
 
 FAMILY = {g['label']: g['family'] for g in GRID}
 STALL_FRAC = 0.1   # 'stalled' = generated (x, y) speed below 10% of the real median speed
+N_EFF = 16         # 32 starts ~5 s apart, 10-s runs overlap: ~16 independent runs per label
 COLORS = {'sawtooth': '#555555', 'A_calcium': '#1f77b4', 'B_adapt_nr': '#d62728',
           'C_theta_osc': '#2ca02c'}
 METRICS = ['corr_head_position_x', 'corr_head_position_y', 'vwcorr_head_position_x',
@@ -130,6 +133,15 @@ def main():
     summ = g.mean().add_suffix('_mean').join(g.std().add_suffix('_sd')).join(
         g.size().rename('n_starts')).reset_index()
     summ['corr_xy_mean'] = summ[['corr_head_position_x_mean', 'corr_head_position_y_mean']].mean(axis=1)
+    # Standard error of the per-start x/y-averaged correlation, using the
+    # effective number of independent runs (not 32: neighbouring runs overlap).
+    roll['corr_xy'] = roll[['corr_head_position_x', 'corr_head_position_y']].mean(axis=1)
+    gx = roll.groupby(['label', 'family', 'horizon_s'])
+    summ = summ.merge((gx['corr_xy'].std() / np.sqrt(N_EFF)).rename('corr_xy_se').reset_index(),
+                      on=['label', 'family', 'horizon_s'])
+    # Medians: a few divergent runs dominate the mean path error.
+    summ = summ.merge(gx[['path_err_mean', 'path_err_mean_hold']].median().add_suffix('_median')
+                      .reset_index(), on=['label', 'family', 'horizon_s'])
     summ.to_csv(out / 'rollout_summary.csv', index=False)
 
     if one:
@@ -140,7 +152,19 @@ def main():
             skill_vs_persistence_median=('skill_vs_persistence', 'median'), n=('node', 'size')).reset_index()
         os_.to_csv(out / 'onestep_summary.csv', index=False)
     if graphs:
-        pd.DataFrame(graphs).to_csv(out / 'graph_summary.csv', index=False)
+        gdf = pd.DataFrame(graphs)
+        # Which units drive x/y directly (either lag), and how far that set
+        # moves from the sawtooth's: Jaccard of the unit sets vs label 'tsls'.
+        def driver_units(js):
+            return sorted({n.split('::')[0].removesuffix('_tsls')
+                           for drv in json.loads(js).values() for n, _ in drv})
+        gdf['driver_units'] = gdf['target_drivers'].map(lambda js: ' '.join(driver_units(js)))
+        ref = set(gdf.loc[gdf['label'] == 'tsls', 'driver_units'].iloc[0].split()) \
+            if (gdf['label'] == 'tsls').any() else set()
+        gdf['driver_jaccard_vs_tsls'] = [
+            len(ref & set(u.split())) / len(ref | set(u.split())) if ref else np.nan
+            for u in gdf['driver_units']]
+        gdf.to_csv(out / 'graph_summary.csv', index=False)
 
     # ---- figures ---------------------------------------------------------
     labels = list(dict.fromkeys(summ['label']))
@@ -166,19 +190,24 @@ def main():
     # The real positions come from the job's own trimmed data, row-aligned
     # with the rollout's 'row' column.
     fig, ax = plt.subplots(figsize=(8, 4))
-    curves, stalls = {}, []
+    curves, curves_med, hold_med, stalls = {}, {}, None, []
     for lab, files in examples.items():
         d = job_dir(args.outputs, man.loc[man['label'] == lab, 'job_id'].iloc[0])
         real_path = d / 'tsls_data_trimmed.csv' if d is not None else None
         if not files or real_path is None or not real_path.exists():
             continue
         real = pd.read_csv(real_path, usecols=['head_position_x', 'head_position_y'])
-        errs = []
+        errs, holds = [], []
         for f in files:
             gen = pd.read_csv(f)
             if not {'head_position_x', 'head_position_y', 'row'} <= set(gen.columns):
                 continue
             rows = gen['row'].to_numpy()
+            # hold-the-seed, as rollout_eval scores it: the real position at
+            # the run's first row held fixed.
+            seed = real[['head_position_x', 'head_position_y']].to_numpy()[rows[0]]
+            holds.append(np.hypot(real['head_position_x'].to_numpy()[rows] - seed[0],
+                                  real['head_position_y'].to_numpy()[rows] - seed[1]))
             errs.append(np.hypot(gen['head_position_x'].to_numpy() - real['head_position_x'].to_numpy()[rows],
                                  gen['head_position_y'].to_numpy() - real['head_position_y'].to_numpy()[rows]))
             # Time to stall: the first time after which the generated (x, y)
@@ -195,10 +224,18 @@ def main():
         if errs:
             n = min(len(e) for e in errs)
             curves[lab] = np.nanmean([e[:n] for e in errs], axis=0)
-    for lab, c in curves.items():
+            curves_med[lab] = np.nanmedian([e[:n] for e in errs], axis=0)
+            if hold_med is None:   # every label uses the same start rows
+                hold_med = np.nanmedian([h[:n] for h in holds], axis=0)
+    # Median over starts on a log axis: the mean is dominated by the few runs
+    # that diverge (blew_up), which hides every other run.
+    for lab, c in curves_med.items():
         fam = FAMILY.get(lab, '?')
         ax.plot(np.arange(len(c)) * 0.025, c, lw=1, color=COLORS.get(fam, 'k'),
                 alpha=0.9 if fam == 'sawtooth' else 0.5, ls='--' if lab == 'tsls_events' else '-')
+    if hold_med is not None:
+        ax.plot(np.arange(len(hold_med)) * 0.025, hold_med, color='k', lw=2, ls=':', label='hold the seed')
+    ax.set_yscale('log')
     if stalls:
         st = pd.DataFrame(stalls)
         st.to_csv(out / 'stall_per_rollout.csv', index=False)
@@ -209,9 +246,13 @@ def main():
     if curves:
         pd.DataFrame({k: pd.Series(v) for k, v in curves.items()}).to_csv(
             out / 'path_error_per_step.csv', index_label='step')
+        pd.DataFrame({**{k: pd.Series(v) for k, v in curves_med.items()},
+                      'hold_the_seed': pd.Series(hold_med)}).to_csv(
+            out / 'path_error_per_step_median.csv', index_label='step')
     ax.set_xlabel('time since rollout start (s)')
-    ax.set_ylabel('Euclidean (x, y) error, mean over starts')
-    ax.legend(handles=handles, fontsize=8)
+    ax.set_ylabel('Euclidean (x, y) error, median over starts')
+    ax.legend(handles=handles + [plt.Line2D([], [], color='k', lw=2, ls=':', label='hold the seed')],
+              fontsize=8)
     fig.tight_layout()
     fig.savefig(fig_dir / 'rollout_path_error_vs_time.png', dpi=200)
     plt.close(fig)
@@ -313,6 +354,26 @@ def main():
         md = md.merge(summ[['label', 'horizon_s', 'corr_xy_mean']], on=['label', 'horizon_s'], how='left')
         md['corr_xy_excess'] = md['corr_xy_mean'] - md['corr_xy_mismatched']
         md.to_csv(out / 'xy_mismatched_null.csv', index=False)
+        # The headline comparison: 5-s x/y correlation per label with its
+        # standard error, against what a run from a different start scores.
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharex=True)
+        order = summ[summ['horizon_s'] == 5.0].sort_values(['family', 'label'])['label'].tolist()
+        for ax, h in zip(axes, (2.0, 5.0, 10.0)):
+            sh = summ[summ['horizon_s'] == h].set_index('label').reindex(order)
+            mh = md[md['horizon_s'] == h].set_index('label').reindex(order)
+            y = np.arange(len(order))[::-1]
+            ax.errorbar(sh['corr_xy_mean'], y, xerr=sh['corr_xy_se'], fmt='none', ecolor='gray', lw=1)
+            ax.scatter(sh['corr_xy_mean'], y, c=[COLORS.get(f, 'k') for f in sh['family']], s=30, zorder=3)
+            ax.scatter(mh['corr_xy_mismatched'], y, marker='x', color='k', s=20, zorder=3)
+            ax.axvline(0, color='gray', lw=0.6)
+            ref = sh.loc['tsls', 'corr_xy_mean'] if 'tsls' in sh.index else np.nan
+            ax.axvline(ref, color=COLORS['sawtooth'], lw=0.8, ls='--')
+            ax.set_yticks(y, order, fontsize=7)
+            ax.set_title(f'x/y correlation at {h:g} s (mean over starts, \u00b11 SE)', fontsize=9)
+            ax.set_xlabel('Pearson r (dot)   x = mismatched-start null')
+        fig.tight_layout()
+        fig.savefig(fig_dir / 'rollout_corr_xy_with_se.png', dpi=200)
+        plt.close(fig)
         print(ns.round(3).to_string())
         fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharey=True)
         for ax, h in zip(axes, (2.0, 5.0, 10.0)):
