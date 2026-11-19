@@ -279,6 +279,7 @@ def run_one_step(net_result, theta, cfg, B, actual, graph, out_dir, cores):
             'r': _corr(real, pred), 'nrmse': n_m,
             'r_persistence': _corr(real, persist), 'nrmse_persistence': n_p,
             'skill_vs_persistence': (1 - n_m / n_p) if n_p and n_p > 0 else np.nan,
+            'n_drivers': int(graph.in_degree(node)) if node in graph else 0,
             'n_rows': len(rows)})
     return pd.DataFrame(recs)
 

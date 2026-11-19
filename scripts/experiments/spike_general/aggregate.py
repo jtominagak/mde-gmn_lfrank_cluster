@@ -86,13 +86,23 @@ def collect():
             within = sum(v for k, v in rp.items() if k.split('->')[0] == k.split('->')[1])
             rec['within_region_edge_frac'] = within / max(1, sum(rp.values()))
             rec['region_pairs'] = json.dumps(rp)
-        o = auto / f'onestep_{NET}.csv'
+        # Jobs staged before 773e99d mislabelled Forecast() rows for nodes with
+        # a lagged in-edge; rescore_onestep.py reran their one-step only.
+        o = REPORT / 'rescored' / f'onestep_{j["job_id"]}.csv'
+        rec['onestep_rescored'] = o.exists()
+        o = o if o.exists() else auto / f'onestep_{NET}.csv'
         if o.exists():
             od = pd.read_csv(o)
+            if 'n_drivers' not in od:     # pre-773e99d file: not trustworthy for driven nodes
+                od['n_drivers'] = np.nan
             for role in ('target', 'channel'):
                 sub = od[od['role'] == role]
                 rec[f'onestep_r_{role}'] = _q(sub['r'], 0.5)
                 rec[f'onestep_skill_{role}'] = _q(sub['skill_vs_persistence'], 0.5)
+            dr = od[(od['role'] == 'channel') & (od['n_drivers'] > 0)]
+            rec['onestep_r_driven'] = _q(dr['r'], 0.5)
+            rec['onestep_skill_driven'] = _q(dr['skill_vs_persistence'], 0.5)
+            rec['n_driven_units'] = len(dr)
         r = auto / f'rollouts_{NET}.csv'
         if r.exists():
             rd = pd.read_csv(r)
@@ -237,9 +247,11 @@ def main():
         ['setting', 'manifold 2 s', 'manifold 10 s', 'motion 2 s', 'motion 10 s',
          'collapsed 10 s', 'blew up 10 s', 'unit r 2 s']))
     tabs.append('### One-step accuracy over the whole held-out segment (median over nodes)\n\n' + md_table(
-        s, ['label', 'onestep_r_target', 'onestep_skill_target', 'onestep_r_channel',
-            'onestep_skill_channel'],
-        ['setting', 'r (x, y)', 'skill vs persistence (x, y)', 'r (units)', 'skill vs persistence (units)']))
+        s, ['label', 'onestep_r_target', 'onestep_skill_target', 'n_driven_units', 'onestep_r_driven',
+            'onestep_skill_driven', 'onestep_rescored'],
+        ['setting', 'r (x, y)', 'skill vs persistence (x, y)', 'driven units', 'r (driven units)',
+         'skill vs persistence (driven units)', 'rescored'],
+        {'n_driven_units': '{:.0f}'}))
     tabs.append('### Topology of the (x, y) delay embedding: Wasserstein-1 distances\n\n' + md_table(
         s, ['label', 'xy_W1_H0_generated_vs_real', 'xy_W1_H1_generated_vs_real',
             'xy_W1_H0_library_vs_real', 'xy_W1_H1_library_vs_real', 'xy_H1_real_n_bars',
