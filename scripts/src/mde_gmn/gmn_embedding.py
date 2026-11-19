@@ -406,6 +406,26 @@ def _generalized_node_init(self, args, Network, nodeName):
         offset = max(abs(delay) for _, delay in spec)
         self.libEnd_i = self.data.shape[0] - offset
 
+def _data_rows_to_embedded(rows, offset, node_name, clamp):
+    '''Maps a pyEDM 1-based "start end" row range given in data-row
+    coordinates onto the offset-trimmed frame _generalized_embed() returns
+    (its row i is data row i + offset). A lib range may lose its first rows
+    (clamp=True); a pred range may not, since that would silently change
+    which rows are predicted.'''
+    if not offset:
+        return rows
+    start, end = (int(x) for x in rows.split())
+    start, end = start - offset, end - offset
+    if start < 1:
+        if not clamp:
+            raise ValueError(
+                f'Forecast(): node {node_name!r} has a {offset}-row embedding offset, '
+                f'so pred range {rows!r} starts before its first embedded row -- '
+                f'start the Forecast() window later.')
+        start = 1
+    return f'{start} {end}'
+
+
 def _generalized_node_forecast(self):
     '''Corrected copy of gmn.Node.Forecast (gmn/Forecast.py), fixing two
     pre-existing bugs (below) and replacing its SMap branch's
@@ -540,13 +560,21 @@ def _generalized_node_forecast(self):
 
         df.insert( 0, data.columns[0], data[data.columns[0]].iloc[offset:].reset_index(drop=True) )
 
+        # exp/spike-conversion-general fix: a configured lib/pred range is in
+        # DATA-row coordinates (that is how the real-data passthrough above and
+        # every offset-0 node read it, and gmn takes DataOut's shared Time
+        # column from TopologicalSorted[0], an offset-0 source node). `df`
+        # starts `offset` rows into the data, so the same range has to be
+        # moved back by this node's own offset, or a node with an offset-k
+        # embedding predicts rows k later than its Time label says (it showed
+        # up as Forecast() "leading" the data by the deepest edge delay).
         if len( Parameters.lib ) and not Parameters.lib.isspace():
-            lib = Parameters.lib
+            lib = _data_rows_to_embedded(Parameters.lib, offset, self.name, clamp=True)
         else :
             lib  = "1 %d" % self.libEnd_i
 
         if len( Parameters.pred ) and not Parameters.pred.isspace():
-            pred = Parameters.pred
+            pred = _data_rows_to_embedded(Parameters.pred, offset, self.name, clamp=False)
         else:
             pred = "%d %d" % ( df.shape[0] - 1, df.shape[0] )
 

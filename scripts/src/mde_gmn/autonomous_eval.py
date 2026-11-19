@@ -259,7 +259,10 @@ def run_one_step(net_result, theta, cfg, B, actual, graph, out_dir, cores):
                                 max_offset=max_offset, exclusion_radius=cfg['GMN_EXCLUSION_RADIUS'])
     Gf = gmn.GMN(configFile=str(cfg_file), cores=cores)
     Gf.Forecast()
-    fo = Gf.DataOut.dropna().reset_index(drop=True)
+    fo = Gf.DataOut.dropna()
+    # build_gmn_config() starts the window max_offset rows before B; score
+    # only the held-out rows from B on.
+    fo = fo[fo['Time'].to_numpy().astype(int) >= B].reset_index(drop=True)
     rows = fo['Time'].to_numpy().astype(int)
     targets = net_result['targets']
     recs = []
