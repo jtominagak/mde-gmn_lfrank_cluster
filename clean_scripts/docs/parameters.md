@@ -366,6 +366,23 @@ were informative in 1.2 %, 2.1 % and 3.5 % of rows. One shared set is a
 compromise across neurons whose rates differ by an order of magnitude;
 re-derive it for another recording the same way.
 
+### `GMN_TP = match` — **the free run uses the horizon the network was built at**
+
+`TP` is the horizon MDE and CCM score candidates at. `GMN_TP` is the horizon of
+the S-map each node uses in Generate/Forecast; `match` (the default) sets it to
+`TP`, and an integer sets it independently. With `GMN_TP > 1`, Generate runs as
+`GMN_TP` interleaved chains, so each predicted row lands at its own time.
+
+The idea behind a large `TP` was that it lets slow, long-range drivers into the
+network. That part is reasonable. Generating at Tp=1 from such a network is not:
+a driver that was picked because it predicts the target 20 rows ahead is
+not thereby a good one-step predictor, and one-step S-map then fits coefficients
+on a relationship the selection never tested. Matching the horizons keeps the
+selection criterion and the use of the selected drivers the same. A Tp=20 replay
+of job 4799404 against the Tp=1 replay did not finish in its time limit (theta
+retune at Tp=20), so this default rests on that argument, not a measurement.
+Set `GMN_TP=1` to reproduce the earlier mismatched behaviour.
+
 ### `GENERATE_NOISE = local_residual` — **why the free run goes quiet, and the fix**
 
 A deterministic free run iterates the model's *conditional mean*. For a TSLS
