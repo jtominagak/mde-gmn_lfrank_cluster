@@ -652,6 +652,59 @@ def load_config():
             f"TSLS_MDE_GMN_PARALLEL_MDE_SCOPE must be 'union' or 'staged', got "
             f"{cfg['PARALLEL_MDE_SCOPE']!r}")
 
+    # ---- exp/spike-conversion-general --------------------------------
+    # Method selector (one per run): how sparse event channels become the
+    # continuous signals MDE/GMN see. See tsls_data.transform_events() and
+    # universal_point_process_embeddings.py. Timescales are milliseconds or
+    # 'auto:<k>' = k x the median channel's mean inter-event interval.
+    SPIKE_TRANSFORMS = ('sawtooth', 'gamma', 'lmu', 'logsig')   # = tsls_data.SPIKE_TRANSFORMS
+    cfg['SPIKE_TRANSFORM'] = os.environ.get('TSLS_MDE_GMN_SPIKE_TRANSFORM', 'sawtooth').strip().lower()
+    if cfg['SPIKE_TRANSFORM'] not in SPIKE_TRANSFORMS:
+        raise ValueError(f"TSLS_MDE_GMN_SPIKE_TRANSFORM must be one of {SPIKE_TRANSFORMS}: "
+                         f"{cfg['SPIKE_TRANSFORM']!r}")
+
+    def _ms_list(name, default):
+        return [v if v.startswith('auto') else float(v) for v in _env_list(name, default)]
+
+    def _ms(name, default):
+        v = os.environ.get(name, default).strip()
+        return v if v.startswith('auto') else float(v)
+
+    cfg['GAMMA_ORDER'] = int(os.environ.get('TSLS_MDE_GMN_GAMMA_ORDER', 3))
+    cfg['GAMMA_TAUS_MS'] = _ms_list('TSLS_MDE_GMN_GAMMA_TAUS_MS', ['250'])   # >1 entry = multi-scale sum
+    cfg['GAMMA_LOG_KAPPA'] = float(os.environ.get('TSLS_MDE_GMN_GAMMA_LOG_KAPPA', 0))  # 0 = no compression
+    cfg['LMU_THETA_MS'] = _ms('TSLS_MDE_GMN_LMU_THETA_MS', '1000')
+    cfg['LMU_D'] = int(os.environ.get('TSLS_MDE_GMN_LMU_D', 3))
+    cfg['LMU_DISCRETIZATION'] = os.environ.get('TSLS_MDE_GMN_LMU_DISCRETIZATION', 'impulse')
+    cfg['LMU_PRESMOOTH_ORDER'] = int(os.environ.get('TSLS_MDE_GMN_LMU_PRESMOOTH_ORDER', 0))
+    cfg['LMU_REDUCTION'] = os.environ.get('TSLS_MDE_GMN_LMU_REDUCTION', 'lmu_norm')
+    cfg['LOGSIG_W_MS'] = _ms('TSLS_MDE_GMN_LOGSIG_W_MS', '1000')
+    cfg['LOGSIG_DEPTH'] = int(os.environ.get('TSLS_MDE_GMN_LOGSIG_DEPTH', 2))
+    cfg['LOGSIG_PRESMOOTH_ORDER'] = int(os.environ.get('TSLS_MDE_GMN_LOGSIG_PRESMOOTH_ORDER', 0))
+    cfg['LOGSIG_REDUCTION'] = os.environ.get('TSLS_MDE_GMN_LOGSIG_REDUCTION', 'rms_norm')
+    # Observability filter: channels with fewer than N_MIN_EVENTS event bins
+    # in the training split are not candidates at all (0 = keep all).
+    cfg['N_MIN_EVENTS'] = int(os.environ.get('TSLS_MDE_GMN_N_MIN_EVENTS', 100))
+    # Leading rows dropped for EVERY method (operator warm-up; the sawtooth's
+    # pre-first-event NaNs extend it), so all methods share the same rows.
+    cfg['WARMUP_ROWS'] = int(os.environ.get('TSLS_MDE_GMN_WARMUP_ROWS', 400))
+    # Takens lag used by every MDE/CCM embedding and as the Stage 2 lag
+    # spacing: an integer number of rows, or 'auto' = median over the kept
+    # channels of each channel's first AMI minimum (ACF 1/e fallback),
+    # computed on the TRANSFORMED training rows, capped at EMBED_TAU_MAX.
+    _et = os.environ.get('TSLS_MDE_GMN_EMBED_TAU', 'auto').strip().lower()
+    cfg['EMBED_TAU'] = _et if _et == 'auto' else int(_et)
+    cfg['EMBED_TAU_METHOD'] = os.environ.get('TSLS_MDE_GMN_EMBED_TAU_METHOD', 'ami')
+    cfg['EMBED_TAU_MAX'] = int(os.environ.get('TSLS_MDE_GMN_EMBED_TAU_MAX', 40))
+    # Autonomous evaluation (autonomous_eval.py): ROLLOUT_N_STARTS input-free
+    # Generate() runs of ROLLOUT_LENGTH rows from evenly spaced held-out
+    # starts, scored at each ROLLOUT_HORIZONS_S prefix; 0 starts = skip.
+    cfg['ROLLOUT_N_STARTS'] = int(os.environ.get('TSLS_MDE_GMN_ROLLOUT_N_STARTS', 0))
+    cfg['ROLLOUT_LENGTH'] = int(os.environ.get('TSLS_MDE_GMN_ROLLOUT_LENGTH', 400))
+    cfg['ROLLOUT_HORIZONS_S'] = _env_float_list('TSLS_MDE_GMN_ROLLOUT_HORIZONS_S', [2, 5, 10])
+    cfg['ROLLOUT_WORKERS'] = int(os.environ.get('TSLS_MDE_GMN_ROLLOUT_WORKERS', 4))
+    cfg['PH_LANDMARKS'] = int(os.environ.get('TSLS_MDE_GMN_PH_LANDMARKS', 80))
+
     cfg['TARGET_COLORS'] = {t: plt.get_cmap('tab10')(i % 10) for i, t in enumerate(cfg['TARGETS'])}
 
     return cfg

@@ -54,7 +54,50 @@ from mde_gmn.gmn_build import build_network
 from mde_gmn.plots import draw_colored_network, plot_3d_network
 from mde_gmn.progress import _log_progress
 from mde_gmn.theta import run_theta_search
-from mde_gmn.tsls_data import burn_in_trim, convert_to_tsls, raw_neuron_columns
+from mde_gmn.tsls_data import convert_events, raw_neuron_columns, select_observable
+
+
+# Every setting that changes the converted signals or the embedding without
+# changing the raw data file (exp/spike-conversion-general). Folded into the
+# data hash, which every stage fingerprint carries, so no two settings ever
+# share a cache entry.
+PREPROCESSING_KEYS = ('SPIKE_TRANSFORM', 'GAMMA_ORDER', 'GAMMA_TAUS_MS', 'GAMMA_LOG_KAPPA',
+                      'LMU_THETA_MS', 'LMU_D', 'LMU_DISCRETIZATION', 'LMU_PRESMOOTH_ORDER',
+                      'LMU_REDUCTION', 'LOGSIG_W_MS', 'LOGSIG_DEPTH', 'LOGSIG_PRESMOOTH_ORDER',
+                      'LOGSIG_REDUCTION', 'N_MIN_EVENTS', 'WARMUP_ROWS', 'EMBED_TAU',
+                      'EMBED_TAU_METHOD', 'EMBED_TAU_MAX', 'EMBED_TAU_RESOLVED')
+
+
+def preprocessing_digest(cfg):
+    import hashlib
+    import json
+    desc = {k: cfg.get(k) for k in PREPROCESSING_KEYS}
+    return hashlib.sha256(json.dumps(desc, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def resolve_embed_tau(cfg, df, obs_cols):
+    '''Scale-normalised Takens lag (exp/spike-conversion-general): EMBED_TAU, or
+    for 'auto' the median over channels of each transformed channel's first
+    AMI minimum on the MDE library rows [0, A). Exported to the environment
+    for mde.embed_tau() (and so for every worker), and used as the Stage 2 lag
+    spacing when DELAY_SOURCE='tau_count'.'''
+    import os
+    from mde_gmn import universal_point_process_embeddings as U
+    if cfg['EMBED_TAU'] == 'auto':
+        lag, per_channel, rules = U.dataset_embedding_lag(
+            df[obs_cols].to_numpy(), max_lag=cfg['EMBED_TAU_MAX'],
+            method=cfg['EMBED_TAU_METHOD'], lib_end=cfg['PREDICTION_START'])
+        pd.DataFrame({'channel': obs_cols, 'lag_rows': per_channel}).to_csv(
+            cfg['RESULTS_DIR'] / 'embed_tau_per_channel.csv', index=False)
+        print(f"EMBED_TAU=auto -> {lag} rows ({lag * 25} ms at 40 Hz): median of per-channel "
+              f"lags {sorted(per_channel)}; rules used {rules}", flush=True)
+    else:
+        lag = int(cfg['EMBED_TAU'])
+    cfg['EMBED_TAU_RESOLVED'] = lag
+    os.environ['TSLS_MDE_GMN_EMBED_TAU_RESOLVED'] = str(lag)
+    if cfg['DELAY_SOURCE'] == 'tau_count':
+        cfg['LAG_STEP'] = lag
+    return lag
 
 
 def target_groups_for_mode(targets, gmn_mode):
@@ -119,9 +162,15 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
     print('Raw data shape:', df_raw.shape, flush=True)
 
     neuron_columns = raw_neuron_columns(df_raw, cfg['REGION_CHANNEL_CAP'])
-    print(f'{len(neuron_columns)} raw spike-count channels to TSLS-convert', flush=True)
-    tsls_df_full, obs_cols = convert_to_tsls(df_raw, neuron_columns, cfg['TARGETS'], cfg['RESULTS_DIR'])
-    df = burn_in_trim(tsls_df_full, obs_cols, cfg['RESULTS_DIR'])
+    print(f'{len(neuron_columns)} raw event channels before the observability filter', flush=True)
+    # exp/spike-conversion-general: observability filter, then the selected
+    # event->continuous operator and a trim shared by every method.
+    if cfg['N_MIN_EVENTS'] > 0:
+        neuron_columns = select_observable(df_raw, neuron_columns, cfg['LIB_RATIO'],
+                                           cfg['N_MIN_EVENTS'], cfg['RESULTS_DIR'])
+    df, obs_cols, conversion_info = convert_events(df_raw, neuron_columns, cfg['TARGETS'], cfg,
+                                                   cfg['RESULTS_DIR'])
+    cfg['CONVERSION_INFO'] = conversion_info
 
     # Three-way A/B/end split -- see config.py's LIB_RATIO entry. Computed
     # against the TSLS-converted, burn-in-trimmed row count (len(df)), not the
@@ -149,6 +198,8 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
         print(f'GENERATE_START offsets {start_offsets} include values outside the feasible '
               f'range [0, {max_feasible_offset}]; using {feasible_offsets} instead.', flush=True)
     cfg['GENERATE_START_OFFSETS'] = feasible_offsets or [0]
+
+    resolve_embed_tau(cfg, df, obs_cols)
 
     cfg['LAG_SET'] = derive_lag_set(
         cfg['DELAY_SOURCE'], cfg['DELAY_SET'], cfg['LAG_MODE'], cfg['LAG_DENSITY'], cfg['LAG_STEP'],
@@ -191,6 +242,8 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
     print('Config:', {k: v for k, v in cfg.items() if k != 'TARGET_COLORS'}, flush=True)
 
     data_file_sha256 = _hash_file(cfg['DATA_DIR'] / cfg['DATA_FILE']) if cfg['REUSE_BEST_PARAMS'] else None
+    if data_file_sha256 is not None:
+        data_file_sha256 = f'{data_file_sha256}+{preprocessing_digest(cfg)}'
     code_fingerprint = build_code_fingerprint(entry_path) if cfg['REUSE_BEST_PARAMS'] else None
 
     # ---- MDE (or its full-channel-pool stand-in for MODE='GMN') -------
@@ -496,6 +549,15 @@ def main(entry_path, network_builder=None, builder_config_keys=None):
 
         generated = run['G'].DataOut
         generated.to_csv(cfg['RESULTS_DIR'] / f'gmn_generate_output_{network_id}.csv', index=False)
+
+    # ---- exp/spike-conversion-general: autonomous evaluation -----------
+    if cfg['ROLLOUT_N_STARTS'] > 0:
+        from mde_gmn.autonomous_eval import run_autonomous_evaluation
+        _log_progress(progress_log_path, 'autonomous evaluation START')
+        eval_start = time.perf_counter()
+        run_autonomous_evaluation(gmn_runs, cfg, df, obs_cols, progress_log_path=progress_log_path)
+        _log_progress(progress_log_path,
+                      f'autonomous evaluation END -- {time.perf_counter() - eval_start:.1f}s')
 
     # ---- MDE-only diagnostics -------------------------------------------
     if cfg['MODE'] == 'MDE-GMN' and cfg['RUN_MDE_DIAGNOSTICS']:

@@ -24,7 +24,7 @@
 # no environment overrides). Every directory this project creates, copies into
 # or deletes on Saion must be INSIDE one of these; path_under() below enforces
 # it for the destructive/remote operations.
-PROJ_DIR="/home/j/j-tominaga/pao_rotation"
+PROJ_DIR="/home/j/j-tominaga/pao_rotation-exp-general"
 SLURM_LOG_DIR="/home/j/j-tominaga/saion_slurm_logs"   # must match the #SBATCH -o paths
 WORK_BASE="/work/FukaiU/j-tominaga"
 # Same bucket tree the Deigo jobs already archive to, so caches written by

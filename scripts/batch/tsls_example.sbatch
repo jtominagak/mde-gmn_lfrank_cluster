@@ -73,7 +73,7 @@ module purge
 module load python/3.11
 
 # ADJUST: absolute path to your uv venv directory.
-VENV_DIR="$HOME/pao_rotation/.venv"
+VENV_DIR="/home/j/j-tominaga/pao_rotation-exp-general/.venv"
 source "${VENV_DIR}/bin/activate"
 
 export MPLBACKEND=Agg
@@ -83,7 +83,7 @@ export MPLBACKEND=Agg
 # than pinned to 1.
 
 # ADJUST: project checkout location and lab/group allocation on this cluster.
-PROJ_DIR="$HOME/pao_rotation"
+PROJ_DIR="/home/j/j-tominaga/pao_rotation-exp-general"
 OUT_DIR="$PROJ_DIR/results/job_${SLURM_JOB_ID}"
 mkdir -p "$OUT_DIR"
 

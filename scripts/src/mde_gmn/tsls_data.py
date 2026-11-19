@@ -53,6 +53,118 @@ def convert_to_tsls(df_raw, neuron_columns, targets, results_dir):
     print(f'-> tsls_data_full.csv  shape={tsls_df_full.shape}', flush=True)
     return tsls_df_full, observable_columns
 
+# ---------------------------------------------------------------------------
+# exp/spike-conversion-general: event -> continuous method selector
+# ---------------------------------------------------------------------------
+# SPIKE_TRANSFORM picks one representation; every method, the sawtooth
+# baseline included, then goes through the same observability filter, the
+# same common trim and the same downstream evaluation (see pipeline.main()).
+SPIKE_TRANSFORMS = ('sawtooth', 'gamma', 'lmu', 'logsig')
+TRANSFORM_SUFFIX = {'sawtooth': 'tsls', 'gamma': 'gam', 'lmu': 'lmu', 'logsig': 'lsig'}
+
+
+def resolve_timescale_s(value, counts, dt, lib_end):
+    '''A timescale in SECONDS from a config value: a number of milliseconds,
+    or 'auto:<k>' = k x the median channel's mean inter-event interval on the
+    training split (universal_point_process_embeddings.auto_timescale).'''
+    from mde_gmn import universal_point_process_embeddings as U
+    if isinstance(value, str) and value.startswith('auto'):
+        k = float(value.split(':', 1)[1]) if ':' in value else 1.0
+        return U.auto_timescale(counts, dt, k, 'mean', lib_end)
+    return float(value) / 1000.0
+
+
+def transform_events(counts, time_grid, spec, lib_end):
+    '''(T, C) event counts -> (T, C) continuous signals for one SPIKE_TRANSFORM.
+
+    `spec` is the config dict (only its SPIKE_TRANSFORM / method keys are
+    read). `lib_end` bounds every data-derived normaliser (mean rates, RMS,
+    auto timescales) to the training rows. Returns (X, info) where info
+    records the resolved timescales for the run log.'''
+    from mde_gmn import universal_point_process_embeddings as U
+    method = spec['SPIKE_TRANSFORM']
+    dt = float(np.median(np.diff(time_grid)))
+    info = {'method': method, 'dt': dt}
+    if method == 'sawtooth':
+        X = np.column_stack([
+            tsls.compute_time_since_previous_spike(time_grid[counts[:, j] > 0], time_grid)
+            for j in range(counts.shape[1])])
+        return X, info
+    if method == 'gamma':
+        taus = [resolve_timescale_s(v, counts, dt, lib_end) for v in spec['GAMMA_TAUS_MS']]
+        X = U.multiscale_gamma(counts, dt, taus, spec['GAMMA_ORDER'])
+        info.update(taus_s=taus, order=spec['GAMMA_ORDER'])
+        if spec['GAMMA_LOG_KAPPA'] > 0:
+            rate = counts[:lib_end].sum(0) / (lib_end * dt)
+            X = U.log_compress(X, rate, spec['GAMMA_LOG_KAPPA'])
+            info['log_kappa'] = spec['GAMMA_LOG_KAPPA']
+        return X, info
+    if method == 'lmu':
+        theta = resolve_timescale_s(spec['LMU_THETA_MS'], counts, dt, lib_end)
+        st = U.legendre_memory(counts, dt, theta, spec['LMU_D'],
+                               discretization=spec['LMU_DISCRETIZATION'],
+                               presmooth_order=spec['LMU_PRESMOOTH_ORDER'])
+        info.update(theta_s=theta, D=spec['LMU_D'], presmooth=spec['LMU_PRESMOOTH_ORDER'])
+        return U.reduce_to_scalar(st, spec['LMU_REDUCTION'],
+                                  rms=U.coordinate_rms(st, lib_end)), info
+    if method == 'logsig':
+        W = resolve_timescale_s(spec['LOGSIG_W_MS'], counts, dt, lib_end)
+        st = U.fading_log_signature(counts, dt, W, spec['LOGSIG_DEPTH'],
+                                    presmooth_order=spec['LOGSIG_PRESMOOTH_ORDER'])
+        info.update(W_s=W, depth=spec['LOGSIG_DEPTH'], presmooth=spec['LOGSIG_PRESMOOTH_ORDER'])
+        return U.reduce_to_scalar(st, spec['LOGSIG_REDUCTION'],
+                                  rms=U.coordinate_rms(st, lib_end)), info
+    raise ValueError(f'unknown SPIKE_TRANSFORM {method!r}; one of {SPIKE_TRANSFORMS}')
+
+
+def select_observable(df_raw, neuron_columns, lib_ratio, n_min, results_dir=None):
+    '''Observability filter: keep channels with >= n_min event bins in the
+    training split, taken as the first lib_ratio of the RAW rows (the trimmed
+    split is not known yet, and the trim is a few hundred rows of ~48k).'''
+    from mde_gmn import universal_point_process_embeddings as U
+    counts = df_raw[neuron_columns].to_numpy(dtype=float)
+    lib_end = int(round(len(df_raw) * lib_ratio))
+    keep, n = U.observable_channels(counts, lib_end, n_min)
+    kept = [neuron_columns[i] for i in keep]
+    dropped = {c: int(k) for c, k in zip(neuron_columns, n) if c not in kept}
+    print(f'Observability filter: kept {len(kept)}/{len(neuron_columns)} channels with '
+          f'>= {n_min} events in the first {lib_end} rows; dropped {dropped}', flush=True)
+    if results_dir is not None:
+        pd.DataFrame({'channel': neuron_columns, 'lib_events': n,
+                      'kept': [c in kept for c in neuron_columns]}).to_csv(
+            results_dir / 'observability_filter.csv', index=False)
+    return kept
+
+
+def convert_events(df_raw, neuron_columns, targets, cfg, results_dir):
+    '''exp/spike-conversion-general replacement for convert_to_tsls() +
+    burn_in_trim(): converts with cfg['SPIKE_TRANSFORM'] and trims the SAME
+    leading rows for every method -- max(WARMUP_ROWS, the row at which the
+    slowest kept channel first fires) -- so every method is scored on
+    identical rows and identical A/B/end splits. Returns (df, obs_cols, info).'''
+    time_grid = df_raw['time_bin_center'].to_numpy()
+    counts = df_raw[neuron_columns].to_numpy(dtype=float)
+    first_event = np.array([np.argmax(counts[:, j] > 0) for j in range(counts.shape[1])])
+    trim = int(max(cfg['WARMUP_ROWS'], first_event.max() + 1))
+    lib_end_raw = int(round(len(df_raw) * cfg['LIB_RATIO']))
+    X, info = transform_events(counts, time_grid, cfg, lib_end_raw)
+    suffix = TRANSFORM_SUFFIX[cfg['SPIKE_TRANSFORM']]
+    obs_cols = [f'{n}_{suffix}' for n in neuron_columns]
+    data = {'time_bin_center': time_grid}
+    for t in targets:
+        data[t] = df_raw[t].to_numpy()
+    for j, c in enumerate(obs_cols):
+        data[c] = X[:, j]
+    df = pd.DataFrame(data).iloc[trim:].reset_index(drop=True)
+    if df[obs_cols].isna().any().any():
+        raise ValueError('converted signals contain NaN after the common trim')
+    info['trim_rows'] = trim
+    print(f'Converted {len(obs_cols)} channels with {info} -- common trim {trim} rows; '
+          f'shape={df.shape}', flush=True)
+    df.to_csv(results_dir / 'converted_data_trimmed.csv', index=False)
+    return df, obs_cols, info
+
+
 def burn_in_trim(tsls_df_full, observable_columns, results_dir):
     '''Drop leading rows until every observable_columns entry is non-NaN
     (see module docstring for why this is a correctness requirement for the

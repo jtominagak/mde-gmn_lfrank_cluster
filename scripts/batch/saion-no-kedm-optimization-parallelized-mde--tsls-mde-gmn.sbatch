@@ -717,7 +717,7 @@ set -uo pipefail
 
 # Defines the scoped roots PROJ_DIR, SLURM_LOG_DIR, WORK_BASE, BUCKET_PROJECT.
 # shellcheck source=../saion/saion_env.sh
-source "/home/j/j-tominaga/pao_rotation/scripts/saion/saion_env.sh"
+source "/home/j/j-tominaga/pao_rotation-exp-general/scripts/saion/saion_env.sh"
 PY_NAME="no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py"
 VENV_DIR="$PROJ_DIR/.venv-gpu"
 

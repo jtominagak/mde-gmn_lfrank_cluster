@@ -496,7 +496,7 @@ module purge
 module load python/3.11
 
 # ADJUST: absolute path to your uv venv directory.
-VENV_DIR="$HOME/pao_rotation/.venv"
+VENV_DIR="/home/j/j-tominaga/pao_rotation-exp-general/.venv"
 source "${VENV_DIR}/bin/activate"
 
 export MPLBACKEND=Agg
@@ -543,7 +543,7 @@ export OPENBLAS_NUM_THREADS=1
 # scripts/backup/simple-mde-gmn_pre-delay-embedding.py for that version.)
 
 # ADJUST: project checkout location and lab/group allocation on this cluster.
-PROJ_DIR="$HOME/pao_rotation"
+PROJ_DIR="/home/j/j-tominaga/pao_rotation-exp-general"
 
 # ADJUST: <GROUP> to this lab's actual flash allocation. Defined here
 # (rather than down in the /flash scratch setup section below, where it

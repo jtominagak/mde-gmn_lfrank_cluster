@@ -34,7 +34,7 @@
 # =============================================================================
 set -euo pipefail
 
-PROJ_DIR="/home/j/j-tominaga/pao_rotation"
+PROJ_DIR="/home/j/j-tominaga/pao_rotation-exp-general"
 CANDIDATES=(gpu-v100 gpu-p100)
 ALLOC_CPUS=36
 ALLOC_GPUS=4

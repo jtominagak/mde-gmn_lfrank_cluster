@@ -78,6 +78,23 @@ def stopping_rule_kwargs(min_gain):
     return {'minGain': min_gain}
 
 
+def embed_tau():
+    '''exp/spike-conversion-general: the Takens lag (proper_mde's sign
+    convention, negative rows) for every MDE / CCM embedding. pipeline.main()
+    resolves it (EMBED_TAU, possibly 'auto') and exports it as
+    TSLS_MDE_GMN_EMBED_TAU_RESOLVED before any worker pool exists, so spawned
+    and forked workers alike read the same value. Unset = the parent's -1.'''
+    import os
+    return -int(os.environ.get('TSLS_MDE_GMN_EMBED_TAU_RESOLVED', 1))
+
+
+# Metrics that score a node by its decoded reset EVENTS; only these size the
+# ranking window by event count (MIN_PRED_EVENTS). Every other metric scores
+# the whole trajectory, so a neuron node gets the same fixed contiguous window
+# a behavioural target does (exp/spike-conversion-general).
+EVENT_METRICS = ('f1', 'gamma')
+
+
 def run_mde_for_target(target, df, observable_columns, prediction_start, prediction_length,
                         mde_d, embed_dim_rho_min, cross_map_rho_min, exclusion_radius,
                         results_dir, delay_set, tp=1,
@@ -240,7 +257,8 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
     # this call's outcome, so they have to be part of its cache key.
     window_rows, pred_event_count = _resolve_target_ranking_window(
         target, df, usable_df, lib_ratio,
-        is_behavioral_target, target_ranking_window_rows, min_pred_events, max_window_rows,
+        is_behavioral_target or target_metric not in EVENT_METRICS,
+        target_ranking_window_rows, min_pred_events, max_window_rows,
     )
     if window_rows is None:
         shortfall = min_pred_events - pred_event_count
@@ -333,7 +351,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
         result = tsls.proper_mde(
             ccm_df, target=target, columns=observable_columns, D=mde_d,
             lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)],
-            Tp=tp, E=0, maxE=max_e, exclusionRadius=exclusion_radius,
+            Tp=tp, tau=embed_tau(), E=0, maxE=max_e, exclusionRadius=exclusion_radius,
             libSizes=ccm_lib_sizes_rows, sample=ccm_sample, ccmSlope=ccm_slope,
             crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
             metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
@@ -353,7 +371,7 @@ def run_mde_for_target(target, df, observable_columns, prediction_start, predict
         MDErho=np.asarray(result['MDErho']),
         MDEOut=mde_out,
         args=types.SimpleNamespace(
-            lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)], tau=-1, Tp=tp,
+            lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)], tau=embed_tau(), Tp=tp,
         ),
     )
 
@@ -485,7 +503,7 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
     result = tsls.multi_proper_mde(
         ccm_df, targets=list(targets), columns=observable_columns, D=mde_d,
         lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)],
-        Tp=tp, E=E, maxE=max_e, exclusionRadius=exclusion_radius,
+        Tp=tp, tau=embed_tau(), E=E, maxE=max_e, exclusionRadius=exclusion_radius,
         libSizes=ccm_lib_sizes_rows, sample=ccm_sample, ccmSlope=ccm_slope,
         crossMapRhoMin=cross_map_rho_min, embedDimRhoMin=embed_dim_rho_min,
         metric=target_metric, ccmMetric=metric, gammaDelta=gamma_delta,
@@ -504,7 +522,7 @@ def run_multi_mde_for_targets(targets, df, observable_columns, prediction_start,
         MDErho=np.asarray(result['MDErho']),
         MDEOut=mde_out,
         args=types.SimpleNamespace(
-            lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)], tau=-1, Tp=tp,
+            lib=[1, ccm_lib_end], pred=[ccm_lib_end + 1, len(ccm_df)], tau=embed_tau(), Tp=tp,
         ),
     )
 
@@ -667,7 +685,7 @@ def _ccm_prefilter_pair(candidate, target, targets, windowed, e, tp, metric, tar
     spirit as _failed_mde_result() elsewhere in this file.'''
     try:
         c2t, _, _ = tsls.proper_ccm(
-            windowed, libSizes=lib_sizes, sample=ccm_sample, tau=-1, Tp=tp, E=e,
+            windowed, libSizes=lib_sizes, sample=ccm_sample, tau=embed_tau(), Tp=tp, E=e,
             target=target, columns=candidate,
             target_measurement=_metric_for(target, targets, metric, target_metric),
             columns_measurement=_metric_for(candidate, targets, metric, target_metric),

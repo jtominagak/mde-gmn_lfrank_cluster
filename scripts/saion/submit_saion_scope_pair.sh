@@ -43,7 +43,7 @@
 # =============================================================================
 set -euo pipefail
 
-PROJ_DIR="/home/j/j-tominaga/pao_rotation"
+PROJ_DIR="/home/j/j-tominaga/pao_rotation-exp-general"
 BRANCH_REQUIRED="no-kEDM-gpu-optimization"
 SBATCH_NAME="saion-no-kedm-optimization-parallelized-mde--tsls-mde-gmn.sbatch"
 PY_NAME="no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py"

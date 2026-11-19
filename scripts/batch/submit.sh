@@ -22,7 +22,7 @@
 # prose summary, since nothing is around to write it.
 set -euo pipefail
 
-PROJ_DIR="$HOME/pao_rotation"
+PROJ_DIR="/home/j/j-tominaga/pao_rotation-exp-general"
 SBATCH_NAME="${1:-simple-mde-gmn.sbatch}"
 SBATCH_SCRIPT="$PROJ_DIR/scripts/batch/$SBATCH_NAME"
 # Optional $2: the scripts/src/*.py basename, for sbatch files that don't
