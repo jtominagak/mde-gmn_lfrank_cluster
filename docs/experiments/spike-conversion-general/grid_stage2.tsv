@@ -1,0 +1,6 @@
+# Stage II: full pipeline + autonomous evaluation, one setting per job.
+# label<TAB>settings
+sawtooth	SPIKE_TRANSFORM=sawtooth
+gamma_m3_t250	SPIKE_TRANSFORM=gamma GAMMA_ORDER=3 GAMMA_TAUS_MS=250
+gamma_m3_t100	SPIKE_TRANSFORM=gamma GAMMA_ORDER=3 GAMMA_TAUS_MS=100
+gamma_m3_t500	SPIKE_TRANSFORM=gamma GAMMA_ORDER=3 GAMMA_TAUS_MS=500

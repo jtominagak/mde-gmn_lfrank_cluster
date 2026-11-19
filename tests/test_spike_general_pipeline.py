@@ -175,6 +175,27 @@ def test_autonomous_eval_helpers():
     assert gs['target_drivers']['head_position_y'] == ['OFC_2_gam::delay-40']
 
 
+def test_topology_floor_and_scaling():
+    from mde_gmn.autonomous_eval import _topology
+    rng = np.random.default_rng(9)
+
+    def loop(n, r=1.0):
+        a = rng.uniform(0, 2 * np.pi, n)
+        return np.column_stack([r * np.cos(a), r * np.sin(a)]) + rng.normal(0, 0.03, (n, 2))
+    real = [loop(150) for _ in range(4)]
+    lib = [loop(150) for _ in range(4)]
+    gen_good = [loop(150) for _ in range(4)]
+    gen_fixed = [np.zeros((150, 2)) + rng.normal(0, 0.01, (150, 2)) for _ in range(4)]
+    scale = loop(3000)
+    good, _ = _topology(real, gen_good, lib, 40, scale_cloud=scale)
+    bad, _ = _topology(real, gen_fixed, lib, 40, scale_cloud=scale)
+    # a generator that reproduces the loop sits at the noise floor; a
+    # collapsed one is far above it, in H1 (the loop) as in H0
+    assert good['W1_H1_generated_vs_real'] < 3 * good['W1_H1_library_vs_real'] + 0.05
+    assert bad['W1_H1_generated_vs_real'] > 5 * good['W1_H1_generated_vs_real']
+    assert good['H1_real_n_bars'] == 1 and bad['H1_generated_n_bars'] == 0
+
+
 if __name__ == '__main__':
     for name, fn in list(globals().items()):
         if name.startswith('test_') and callable(fn):
