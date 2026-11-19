@@ -5,6 +5,1214 @@ submissions (see scripts/batch/submit.sh), newest entry first.
 
 <!-- new entries inserted below this line -->
 
+## Job 4832965
+
+Generated: 2026-11-19T12:50:49+09:00
+
+Git commit at submission: `f8bb6c7` (clean vs. HEAD)
+
+Compared against: **job_4832934**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage II (Takens-lag sweep): `C_z0.7_tau8`** (family C_theta_osc). COMPLETED in 00:25:18. Graph: 3 unit nodes, 7 lagged leaves, 13 edges. 32 autonomous rollouts: x/y correlation 0.14 / 0.15 / 0.12 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.02); mean path error at 5 s 22.5 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4832934
+
+Generated: 2026-11-19T12:10:42+09:00
+
+Git commit at submission: `f8bb6c7` (clean vs. HEAD)
+
+Compared against: **job_4832896**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage II (Takens-lag sweep): `C_z0.7_tau6`** (family C_theta_osc). COMPLETED in 00:28:24. Graph: 3 unit nodes, 7 lagged leaves, 13 edges. 32 autonomous rollouts: x/y correlation 0.05 / 0.14 / 0.16 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.03); mean path error at 5 s 23.7 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4832896
+
+Generated: 2026-11-19T11:30:37+09:00
+
+Git commit at submission: `f8bb6c7` (clean vs. HEAD)
+
+Compared against: **job_4832186**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage II (Takens-lag sweep): `C_z0.7_tau2`** (family C_theta_osc). COMPLETED in 00:21:21. Graph: 3 unit nodes, 5 lagged leaves, 11 edges. 32 autonomous rollouts: x/y correlation 0.09 / 0.14 / 0.15 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.05); mean path error at 5 s 23.8 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4832186
+
+Generated: 2026-11-19T10:15:30+09:00
+
+Git commit at submission: `f8bb6c7` (clean vs. HEAD)
+
+Compared against: **job_4832168**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage II (Takens-lag sweep): `B_w2500_n2.0_p75_tau8`** (family B_adapt_nr). COMPLETED in 03:41:20. Graph: 39 unit nodes, 48 lagged leaves, 132 edges. 32 autonomous rollouts: x/y correlation 0.15 / 0.02 / -0.12 at 2 / 5 / 10 s (mismatched-start null at 5 s: -0.01); mean path error at 5 s 22.0 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4832168
+
+Generated: 2026-11-19T10:10:24+09:00
+
+Git commit at submission: `f8bb6c7` (clean vs. HEAD)
+
+Compared against: **job_4832043**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage II (Takens-lag sweep): `B_w2500_n2.0_p75_tau6`** (family B_adapt_nr). COMPLETED in 02:49:37. Graph: 31 unit nodes, 35 lagged leaves, 103 edges. 32 autonomous rollouts: x/y correlation 0.23 / 0.22 / 0.07 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.01); mean path error at 5 s 19.4 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4832043
+
+Generated: 2026-11-19T09:15:19+09:00
+
+Git commit at submission: `289aac7` (clean vs. HEAD)
+
+Compared against: **job_4832039**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage II (Takens-lag sweep): `B_w2500_n2.0_p75_tau2`** (family B_adapt_nr). COMPLETED in 02:52:14. Graph: 32 unit nodes, 35 lagged leaves, 115 edges. 32 autonomous rollouts: x/y correlation 0.06 / -0.02 / 0.05 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.00); mean path error at 5 s 24.0 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4832039
+
+Generated: 2026-11-19T09:15:13+09:00
+
+Git commit at submission: `289aac7` (clean vs. HEAD)
+
+Compared against: **job_4832036**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage II (Takens-lag sweep): `A_s50_c500_tau8`** (family A_calcium). COMPLETED in 04:53:34. Graph: 57 unit nodes, 62 lagged leaves, 162 edges. 32 autonomous rollouts: x/y correlation 0.20 / 0.27 / 0.19 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.01); mean path error at 5 s 18.7 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4832036
+
+Generated: 2026-11-19T09:15:08+09:00
+
+Git commit at submission: `289aac7` (clean vs. HEAD)
+
+Compared against: **job_4832032**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage II (Takens-lag sweep): `A_s50_c500_tau6`** (family A_calcium). COMPLETED in 03:35:39. Graph: 42 unit nodes, 53 lagged leaves, 148 edges. 32 autonomous rollouts: x/y correlation 0.18 / 0.26 / 0.21 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.03); mean path error at 5 s 21.6 vs 23.4 for holding the seed; 6% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4832032
+
+Generated: 2026-11-19T09:15:02+09:00
+
+Git commit at submission: `289aac7` (clean vs. HEAD)
+
+Compared against: **job_4831830**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage II (Takens-lag sweep): `A_s50_c500_tau2`** (family A_calcium). COMPLETED in 02:15:07. Graph: 26 unit nodes, 32 lagged leaves, 84 edges. 32 autonomous rollouts: x/y correlation 0.21 / 0.17 / 0.12 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.01); mean path error at 5 s 335.3 vs 23.4 for holding the seed; 31% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831830
+
+Generated: 2026-11-19T06:46:13+09:00
+
+Git commit at submission: `1a7bfec` (clean vs. HEAD)
+
+Compared against: **job_4831812**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage II (Takens-lag sweep): `tsls_tau8`** (family sawtooth). COMPLETED in 03:28:31. Graph: 47 unit nodes, 52 lagged leaves, 150 edges. 32 autonomous rollouts: x/y correlation 0.18 / 0.23 / 0.18 at 2 / 5 / 10 s (mismatched-start null at 5 s: -0.01); mean path error at 5 s 16.6 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 4.7 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831812
+
+Generated: 2026-11-19T06:36:08+09:00
+
+Git commit at submission: `d9fac2b` (clean vs. HEAD)
+
+Compared against: **job_4831806**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage II (Takens-lag sweep): `tsls_tau6`** (family sawtooth). COMPLETED in 03:30:22. Graph: 47 unit nodes, 54 lagged leaves, 132 edges. 32 autonomous rollouts: x/y correlation 0.32 / 0.30 / 0.18 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.00); mean path error at 5 s 15.9 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 4.4 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831806
+
+Generated: 2026-11-19T06:31:02+09:00
+
+Git commit at submission: `d9fac2b` (clean vs. HEAD)
+
+Compared against: **job_4831802**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage II (Takens-lag sweep): `tsls_tau2`** (family sawtooth). COMPLETED in 01:37:15. Graph: 15 unit nodes, 28 lagged leaves, 58 edges. 32 autonomous rollouts: x/y correlation 0.11 / 0.05 / 0.02 at 2 / 5 / 10 s (mismatched-start null at 5 s: -0.03); mean path error at 5 s 21.9 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831802
+
+Generated: 2026-11-19T06:29:56+09:00
+
+Git commit at submission: `d9fac2b` (clean vs. HEAD)
+
+Compared against: **job_4831783**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `C_z0.9`** (family C_theta_osc). COMPLETED in 00:16:19. Graph: 2 unit nodes, 3 lagged leaves, 7 edges. 32 autonomous rollouts: x/y correlation 0.00 / 0.07 / -0.04 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.01); mean path error at 5 s 23.8 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 0.4 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831783
+
+Generated: 2026-11-19T06:09:51+09:00
+
+Git commit at submission: `d9fac2b` (clean vs. HEAD)
+
+Compared against: **job_4831754**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `C_z0.7`** (family C_theta_osc). COMPLETED in 00:19:46. Graph: 3 unit nodes, 4 lagged leaves, 10 edges. 32 autonomous rollouts: x/y correlation 0.09 / 0.08 / 0.12 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.01); mean path error at 5 s 23.4 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 0.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831754
+
+Generated: 2026-11-19T05:19:44+09:00
+
+Git commit at submission: `d9fac2b` (clean vs. HEAD)
+
+Compared against: **job_4831747**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `B_w2500_n2.0_p75`** (family B_adapt_nr). COMPLETED in 03:46:51. Graph: 44 unit nodes, 41 lagged leaves, 125 edges. 32 autonomous rollouts: x/y correlation 0.18 / 0.22 / 0.00 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.02); mean path error at 5 s 18.7 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831747
+
+Generated: 2026-11-19T05:14:39+09:00
+
+Git commit at submission: `d9fac2b` (clean vs. HEAD)
+
+Compared against: **job_4831733**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `B_w2500_n2.0_median`** (family B_adapt_nr). COMPLETED in 00:53:15. Graph: 11 unit nodes, 12 lagged leaves, 30 edges. 32 autonomous rollouts: x/y correlation 0.10 / 0.04 / 0.02 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.01); mean path error at 5 s 21.8 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 3.2 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831733
+
+Generated: 2026-11-19T05:04:33+09:00
+
+Git commit at submission: `d9fac2b` (clean vs. HEAD)
+
+Compared against: **job_4831726**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `B_w2500_n1.5_p75`** (family B_adapt_nr). COMPLETED in 01:31:10. Graph: 18 unit nodes, 23 lagged leaves, 51 edges. 32 autonomous rollouts: x/y correlation 0.11 / 0.06 / -0.10 at 2 / 5 / 10 s (mismatched-start null at 5 s: -0.00); mean path error at 5 s 19.8 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831726
+
+Generated: 2026-11-19T04:59:28+09:00
+
+Git commit at submission: `d9fac2b` (clean vs. HEAD)
+
+Compared against: **job_4831634**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `B_w2500_n1.5_median`** (family B_adapt_nr). COMPLETED in 01:27:08. Graph: 22 unit nodes, 17 lagged leaves, 51 edges. 32 autonomous rollouts: x/y correlation 0.20 / 0.16 / 0.17 at 2 / 5 / 10 s (mismatched-start null at 5 s: -0.00); mean path error at 5 s 19.5 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 6.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831634
+
+Generated: 2026-11-19T03:19:21+09:00
+
+Git commit at submission: `d9fac2b` (clean vs. HEAD)
+
+Compared against: **job_4831586**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `B_w1500_n2.0_p75`** (family B_adapt_nr). COMPLETED in 04:35:58. Graph: 43 unit nodes, 58 lagged leaves, 162 edges. 32 autonomous rollouts: x/y correlation 0.19 / 0.12 / 0.01 at 2 / 5 / 10 s (mismatched-start null at 5 s: -0.02); mean path error at 5 s 20.9 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831586
+
+Generated: 2026-11-19T02:44:16+09:00
+
+Git commit at submission: `d9fac2b` (clean vs. HEAD)
+
+Compared against: **job_4831566**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `B_w1500_n2.0_median`** (family B_adapt_nr). COMPLETED in 03:58:37. Graph: 46 unit nodes, 61 lagged leaves, 181 edges. 32 autonomous rollouts: x/y correlation 0.20 / 0.08 / -0.02 at 2 / 5 / 10 s (mismatched-start null at 5 s: -0.05); mean path error at 5 s 22.3 vs 23.4 for holding the seed; 38% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831566
+
+Generated: 2026-11-19T02:29:10+09:00
+
+Git commit at submission: `38e1292` (clean vs. HEAD)
+
+Compared against: **job_4831556**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `B_w1500_n1.5_p75`** (family B_adapt_nr). COMPLETED in 02:34:09. Graph: 31 unit nodes, 39 lagged leaves, 100 edges. 32 autonomous rollouts: x/y correlation 0.20 / 0.13 / 0.12 at 2 / 5 / 10 s (mismatched-start null at 5 s: -0.02); mean path error at 5 s 18.3 vs 23.4 for holding the seed; 66% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831556
+
+Generated: 2026-11-19T02:14:04+09:00
+
+Git commit at submission: `38e1292` (clean vs. HEAD)
+
+Compared against: **job_4831548**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `B_w1500_n1.5_median`** (family B_adapt_nr). COMPLETED in 02:44:06. Graph: 32 unit nodes, 37 lagged leaves, 97 edges. 32 autonomous rollouts: x/y correlation 0.12 / 0.05 / -0.03 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.00); mean path error at 5 s 34.3 vs 23.4 for holding the seed; 84% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831548
+
+Generated: 2026-11-19T02:03:59+09:00
+
+Git commit at submission: `38e1292` (clean vs. HEAD)
+
+Compared against: **job_4831535**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `A_s75_c800`** (family A_calcium). COMPLETED in 03:07:33. Graph: 39 unit nodes, 41 lagged leaves, 110 edges. 32 autonomous rollouts: x/y correlation 0.22 / 0.29 / 0.19 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.03); mean path error at 5 s 32.4 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831535
+
+Generated: 2026-11-19T01:43:54+09:00
+
+Git commit at submission: `38e1292` (clean vs. HEAD)
+
+Compared against: **job_4831442**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `A_s75_c500`** (family A_calcium). COMPLETED in 03:31:01. Graph: 31 unit nodes, 48 lagged leaves, 114 edges. 32 autonomous rollouts: x/y correlation 0.22 / 0.15 / 0.11 at 2 / 5 / 10 s (mismatched-start null at 5 s: -0.03); mean path error at 5 s 45.4 vs 23.4 for holding the seed; 6% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831442
+
+Generated: 2026-11-18T23:43:47+09:00
+
+Git commit at submission: `ad949d6` (clean vs. HEAD)
+
+Compared against: **job_4831439**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `A_s75_c300`** (family A_calcium). COMPLETED in 01:55:13. Graph: 15 unit nodes, 30 lagged leaves, 57 edges. 32 autonomous rollouts: x/y correlation 0.25 / 0.05 / 0.10 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.01); mean path error at 5 s 19.3 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 2.1 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831439
+
+Generated: 2026-11-18T23:43:42+09:00
+
+Git commit at submission: `ad949d6` (clean vs. HEAD)
+
+Compared against: **job_4831436**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `A_s50_c800`** (family A_calcium). COMPLETED in 03:35:08. Graph: 34 unit nodes, 51 lagged leaves, 117 edges. 32 autonomous rollouts: x/y correlation 0.15 / 0.21 / 0.06 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.01); mean path error at 5 s 25.6 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831436
+
+Generated: 2026-11-18T23:43:36+09:00
+
+Git commit at submission: `ad949d6` (clean vs. HEAD)
+
+Compared against: **job_4831433**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `A_s50_c500`** (family A_calcium). COMPLETED in 02:41:12. Graph: 32 unit nodes, 41 lagged leaves, 103 edges. 32 autonomous rollouts: x/y correlation 0.23 / 0.27 / 0.20 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.01); mean path error at 5 s 24.9 vs 23.4 for holding the seed; 9% of 10-s runs blew up; median time to stall 10.0 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831433
+
+Generated: 2026-11-18T23:43:30+09:00
+
+Git commit at submission: `ad949d6` (clean vs. HEAD)
+
+Compared against: **job_4831430**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `A_s50_c300`** (family A_calcium). COMPLETED in 02:29:43. Graph: 30 unit nodes, 30 lagged leaves, 74 edges. 32 autonomous rollouts: x/y correlation 0.17 / -0.00 / 0.05 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.02); mean path error at 5 s 21.3 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 2.3 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831430
+
+Generated: 2026-11-18T23:43:25+09:00
+
+Git commit at submission: `ad949d6` (clean vs. HEAD)
+
+Compared against: **job_4831427**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `tsls_events`** (family sawtooth). COMPLETED in 02:17:12. Graph: 32 unit nodes, 29 lagged leaves, 78 edges. 32 autonomous rollouts: x/y correlation 0.18 / 0.24 / 0.23 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.01); mean path error at 5 s 16.4 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 3.7 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831427
+
+Generated: 2026-11-18T23:43:19+09:00
+
+Git commit at submission: `ad949d6` (clean vs. HEAD)
+
+Compared against: **job_4831417**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Spike-conversion ablation, Stage I (protocol v2, EMBED_TAU=4): `tsls`** (family sawtooth). COMPLETED in 02:57:04. Graph: 42 unit nodes, 37 lagged leaves, 105 edges. 32 autonomous rollouts: x/y correlation 0.19 / 0.26 / 0.15 at 2 / 5 / 10 s (mismatched-start null at 5 s: 0.03); mean path error at 5 s 19.4 vs 23.4 for holding the seed; 0% of 10-s runs blew up; median time to stall 8.8 s. Aggregated in docs/experiments/spike-conversion-neuro/REPORT.md.
+
+---
+
+
+## Job 4831417
+
+Generated: 2026-11-18T23:33:37+09:00
+
+Git commit at submission: `2d21402` (clean vs. HEAD)
+
+Compared against: **job_4831409**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Equivalence check for the rollout pool (serial half).** Identical to job_4831409 except ROLLOUT_WORKERS=1 (the original serial loop). COMPLETED in 9 min. All five rollout outputs (both generated series, rollout metrics, one-step forecast and metrics) are byte-identical to job_4831409's, so the pool changes wall time only. Protocol v2 (32 starts, 8 workers) launched after this.
+
+---
+
+
+## Job 4831409
+
+Generated: 2026-11-18T23:21:52+09:00
+
+Git commit at submission: `2d21402` (clean vs. HEAD)
+
+Compared against: **job_4831394**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+| Parameter | job_4831394 | job_4831409 |
+|---|---|---|
+| ROLLOUT_N_STARTS | ${ROLLOUT_N_STARTS:-8} | ${ROLLOUT_N_STARTS:-32} |
+| ROLLOUT_WORKERS | _(unset)_ | ${ROLLOUT_WORKERS:-8} |
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+```diff
+--- job_4831394/saion-spike-ablation.sbatch
++++ job_4831409/saion-spike-ablation.sbatch
+@@ -363,6 +363,7 @@
+ export TSLS_MDE_GMN_NEURON_WINDOW_ROWS="${NEURON_WINDOW_ROWS}"
+ export TSLS_MDE_GMN_EMBED_TAU="${EMBED_TAU}"
+ export TSLS_MDE_GMN_ROLLOUT_N_STARTS="${ROLLOUT_N_STARTS}"
++export TSLS_MDE_GMN_ROLLOUT_WORKERS="${ROLLOUT_WORKERS}"
+ export TSLS_MDE_GMN_ROLLOUT_LENGTH="${ROLLOUT_LENGTH}"
+ export TSLS_MDE_GMN_ROLLOUT_HORIZONS_S="${ROLLOUT_HORIZONS_S}"
+ echo "ABLATION_LABEL=${ABLATION_LABEL} SPIKE_TRANSFORM=${SPIKE_TRANSFORM} EMBED_TAU=${EMBED_TAU}"
+```
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Equivalence check for the rollout pool (parallel half).** Smoke settings (Model B, 4 units per region, MDE_D=3, NESTED_M=1) with 2 rollout starts on ROLLOUT_WORKERS=2 spawned workers, commit 2d21402. COMPLETED in 11 min. Compared with its serial twin job_4831417.
+
+---
+
+
+## Job 4831394
+
+Generated: 2026-11-18T23:04:38+09:00
+
+Git commit at submission: `76b674d` (clean vs. HEAD)
+
+Compared against: **job_4831368**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Model B, tau_w=1500 ms, n=1.5, sigma=p75.** Part of the spike-conversion ablation on `exp/spike-conversion-neuro` (docs/experiments/spike-conversion-neuro/). Network scale: 30 units per region (90 candidates), EMBED_TAU=4, input-free rollouts (EXTERNAL_INPUT_MODE=self_simulate). **Protocol v1: 8 rollout starts, run serially.** v1 was superseded by the 32-start protocol (commit 2d21402) after the first results showed 8 starts leave the families within one standard error; v1 results are kept in jobs_v1_8starts.tsv as a cross-check only. CANCELLED at 17 min; rerun under v2.
+
+---
+
+
+## Job 4831368
+
+Generated: 2026-11-18T22:49:32+09:00
+
+Git commit at submission: `76b674d` (clean vs. HEAD)
+
+Compared against: **job_4831354**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Model B, tau_w=1500 ms, n=1.5, sigma=median.** Part of the spike-conversion ablation on `exp/spike-conversion-neuro` (docs/experiments/spike-conversion-neuro/). Network scale: 30 units per region (90 candidates), EMBED_TAU=4, input-free rollouts (EXTERNAL_INPUT_MODE=self_simulate). **Protocol v1: 8 rollout starts, run serially.** v1 was superseded by the 32-start protocol (commit 2d21402) after the first results showed 8 starts leave the families within one standard error; v1 results are kept in jobs_v1_8starts.tsv as a cross-check only. CANCELLED at 33 min; rerun under v2.
+
+---
+
+
+## Job 4831354
+
+Generated: 2026-11-18T22:19:26+09:00
+
+Git commit at submission: `76b674d` (clean vs. HEAD)
+
+Compared against: **job_4831330**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Model A, tau_syn=75 ms, tau_Ca=800 ms.** Part of the spike-conversion ablation on `exp/spike-conversion-neuro` (docs/experiments/spike-conversion-neuro/). Network scale: 30 units per region (90 candidates), EMBED_TAU=4, input-free rollouts (EXTERNAL_INPUT_MODE=self_simulate). **Protocol v1: 8 rollout starts, run serially.** v1 was superseded by the 32-start protocol (commit 2d21402) after the first results showed 8 starts leave the families within one standard error; v1 results are kept in jobs_v1_8starts.tsv as a cross-check only. CANCELLED at 1h03m; rerun under v2.
+
+---
+
+
+## Job 4831330
+
+Generated: 2026-11-18T21:59:20+09:00
+
+Git commit at submission: `76b674d` (clean vs. HEAD)
+
+Compared against: **job_4831230**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Model A, tau_syn=75 ms, tau_Ca=500 ms.** Part of the spike-conversion ablation on `exp/spike-conversion-neuro` (docs/experiments/spike-conversion-neuro/). Network scale: 30 units per region (90 candidates), EMBED_TAU=4, input-free rollouts (EXTERNAL_INPUT_MODE=self_simulate). **Protocol v1: 8 rollout starts, run serially.** v1 was superseded by the 32-start protocol (commit 2d21402) after the first results showed 8 starts leave the families within one standard error; v1 results are kept in jobs_v1_8starts.tsv as a cross-check only. CANCELLED at 1h23m when the protocol moved to 32 starts; rerun under v2.
+
+---
+
+
+## Job 4831230
+
+Generated: 2026-11-18T19:24:13+09:00
+
+Git commit at submission: `76b674d` (clean vs. HEAD)
+
+Compared against: **job_4831227**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Model A, tau_syn=75 ms, tau_Ca=300 ms.** Part of the spike-conversion ablation on `exp/spike-conversion-neuro` (docs/experiments/spike-conversion-neuro/). Network scale: 30 units per region (90 candidates), EMBED_TAU=4, input-free rollouts (EXTERNAL_INPUT_MODE=self_simulate). **Protocol v1: 8 rollout starts, run serially.** v1 was superseded by the 32-start protocol (commit 2d21402) after the first results showed 8 starts leave the families within one standard error; v1 results are kept in jobs_v1_8starts.tsv as a cross-check only. COMPLETED.
+
+---
+
+
+## Job 4831227
+
+Generated: 2026-11-18T19:24:07+09:00
+
+Git commit at submission: `76b674d` (clean vs. HEAD)
+
+Compared against: **job_4831224**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Model A, tau_syn=50 ms, tau_Ca=800 ms.** Part of the spike-conversion ablation on `exp/spike-conversion-neuro` (docs/experiments/spike-conversion-neuro/). Network scale: 30 units per region (90 candidates), EMBED_TAU=4, input-free rollouts (EXTERNAL_INPUT_MODE=self_simulate). **Protocol v1: 8 rollout starts, run serially.** v1 was superseded by the 32-start protocol (commit 2d21402) after the first results showed 8 starts leave the families within one standard error; v1 results are kept in jobs_v1_8starts.tsv as a cross-check only. Left running as an 8-vs-32-start cross-check.
+
+---
+
+
+## Job 4831224
+
+Generated: 2026-11-18T19:24:01+09:00
+
+Git commit at submission: `76b674d` (clean vs. HEAD)
+
+Compared against: **job_4831221**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Model A, tau_syn=50 ms, tau_Ca=500 ms.** Part of the spike-conversion ablation on `exp/spike-conversion-neuro` (docs/experiments/spike-conversion-neuro/). Network scale: 30 units per region (90 candidates), EMBED_TAU=4, input-free rollouts (EXTERNAL_INPUT_MODE=self_simulate). **Protocol v1: 8 rollout starts, run serially.** v1 was superseded by the 32-start protocol (commit 2d21402) after the first results showed 8 starts leave the families within one standard error; v1 results are kept in jobs_v1_8starts.tsv as a cross-check only. COMPLETED.
+
+---
+
+
+## Job 4831221
+
+Generated: 2026-11-18T19:23:55+09:00
+
+Git commit at submission: `76b674d` (clean vs. HEAD)
+
+Compared against: **job_4831218**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Model A calcium cascade, tau_syn=50 ms, tau_Ca=300 ms.** Part of the spike-conversion ablation on `exp/spike-conversion-neuro` (docs/experiments/spike-conversion-neuro/). Network scale: 30 units per region (90 candidates), EMBED_TAU=4, input-free rollouts (EXTERNAL_INPUT_MODE=self_simulate). **Protocol v1: 8 rollout starts, run serially.** v1 was superseded by the 32-start protocol (commit 2d21402) after the first results showed 8 starts leave the families within one standard error; v1 results are kept in jobs_v1_8starts.tsv as a cross-check only. COMPLETED.
+
+---
+
+
+## Job 4831218
+
+Generated: 2026-11-18T19:23:49+09:00
+
+Git commit at submission: `76b674d` (clean vs. HEAD)
+
+Compared against: **job_4831215**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Sawtooth with the parent's event-based neuron evaluation** (NEURON_EVAL=events, f1). Part of the spike-conversion ablation on `exp/spike-conversion-neuro` (docs/experiments/spike-conversion-neuro/). Network scale: 30 units per region (90 candidates), EMBED_TAU=4, input-free rollouts (EXTERNAL_INPUT_MODE=self_simulate). **Protocol v1: 8 rollout starts, run serially.** v1 was superseded by the 32-start protocol (commit 2d21402) after the first results showed 8 starts leave the families within one standard error; v1 results are kept in jobs_v1_8starts.tsv as a cross-check only. COMPLETED.
+
+---
+
+
+## Job 4831215
+
+Generated: 2026-11-18T19:23:43+09:00
+
+Git commit at submission: `76b674d` (clean vs. HEAD)
+
+Compared against: **job_4831191**
+
+### Parameter changes (saion-spike-ablation.sbatch)
+
+| Parameter | job_4831191 | job_4831215 |
+|---|---|---|
+| REGION_CHANNEL_CAP | ${REGION_CHANNEL_CAP:-20} | ${REGION_CHANNEL_CAP:-30} |
+
+### Batch script design changes (saion-spike-ablation.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+
+### Plain-language summary
+
+**Sawtooth (TSLS) baseline**, full-trajectory evaluation. Part of the spike-conversion ablation on `exp/spike-conversion-neuro` (docs/experiments/spike-conversion-neuro/). Network scale: 30 units per region (90 candidates), EMBED_TAU=4, input-free rollouts (EXTERNAL_INPUT_MODE=self_simulate). **Protocol v1: 8 rollout starts, run serially.** v1 was superseded by the 32-start protocol (commit 2d21402) after the first results showed 8 starts leave the families within one standard error; v1 results are kept in jobs_v1_8starts.tsv as a cross-check only. COMPLETED in 3h39m.
+
+---
+
+
+## Job 4831191
+
+Generated: 2026-11-18T19:07:32+09:00
+
+Git commit at submission: `86f4684` (clean vs. HEAD)
+
+No previous job snapshot found -- this is the first tracked run of this pipeline, or all prior jobs predate this tracking.
+
+
+### Plain-language summary
+
+**Smoke test of the fork** (Model B adaptation + Naka-Rushton, 4 units per region, MDE_D=3, NESTED_M=1, 2 rollouts). COMPLETED in 13 min; staged commit 86f4684 on branch exp/spike-conversion-neuro, confirming the worktree is isolated from the parent checkout. One-step correlations ~0.99 motivated adding persistence/hold baselines.
+
+---
+
+
 ## Job 4799407
 
 Generated: 2026-11-06T15:13:05+09:00
