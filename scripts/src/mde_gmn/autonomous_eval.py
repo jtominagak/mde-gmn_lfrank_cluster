@@ -17,7 +17,9 @@ under RESULTS_DIR/autonomous/:
                        attractor checks below.
   rollouts_<id>.npz    the generated and real series for every start.
   topology_<id>.json   persistence (H0, H1) of delay-embedded trajectories:
-                       generated vs real held-out vs the training library.
+                       generated windows vs the recorded windows at the same
+                       rows; equal windows from the training rows give the
+                       noise floor (two independent sets of real windows).
   graph_<id>.json      edge counts, density, degree, region pairs, the
                        targets' direct drivers.
   figures              example rollouts and persistence diagrams.
@@ -164,13 +166,16 @@ def _delay_cloud(X, lag):
     return np.hstack([X[lag:], X[:-lag]])
 
 
-def _topology(real_clouds, gen_clouds, lib_cloud, n_landmarks):
-    '''Diagrams and distances for pooled clouds. Every cloud is standardised
-    by the training LIBRARY's mean/sd (the empirical manifold), so distances
-    are in the same units for every method.'''
+def _topology(real_clouds, gen_clouds, lib_clouds, n_landmarks, scale_cloud):
+    '''Diagrams and distances for three pooled clouds: generated windows, the
+    recorded windows at the same rows, and the same number of equal-length
+    windows from the training rows ('library', the noise floor). Every cloud
+    is standardised by the whole training library's mean/sd (`scale_cloud`),
+    so distances are in the same units for every method.'''
     R = np.vstack(real_clouds)
     Gc = np.vstack(gen_clouds)
-    mu, sd = lib_cloud.mean(0), lib_cloud.std(0)
+    lib_cloud = np.vstack(lib_clouds)
+    mu, sd = scale_cloud.mean(0), scale_cloud.std(0)
     sd = np.where(sd > 0, sd, 1.0)
     out = {}
     clouds = {'real': (R - mu) / sd, 'generated': (Gc - mu) / sd, 'library': (lib_cloud - mu) / sd}
@@ -421,15 +426,22 @@ def run_autonomous_evaluation(gmn_runs, cfg, df, obs_cols, progress_log_path=Non
             xy_lag, _, _ = U.dataset_embedding_lag(act_xy, max_lag=40, method='ami', lib_end=lib_end)
             real_c = [_delay_cloud(real_all[i][:, ti], xy_lag) for i in range(len(starts))]
             gen_c = [_delay_cloud(gen_all[i][:, ti], xy_lag) for i in range(len(starts))]
-            lib_c = _delay_cloud(act_xy[:lib_end], xy_lag)
-            t_xy, d_xy = _topology(real_c, gen_c, lib_c, cfg['PH_LANDMARKS'])
+            # Reference: as many windows of the same length from the TRAINING
+            # rows, so "library vs real" is the distance between two
+            # independent sets of real windows -- the noise floor for
+            # "generated vs real". Standardisation uses the whole library.
+            lib_starts = np.linspace(xy_lag, lib_end - L, len(starts)).round().astype(int)
+            lib_c = [_delay_cloud(act_xy[a:a + L], xy_lag) for a in lib_starts]
+            t_xy, d_xy = _topology(real_c, gen_c, lib_c, cfg['PH_LANDMARKS'],
+                                   scale_cloud=_delay_cloud(act_xy[:lib_end], xy_lag))
             topo['xy'] = {'delay_lag_rows': xy_lag, **t_xy}
             _plot_diagrams(d_xy, f'{network_id}: (x, y) delay embedding, lag {xy_lag} rows',
                            out_root / f'persistence_xy_{network_id}.png')
             if ci:
                 t_pop, d_pop = _topology([real_all[i] for i in range(len(starts))],
                                          [gen_all[i] for i in range(len(starts))],
-                                         lib, cfg['PH_LANDMARKS'])
+                                         [lib[a:a + L] for a in lib_starts], cfg['PH_LANDMARKS'],
+                                         scale_cloud=lib)
                 topo['population'] = {'n_dims': len(real_nodes), **t_pop}
                 _plot_diagrams(d_pop, f'{network_id}: population state ({len(real_nodes)} nodes)',
                                out_root / f'persistence_population_{network_id}.png')
