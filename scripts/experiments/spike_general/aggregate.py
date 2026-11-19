@@ -206,6 +206,43 @@ def md_table(df, cols, names, fmt=None):
     return out
 
 
+def paired_vs_baseline(allr, labels, base='sawtooth'):
+    '''Each setting against the baseline, start by start. Starts are evenly
+    spaced over the same held-out segment in every run (they differ only by
+    each graph's warm-up of max-delay + 1 rows), so the i-th start of one run
+    is paired with the i-th start of the other. Wilcoxon signed-rank, two-sided.'''
+    from scipy.stats import wilcoxon
+    allr = allr.copy()
+    allr['log_path_ratio'] = np.log(allr['path_err_mean'] / allr['path_err_hold_mean'])
+    allr['k'] = allr.groupby(['label', 'horizon_s'])['start'].rank(method='first').astype(int)
+    rows = []
+    for lab in labels:
+        if lab == base:
+            continue
+        rec = {'label': lab}
+        for H in sorted(allr['horizon_s'].unique()):
+            a = allr[(allr.label == lab) & (allr.horizon_s == H)].set_index('k')
+            b = allr[(allr.label == base) & (allr.horizon_s == H)].set_index('k')
+            k = a.index.intersection(b.index)
+            for m, short in (('r_xy', 'dr'), ('log_path_ratio', 'dlogpath')):
+                d = (a.loc[k, m] - b.loc[k, m]).dropna()
+                rec[f'{short}_{int(H)}s'] = float(d.median()) if len(d) else np.nan
+                rec[f'p_{short}_{int(H)}s'] = (float(wilcoxon(d).pvalue)
+                                              if len(d) >= 6 and (d != 0).any() else np.nan)
+            rec['n_pairs'] = len(k)
+        rows.append(rec)
+    df = pd.DataFrame(rows)
+    df.to_csv(REPORT / 'stage2_paired_vs_sawtooth.csv', index=False)
+    cols = ['label', 'n_pairs'] + [f'{p}{m}_{h}s' for h in (2, 5, 10)
+                                   for m in ('dr', 'dlogpath') for p in ('', 'p_')]
+    names = ['setting', 'pairs'] + [f'{n} {h} s' for h in (2, 5, 10)
+                                    for n in ('Δr', 'p', 'Δlog path', 'p')]
+    return ('### Paired against the sawtooth, start by start (median difference; '
+            'Wilcoxon p)\n\nΔr > 0: better (x, y) correlation than the sawtooth. '
+            'Δlog path < 0: smaller path error than the sawtooth.\n\n'
+            + md_table(df, cols, names, {'n_pairs': '{:.0f}'}))
+
+
 def main():
     summ, allr = collect()
     summ.to_csv(REPORT / 'stage2_summary.csv', index=False)
@@ -267,6 +304,7 @@ def main():
          'density', 'edges/node', 'zero-driver', 'within-region', 'target drivers'],
         {'embed_tau_rows': '{:.0f}', 'channels_kept': '{:.0f}', 'n_real_nodes': '{:.0f}',
          'n_lagged_leaves': '{:.0f}', 'n_edges': '{:.0f}', 'zero_driver_nodes': '{:.0f}'}))
+    tabs.append(paired_vs_baseline(allr, s['label'].tolist()))
     (REPORT / 'stage2_tables.md').write_text('\n\n'.join(tabs) + '\n')
     print(f'wrote {REPORT / "stage2_tables.md"}; {len(s)} settings with rollouts')
 

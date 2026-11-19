@@ -5,11 +5,150 @@ submissions (see scripts/batch/submit.sh), newest entry first.
 
 <!-- new entries inserted below this line -->
 
+## Job 4832914
+
+Generated: 2026-11-19T11:31:07+09:00
+
+Git commit at submission: `76e843e` (clean vs. HEAD)
+
+### Summary
+
+Stage II: fading log-signature W=1000 ms, depth 3, raw. COMPLETED 1h56m. Submitted at 76e843e, staged aec4211 (fixed). Moves for ~2 s then stops; worse median (x, y) r than the sawtooth at 5 s (paired p=0.027).
+
+Compared against: **job_4832911**
+
+### Parameter changes (saion-spike-general.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-general.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 4832911
+
+Generated: 2026-11-19T11:31:07+09:00
+
+Git commit at submission: `76e843e` (clean vs. HEAD)
+
+### Summary
+
+Stage II: LMU theta=1000 ms, D=3, raw (no presmoothing; the state jumps at events). COMPLETED 1h43m. Submitted at 76e843e, staged aec4211 (fixed). Moves for ~2 s (motion 0.20) then stops entirely (0.001 at 10 s).
+
+Compared against: **job_4832908**
+
+### Parameter changes (saion-spike-general.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-general.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 4832908
+
+Generated: 2026-11-19T11:31:07+09:00
+
+Git commit at submission: `76e843e` (clean vs. HEAD)
+
+### Summary
+
+Stage II: fading log-signature W=2000 ms, depth 2, presmoothing order 3. COMPLETED 2h13m. Submitted at 76e843e, staged aec4211 (fixed). Units collapse (96% of starts by 10 s); no paired difference from the sawtooth.
+
+Compared against: **job_4832905**
+
+### Parameter changes (saion-spike-general.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-general.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 4832905
+
+Generated: 2026-11-19T11:31:06+09:00
+
+Git commit at submission: `76e843e` (clean vs. HEAD)
+
+### Summary
+
+Stage II: LMU theta=2000 ms, D=2, Gamma presmoothing order 2. COMPLETED 1h47m. Submitted at 76e843e, staged aec4211 (fixed). Free runs stay near the manifold but units barely move; 17% of starts blew up by 10 s.
+
+Compared against: **job_4832902**
+
+### Parameter changes (saion-spike-general.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-general.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 4832902
+
+Generated: 2026-11-19T11:31:06+09:00
+
+Git commit at submission: `76e843e` (clean vs. HEAD)
+
+### Summary
+
+Stage II: Gamma m=3, tau=500 ms with log compression (kappa=100). COMPLETED 2h46m. Submitted at 76e843e but staged aec4211 (code is staged at job start; includes the Forecast() fix). Smallest free-run path error, lower than the sawtooth's at 2/5/10 s (paired Wilcoxon p=0.015/0.039/0.004), while units are nearly still.
+
+Compared against: **job_4832855**
+
+### Parameter changes (saion-spike-general.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-general.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
 ## Job 4832855
 
 Generated: 2026-11-19T10:52:31+09:00
 
 Git commit at submission: `d704519` (clean vs. HEAD)
+
+### Summary
+
+Stage II: Gamma cascade m=3, tau=500 ms. COMPLETED 1h47m. Staged d704519 (pre-fix); one-step rescored. Best median free-run (x, y) r at 5 s (0.33) but units collapse (motion ratio ~0.01).
 
 Compared against: **job_4832852**
 
@@ -34,6 +173,10 @@ Generated: 2026-11-19T10:52:31+09:00
 
 Git commit at submission: `d704519` (clean vs. HEAD)
 
+### Summary
+
+Stage II: Gamma cascade m=3, tau=100 ms. COMPLETED 53m. Staged d704519 (pre-fix); one-step rescored. Takens lag 23 rows; 8-node network; free runs leave the empirical manifold (distance ratio 3-5).
+
 Compared against: **job_4832849**
 
 ### Parameter changes (saion-spike-general.sbatch)
@@ -56,6 +199,10 @@ _No changes._
 Generated: 2026-11-19T10:52:30+09:00
 
 Git commit at submission: `d704519` (clean vs. HEAD)
+
+### Summary
+
+Stage II: Gamma cascade m=3, tau=250 ms. COMPLETED 1h38m. Staged d704519 (pre-fix); one-step rescored. Exposed the Forecast() row-label bug (driven nodes scored r~0). Free runs collapse (92% of starts by 10 s).
 
 Compared against: **job_4832846**
 
@@ -80,6 +227,10 @@ Generated: 2026-11-19T10:52:30+09:00
 
 Git commit at submission: `d704519` (clean vs. HEAD)
 
+### Summary
+
+Stage II baseline: the parent's sawtooth (TSLS) converter in the experiment's evaluation (83 channels, Takens lag 40 rows, self_simulate free runs, 24 starts). COMPLETED 2h21m. Staged d704519 (before the Forecast() row-label fix 773e99d); its one-step was re-run with rescore_onestep.py. Only setting whose free runs keep moving (motion ratio 0.45 at 2 s) and whose (x, y) topology sits at the noise floor. See docs/experiments/spike-conversion-general/REPORT.md.
+
 Compared against: **job_4832821**
 
 ### Parameter changes (saion-spike-general.sbatch)
@@ -102,6 +253,10 @@ _No changes._
 Generated: 2026-11-19T10:39:13+09:00
 
 Git commit at submission: `a7bc825` (clean vs. HEAD)
+
+### Summary
+
+Isolation check for exp/spike-conversion-general: a short smoke run (sawtooth, tiny scale) confirming the job staged the experiment worktree (printed commit=a7bc825067b3 on the experiment branch). COMPLETED in 12 min.
 
 No previous job snapshot found -- this is the first tracked run of this pipeline, or all prior jobs predate this tracking.
 
