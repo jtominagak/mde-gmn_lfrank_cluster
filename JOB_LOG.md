@@ -5,6 +5,98 @@ submissions (see scripts/batch/submit.sh), newest entry first.
 
 <!-- new entries inserted below this line -->
 
+## Job 4832855
+
+Generated: 2026-11-19T10:52:31+09:00
+
+Git commit at submission: `d704519` (clean vs. HEAD)
+
+Compared against: **job_4832852**
+
+### Parameter changes (saion-spike-general.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-general.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 4832852
+
+Generated: 2026-11-19T10:52:31+09:00
+
+Git commit at submission: `d704519` (clean vs. HEAD)
+
+Compared against: **job_4832849**
+
+### Parameter changes (saion-spike-general.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-general.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 4832849
+
+Generated: 2026-11-19T10:52:30+09:00
+
+Git commit at submission: `d704519` (clean vs. HEAD)
+
+Compared against: **job_4832846**
+
+### Parameter changes (saion-spike-general.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-general.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
+## Job 4832846
+
+Generated: 2026-11-19T10:52:30+09:00
+
+Git commit at submission: `d704519` (clean vs. HEAD)
+
+Compared against: **job_4832821**
+
+### Parameter changes (saion-spike-general.sbatch)
+
+_No parameter changes._
+
+### Batch script design changes (saion-spike-general.sbatch, excludes parameter block above)
+
+_No changes._
+
+### Python pipeline changes (no-kedm-optimization-parallelized-mde--tsls-mde-gmn.py)
+
+_No changes._
+
+---
+
+
 ## Job 4832821
 
 Generated: 2026-11-19T10:39:13+09:00
