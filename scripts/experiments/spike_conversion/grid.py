@@ -36,8 +36,10 @@ for z in (0.7, 0.9):
     _add(f'C_z{z}', 'C_theta_osc', 'I', SPIKE_TRANSFORM='theta_osc', OSC_F0_HZ=8, OSC_ZETA=z,
          EMBED_TAU=4)
 
-# Filled in after Stage I (see REPORT.md for how each was chosen).
-STAGE2_BASES = ['tsls']   # the sawtooth is always a base; the model families' bests follow Stage I
+# Filled in after Stage I (REPORT.md section 4.3). Per family: among configurations
+# within one standard error of the best 5-s x/y correlation, excluding any that
+# blow up in more than half of their 10-s runs, the lowest 5-s path error.
+STAGE2_BASES = ['tsls', 'A_s50_c500', 'B_w2500_n2.0_p75', 'C_z0.7']
 for base in STAGE2_BASES:
     src = next(g for g in GRID if g['label'] == base)
     for tau in (2, 6, 8):
